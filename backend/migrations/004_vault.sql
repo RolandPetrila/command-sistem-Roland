@@ -13,3 +13,5 @@ CREATE TABLE IF NOT EXISTS vault_config (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+INSERT OR IGNORE INTO schema_version (version, name) VALUES (4, '004_vault');

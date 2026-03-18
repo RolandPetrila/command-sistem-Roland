@@ -13,6 +13,8 @@ import QRGeneratorPage from './pages/QRGeneratorPage';
 import NotepadPage from './pages/NotepadPage';
 import VaultPage from './pages/VaultPage';
 import ConverterPage from './pages/ConverterPage';
+import AIChatPage from './pages/AIChatPage';
+import DocumentAIPage from './pages/DocumentAIPage';
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import CommandPalette from './components/shared/CommandPalette';
 import { PAGE_TITLES } from './modules/manifest';
@@ -36,6 +38,8 @@ export default function App() {
               <Route path="/notepad" element={<NotepadPage />} />
               <Route path="/vault" element={<VaultPage />} />
               <Route path="/converter" element={<ConverterPage />} />
+              <Route path="/ai-chat" element={<AIChatPage />} />
+              <Route path="/ai-docs" element={<DocumentAIPage />} />
             </Routes>
           </ErrorBoundary>
         </main>

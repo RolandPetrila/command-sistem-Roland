@@ -18,6 +18,8 @@ import {
   StickyNote,
   KeyRound,
   ArrowRightLeft,
+  Bot,
+  FileSearch,
 } from 'lucide-react';
 
 export const NAV_SECTIONS = [
@@ -34,6 +36,14 @@ export const NAV_SECTIONS = [
       { path: '/upload', label: 'Calcul Preț', icon: Calculator },
       { path: '/history', label: 'Istoric', icon: History },
       { path: '/calibration', label: 'Calibrare', icon: Settings2 },
+    ],
+  },
+  {
+    category: 'AI',
+    collapsible: true,
+    items: [
+      { path: '/ai-chat', label: 'Chat AI', icon: Bot },
+      { path: '/ai-docs', label: 'Analiză Documente', icon: FileSearch },
     ],
   },
   {
