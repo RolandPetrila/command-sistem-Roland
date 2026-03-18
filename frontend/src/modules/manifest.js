@@ -14,6 +14,8 @@ import {
   Settings2,
   FolderOpen,
   Settings,
+  QrCode,
+  StickyNote,
 } from 'lucide-react';
 
 export const NAV_SECTIONS = [
@@ -30,6 +32,14 @@ export const NAV_SECTIONS = [
       { path: '/upload', label: 'Calcul Preț', icon: Calculator },
       { path: '/history', label: 'Istoric', icon: History },
       { path: '/calibration', label: 'Calibrare', icon: Settings2 },
+    ],
+  },
+  {
+    category: 'Quick Tools',
+    collapsible: true,
+    items: [
+      { path: '/qr', label: 'QR Generator', icon: QrCode },
+      { path: '/notepad', label: 'Notepad', icon: StickyNote },
     ],
   },
   {

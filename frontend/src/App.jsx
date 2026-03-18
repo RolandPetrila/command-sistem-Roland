@@ -9,7 +9,10 @@ import HistoryPage from './pages/HistoryPage';
 import CalibrationPage from './pages/CalibrationPage';
 import FileBrowserPage from './pages/FileBrowserPage';
 import SettingsPage from './pages/SettingsPage';
+import QRGeneratorPage from './pages/QRGeneratorPage';
+import NotepadPage from './pages/NotepadPage';
 import ErrorBoundary from './components/shared/ErrorBoundary';
+import CommandPalette from './components/shared/CommandPalette';
 import { PAGE_TITLES } from './modules/manifest';
 
 export default function App() {
@@ -27,11 +30,14 @@ export default function App() {
               <Route path="/calibration" element={<CalibrationPage />} />
               <Route path="/files" element={<FileBrowserPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/qr" element={<QRGeneratorPage />} />
+              <Route path="/notepad" element={<NotepadPage />} />
             </Routes>
           </ErrorBoundary>
         </main>
         <Footer />
       </div>
+      <CommandPalette />
     </div>
   );
 }

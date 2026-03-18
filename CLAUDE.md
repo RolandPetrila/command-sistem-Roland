@@ -215,6 +215,33 @@ python calibrate.py --verbose
 3. Marchează Wave/Faza ca DONE cu data
 **Se combină cu Regula 1** — executat la sfârșitul sesiunii.
 
+### Regula 8 — Pre-Implementation Briefing (nouă)
+**Trigger:** Înainte de a începe implementarea oricărui Wave sau Fază.
+**Obligatoriu** — NU se începe cod fără parcurgerea acestui proces.
+
+1. **Sugerează** cele mai logice Wave/Faze de implementat (ordonate după: dependențe rezolvate → efort mic → valoare mare)
+2. **Prezintă** Wave-ul/Faza recomandată cu:
+   - Ce conține (listă items cu descriere scurtă + exemplu concret de utilizare)
+   - Efort estimat per item
+   - Dependențe (ce trebuie să existe deja)
+   - Ce se schimbă vizibil pentru utilizator după implementare
+3. **Așteaptă confirmare explicită** de la utilizator înainte de a scrie cod
+4. Dacă utilizatorul vrea modificări (adaugă/scoate items, schimbă ordinea) → ajustează și re-prezintă
+
+**Format prezentare:**
+```
+## Wave/Faza X — [Nume] ([N] items, ~[T] ore)
+
+| # | Feature | Ce face (exemplu) | Efort |
+|---|---------|-------------------|-------|
+| 1 | Nume    | "Apeși Ctrl+K, scrii 'set', ajungi instant la Setări" | 1-2h |
+
+Dependențe: [lista sau "niciuna"]
+Rezultat vizibil: [ce vede utilizatorul diferit după implementare]
+```
+
+**Origine:** Cerere explicită utilizator (2026-03-18).
+
 ## Known Issues / Notes
 
 - Windows console (cp1252) cannot print Romanian characters (ț, ă, etc.) — always set `PYTHONIOENCODING=utf-8`
