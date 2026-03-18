@@ -167,7 +167,7 @@ async def trigger_calibration():
         "warnings": warnings,
     }
 
-    log_activity(
+    await log_activity(
         action="calibrate",
         status="success" if is_safe else "rejected",
         summary=f"MAPE: {new_mape}% | Ponderi: {new_weights} | {'Aplicat' if is_safe else 'RESPINS'}",
@@ -212,7 +212,7 @@ async def revert_calibration():
     BACKUP_FILE.unlink()
     logger.info("Calibrare restaurată din backup.")
 
-    log_activity(action="calibrate_revert", summary="Calibrare restaurată din backup")
+    await log_activity(action="calibrate_revert", summary="Calibrare restaurată din backup")
 
     return {
         "status": "reverted",
@@ -230,7 +230,7 @@ async def reset_calibration():
         shutil.copy2(cal_file, BACKUP_FILE)
         cal_file.unlink()
 
-    log_activity(action="calibrate_reset", summary="Calibrare resetată la valori implicite")
+    await log_activity(action="calibrate_reset", summary="Calibrare resetată la valori implicite")
 
     return {
         "status": "reset",

@@ -1,8 +1,8 @@
 """
-Calculator Preț Traduceri — FastAPI Backend.
+Roland Command Center — FastAPI Backend.
 
 Punctul de intrare principal al aplicației.
-Include toate rutele, middleware-urile și evenimentele de pornire.
+Module auto-discovery din backend/modules/.
 """
 
 import logging
@@ -14,13 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db.database import init_db
-from app.api.routes_upload import router as upload_router
-from app.api.routes_price import router as price_router
-from app.api.routes_history import router as history_router
-from app.api.routes_calibrate import router as calibrate_router
-from app.api.routes_files import router as files_router
-from app.api.routes_settings import router as settings_router
-from app.api.routes_competitors import router as competitors_router
+from app.module_discovery import discover_modules
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,9 +89,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Calculator Preț Traduceri",
-    description="API pentru calcularea automată a prețurilor de traducere pe piața românească.",
-    version="0.1.0",
+    title="Roland Command Center",
+    description="Panou personal multifuncțional — traduceri, facturare, tool-uri, AI pe documente.",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -114,14 +108,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Routere ---
-app.include_router(upload_router)
-app.include_router(price_router)
-app.include_router(history_router)
-app.include_router(calibrate_router)
-app.include_router(files_router)
-app.include_router(settings_router)
-app.include_router(competitors_router)
+# --- Module auto-discovery ---
+_modules = discover_modules()
+for _mod_info in _modules:
+    for _router in _mod_info["routers"]:
+        app.include_router(_router)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +127,21 @@ async def health_check():
         "message": "Serverul funcționează corect.",
         "version": app.version,
     }
+
+
+@app.get("/api/modules")
+async def list_modules():
+    """Returnează modulele descoperite (fără obiectele router)."""
+    return [
+        {
+            "name": m.get("name"),
+            "description": m.get("description"),
+            "category": m.get("category"),
+            "icon": m.get("icon"),
+            "order": m.get("order"),
+        }
+        for m in _modules
+    ]
 
 
 @app.websocket("/ws/progress")

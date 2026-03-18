@@ -1,8 +1,9 @@
 """
-Bază de date SQLite cu aiosqlite pentru operații asincrone.
+Bază de date SQLite cu aiosqlite + sistem de migrare SQL.
 
 Funcționalități:
-- init_db(): Creează tabelele dacă nu există.
+- run_migrations(): Rulează migrări SQL pendinte din migrations/.
+- init_db(): Inițializează DB cu migrări + setări implicite.
 - get_db(): Context manager async pentru conexiunea la baza de date.
 """
 
@@ -10,19 +11,68 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 import aiosqlite
 
 from app.config import settings
-from app.db.models import CREATE_TABLES
 
 logger = logging.getLogger(__name__)
+
+MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
+
+
+async def run_migrations(db: aiosqlite.Connection) -> None:
+    """
+    Rulează migrările SQL pendinte din directorul migrations/.
+
+    Fiecare fișier SQL trebuie să fie prefixat cu un număr de versiune
+    (ex: 001_initial.sql, 002_add_clients.sql) și să conțină la final
+    un INSERT INTO schema_version cu versiunea aplicată.
+    """
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version     INTEGER PRIMARY KEY,
+            name        TEXT NOT NULL,
+            applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.commit()
+
+    cursor = await db.execute("SELECT MAX(version) FROM schema_version")
+    row = await cursor.fetchone()
+    current_version = row[0] if row[0] is not None else 0
+
+    if not MIGRATIONS_DIR.exists():
+        logger.warning("Director migrări inexistent: %s", MIGRATIONS_DIR)
+        return
+
+    migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
+    applied = 0
+
+    for mig_file in migration_files:
+        try:
+            version = int(mig_file.stem.split("_")[0])
+        except (ValueError, IndexError):
+            continue
+
+        if version <= current_version:
+            continue
+
+        logger.info("Rulez migrarea %s...", mig_file.name)
+        sql = mig_file.read_text(encoding="utf-8")
+        await db.executescript(sql)
+        applied += 1
+        logger.info("Migrare aplicată: %s (v%d)", mig_file.name, version)
+
+    if applied:
+        logger.info("Total migrări aplicate: %d", applied)
 
 
 async def init_db() -> None:
     """
-    Inițializează baza de date: creează tabelele și setările implicite.
+    Inițializează baza de date: rulează migrări + setări implicite.
 
     Se apelează la pornirea aplicației.
     """
@@ -30,16 +80,12 @@ async def init_db() -> None:
     db_path = str(settings.db_path)
 
     async with aiosqlite.connect(db_path) as db:
-        # Activare foreign keys + performance
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("PRAGMA journal_mode = WAL")
         await db.execute("PRAGMA busy_timeout = 5000")
 
-        # Creează tabelele
-        for table_sql in CREATE_TABLES:
-            await db.execute(table_sql)
+        await run_migrations(db)
 
-        # Inserare setări implicite (doar dacă nu există)
         default_settings = {
             "invoice_percent": str(settings.default_invoice_percent),
             "currency": "RON",
@@ -47,13 +93,9 @@ async def init_db() -> None:
         }
         for key, value in default_settings.items():
             await db.execute(
-                """
-                INSERT OR IGNORE INTO settings (key, value)
-                VALUES (?, ?)
-                """,
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, value),
             )
-
         await db.commit()
 
     logger.info("Baza de date inițializată: %s", db_path)

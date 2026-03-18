@@ -198,7 +198,7 @@ async def delete_calculation(calculation_id: int):
 
         await db.commit()
 
-    log_activity(
+    await log_activity(
         action="delete_history",
         summary=f"Calculul #{calculation_id} șters din istoric",
         details={"calculation_id": calculation_id, "upload_id": upload_id},

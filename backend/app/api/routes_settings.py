@@ -103,7 +103,7 @@ async def update_all_settings(updates: SettingsUpdate):
         await update_setting(key, str(value))
         updated_keys.append(key)
 
-    log_activity(
+    await log_activity(
         action="update_settings",
         summary=f"Setări modificate: {', '.join(updated_keys)}",
         details={"updated_keys": updated_keys, "updated_values": update_data},
@@ -127,7 +127,7 @@ async def get_activity_log_endpoint(
     Acțiuni posibile: upload, calculate, validate_price, calibrate,
     calibrate_revert, calibrate_reset, delete_history, update_settings.
     """
-    entries = get_activity_log(limit=limit, action_filter=action)
+    entries = await get_activity_log(limit=limit, action_filter=action)
     return {
         "entries": entries,
         "total": len(entries),

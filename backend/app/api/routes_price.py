@@ -164,7 +164,7 @@ async def calculate_price(request: CalculateRequest):
 
     # --- 5b. Log activitate ---
     dtp_info = price_result.get("dtp")
-    log_activity(
+    await log_activity(
         action="calculate",
         summary=f"{filename} → {market_price} RON (fact. {invoice_price} RON, {confidence}% încredere)",
         details={
@@ -259,7 +259,7 @@ async def validate_price_endpoint(request: ValidatePriceRequest):
         original_estimate=original_estimate,
     )
 
-    log_activity(
+    await log_activity(
         action="validate_price",
         summary=f"{upload['filename']} → validat la {request.validated_price} RON (estimare: {original_estimate})",
         details={

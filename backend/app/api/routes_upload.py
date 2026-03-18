@@ -106,7 +106,7 @@ async def upload_file(file: UploadFile = File(...)):
         await db.commit()
         upload_id = cursor.lastrowid
 
-    log_activity(
+    await log_activity(
         action="upload",
         summary=f"{file.filename} ({_format_size(file_size)}, {file_type})",
         details={"upload_id": upload_id, "filename": file.filename, "file_type": file_type, "file_size": file_size},

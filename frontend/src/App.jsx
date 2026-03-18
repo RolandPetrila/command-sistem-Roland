@@ -10,22 +10,14 @@ import CalibrationPage from './pages/CalibrationPage';
 import FileBrowserPage from './pages/FileBrowserPage';
 import SettingsPage from './pages/SettingsPage';
 import ErrorBoundary from './components/shared/ErrorBoundary';
-
-const pageTitles = {
-  '/': 'Panou Principal',
-  '/upload': 'Calcul Preț',
-  '/history': 'Istoric Calcule',
-  '/calibration': 'Calibrare Sistem',
-  '/files': 'Browser Fișiere',
-  '/settings': 'Setări',
-};
+import { PAGE_TITLES } from './modules/manifest';
 
 export default function App() {
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
       <div className="flex flex-col flex-1 overflow-hidden">
-        <Header pageTitles={pageTitles} />
+        <Header pageTitles={PAGE_TITLES} />
         <main className="flex-1 overflow-y-auto p-6">
           <ErrorBoundary>
             <Routes>

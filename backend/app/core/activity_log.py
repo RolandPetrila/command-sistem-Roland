@@ -1,8 +1,7 @@
 """
-Sistem centralizat de logare a activității din panoul de control.
+Sistem centralizat de logare a activității — SQLite-backed.
 
-Salvează fiecare acțiune utilizator într-un fișier JSON persistent:
-  backend/data/activity_log.json
+Salvează fiecare acțiune utilizator în tabelul activity_log din SQLite.
 
 Format per intrare:
   {timestamp, action, status, summary, details}
@@ -23,25 +22,21 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from app.config import settings
+from app.db.database import get_db
 
 logger = logging.getLogger(__name__)
 
-LOG_FILE = settings.data_dir / "activity_log.json"
-MAX_ENTRIES = 1000  # Păstrează ultimele 1000 de intrări
 
-
-def log_activity(
+async def log_activity(
     action: str,
     status: str = "success",
     summary: str = "",
     details: dict[str, Any] | None = None,
 ) -> None:
     """
-    Adaugă o intrare în logul de activitate.
+    Adaugă o intrare în logul de activitate (SQLite).
 
     Args:
         action: Tipul acțiunii (upload, calculate, calibrate, etc.)
@@ -50,40 +45,25 @@ def log_activity(
         details: Date suplimentare (opțional)
     """
     try:
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "action": action,
-            "status": status,
-            "summary": summary,
-        }
-        if details:
-            entry["details"] = details
-
-        # Citește log existent
-        entries: list[dict] = []
-        if LOG_FILE.exists():
-            try:
-                with open(LOG_FILE, "r", encoding="utf-8") as f:
-                    entries = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                entries = []
-
-        entries.append(entry)
-
-        # Trunchiază la MAX_ENTRIES
-        if len(entries) > MAX_ENTRIES:
-            entries = entries[-MAX_ENTRIES:]
-
-        # Salvează
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(LOG_FILE, "w", encoding="utf-8") as f:
-            json.dump(entries, f, indent=2, ensure_ascii=False)
-
+        details_json = json.dumps(details, ensure_ascii=False) if details else None
+        async with get_db() as db:
+            await db.execute(
+                """INSERT INTO activity_log (timestamp, action, status, summary, details)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    action,
+                    status,
+                    summary,
+                    details_json,
+                ),
+            )
+            await db.commit()
     except Exception as exc:
         logger.warning("Nu s-a putut scrie în activity_log: %s", exc)
 
 
-def get_activity_log(
+async def get_activity_log(
     limit: int = 50,
     action_filter: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -91,22 +71,41 @@ def get_activity_log(
     Citește ultimele *limit* intrări din logul de activitate.
 
     Args:
-        limit: Numărul maxim de intrări returnate (cele mai recente).
+        limit: Numărul maxim de intrări returnate (cele mai recente primele).
         action_filter: Filtrează doar acțiunile de un anumit tip.
 
     Returns:
         Lista de intrări (cele mai recente primele).
     """
-    if not LOG_FILE.exists():
-        return []
     try:
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            entries = json.load(f)
-    except (json.JSONDecodeError, OSError):
+        async with get_db() as db:
+            if action_filter:
+                cursor = await db.execute(
+                    "SELECT * FROM activity_log WHERE action = ? ORDER BY timestamp DESC LIMIT ?",
+                    (action_filter, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+            rows = await cursor.fetchall()
+
+            result = []
+            for row in rows:
+                entry = {
+                    "timestamp": row["timestamp"],
+                    "action": row["action"],
+                    "status": row["status"],
+                    "summary": row["summary"],
+                }
+                if row["details"]:
+                    try:
+                        entry["details"] = json.loads(row["details"])
+                    except json.JSONDecodeError:
+                        entry["details"] = row["details"]
+                result.append(entry)
+            return result
+    except Exception as exc:
+        logger.warning("Nu s-a putut citi activity_log: %s", exc)
         return []
-
-    if action_filter:
-        entries = [e for e in entries if e.get("action") == action_filter]
-
-    # Returnează cele mai recente primele
-    return list(reversed(entries[-limit:]))
