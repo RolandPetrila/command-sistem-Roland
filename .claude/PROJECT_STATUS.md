@@ -13,8 +13,9 @@ Generated: 2026-03-19
 | Wave 1 Deploy | DONE | Tailscale HTTPS, PWA, Vault, Backup, Auto-start |
 | Faza 12 Convertor | DONE | 10 conversii, Android-safe, COM fix |
 | Faza 14 File Manager | PARTIAL | Browse, CRUD, upload, download, duplicates (done); fulltext, tags (deferred) |
+| Restructurare reguli | DONE | 12 reguli → 5 fișiere .claude/rules/, hooks, commands, agent (2026-03-19) |
 
-## Next Suggested: Faza 15 (AI pe documente) sau Faza 13 (Traducător integrat)
+## Next Suggested (by priority): Faza 9 (Traducător — core business) sau Faza 13 (Integrări Gmail/Drive/Calendar)
 
 ## Quick Reference
 - Rules: `.claude/rules/` (5 files)

@@ -81,19 +81,64 @@
 - [x] 8.5.3 Creare Documentare_Extindere_Proiect.md — documentare completă discuție ~15 runde, decizii per fază (2026-03-18)
 - [x] 8.5.4 Regenerare 0.0_PLAN_EXTINDERE_COMPLET.html — selector interactiv actualizat cu Faza 18, note per fază, statistici (2026-03-18)
 
-## Ramas opțional
-- [ ] Îmbunătățire acuratețe calibrare (MAPE 32% → sub 25%) — mai multe referințe în range-ul mic (120-340 RON)
-- [ ] Afișare ponderi metode în UI (în loc de "pondere: ?%")
-- [ ] Fix comparație competitori — endpoint returnează 404 la unele prețuri
+## WAVE 0 — Fundație (2026-03-18) — DONE
+- [x] Git init + .gitignore complet
+- [x] Fix URL-uri hardcoded (client.js → URL dinamic, WebSocket dinamic)
+- [x] Sistem migrare DB (migrations/ + schema_version + run_migrations())
+- [x] Module auto-discovery backend (module_discovery.py + modules/calculator/)
+- [x] Frontend manifest (modules/manifest.js + sidebar dinamic cu categorii colapsibile)
+- [x] Activity log → SQLite (migrare completă, async, JSON înlocuit)
 
-## Extindere planificată (vezi 0.0_PLAN_EXTINDERE_COMPLET.md)
-- Faza 8: Deploy Tailscale + PWA + Password Vault
-- Faza 9: Traducător integrat multi-provider
+## WAVE 1 — Deploy + Acces (2026-03-18) — DONE
+- [x] Tailscale + MagicDNS + HTTPS cert (desktop-cjuecmn.tail7bc485.ts.net)
+- [x] TLS config uvicorn + CORS dinamic + sidebar responsive mobile
+- [x] vite build → servire statică prin FastAPI (port 8000)
+- [x] PWA (manifest + service worker + workbox offline cache)
+- [x] API Key Vault (Fernet + PBKDF2, modul modules/vault/)
+- [x] Backup DB (backup.py → Google Drive, auto-cleanup >10)
+- [x] Auto-start backend (setup_autostart.bat, Task Scheduler)
+- [x] START_Production.bat — mod producție cu TLS autodetect
+
+## WAVE 2 — Quick Tools (2026-03-18) — PARTIAL
+- [x] Command Palette (Ctrl+K) — fuse.js fuzzy search
+- [x] QR Generator — react-qr-code, download PNG, copy clipboard
+- [x] Notepad cu auto-save — CRUD + debounce 800ms + activity log
+- [ ] Calculator avansat — DEFERRED
+- [ ] Password Generator — DEFERRED
+- [ ] Barcode Generator — DEFERRED
+
+## FAZA 12 — Convertor Fișiere (2026-03-18) — DONE
+- [x] 10 tipuri conversie (PDF↔DOCX, merge/split PDF, compress/resize img, CSV/Excel→JSON, ZIP, OCR)
+- [x] Android-safe validation (extension + MIME + octet-stream fallback)
+- [x] COM threading fix (pythoncom.CoInitialize)
+
+## FAZA 14 — Manager Fișiere Avansat (2026-03-18) — PARTIAL
+- [x] File browser cu preview (PDF, imagini, text)
+- [x] Operații CRUD (rename, move, delete, mkdir) — sandboxing + symlink block
+- [x] Upload fișiere (drag&drop, auto-rename conflict)
+- [x] Download fișiere (FileResponse + activity log)
+- [x] Duplicate finder (MD5 hash, grupare, wasted space)
+- [ ] Căutare fulltext — DEFERRED
+- [ ] Tag-uri — DEFERRED
+
+## RESTRUCTURARE REGULI (2026-03-19) — DONE
+- [x] 12 reguli inline CLAUDE.md → 5 fișiere .claude/rules/
+- [x] 4 comenzi slash (/update-status, /pre-wave, /test-guide, /rule-change)
+- [x] Agent rule-guardian (read-only)
+- [x] 4 hooks (session-start/stop, post-edit-check, pre-compact)
+- [x] CLAUDE.md slim (354 → 116 linii)
+- [x] Nested CLAUDE.md: backend/ + frontend/
+- [x] Arhivare 10 fișiere deprecated
+
+## Ramas opțional (calculator)
+- [ ] Îmbunătățire acuratețe calibrare (MAPE 32% → sub 25%)
+- [ ] Afișare ponderi metode în UI
+- [ ] Fix comparație competitori endpoint
+
+## Extindere planificată (vezi 99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md)
+- Faza 9: Traducător integrat multi-provider — **NEXT** (core business)
 - Faza 10: Facturare & Evidență clienți
-- Faza 11: Tool-uri rapide (6 items)
-- Faza 12: Convertor fișiere universal
 - Faza 13: Integrări externe (Gmail, Drive, Calendar, GitHub)
-- Faza 14: Manager fișiere avansat
 - Faza 15: AI pe documente
 - Faza 16: Automatizări & shortcuts
 - Faza 17: Rapoarte & polish
