@@ -1,0 +1,43 @@
+{
+  "sources": [
+    "activ-traduceri.ro",
+    "toplevel-traduceri.ro",
+    "traducerilegalizate.com",
+    "nbtraduceri.ro",
+    "tradutex.ro",
+    "traduceri-autorizate.com",
+    "highlightstranslations.ro",
+    "traducerisupralegalizari.ro",
+    "astraduceri.ro",
+    "aqualitytranslation.ro",
+    "lexitrad.ro",
+    "protranslate.net"
+  ],
+  "avg_rate_per_page": {
+    "technical": 38,
+    "general": 31,
+    "legal": 40
+  },
+  "avg_rate_per_word": {
+    "technical": 0.11,
+    "general": 0.09,
+    "legal": 0.12
+  },
+  "range_per_page": {
+    "technical": {"min": 30, "max": 50},
+    "general": {"min": 22, "max": 45},
+    "legal": {"min": 35, "max": 55}
+  },
+  "range_per_word": {
+    "technical": {"min": 0.086, "max": 0.167},
+    "general": {"min": 0.063, "max": 0.150},
+    "legal": {"min": 0.100, "max": 0.183}
+  },
+  "page_standard_chars": 2000,
+  "words_per_page_estimate": 325,
+  "urgency_multiplier": 1.5,
+  "volume_discount_threshold_pages": 50,
+  "volume_discount_multiplier": 0.85,
+  "last_updated": "2026-03-17",
+  "note": "Date reale colectate prin Playwright MCP de pe 12 site-uri romanesti de traduceri. Focus: EN↔RO tehnic/industrial."
+}

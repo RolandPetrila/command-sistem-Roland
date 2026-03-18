@@ -1,0 +1,114 @@
+{
+  "competitors": [
+    {
+      "name": "Activ Traduceri",
+      "url": "activ-traduceri.ro",
+      "location": "Bucuresti",
+      "rates": {
+        "technical": {"per_page": 32.5, "note": "30-35 RON, tehnic personalizat"},
+        "general": {"per_page": 32.5},
+        "legal": {"per_page": 35}
+      }
+    },
+    {
+      "name": "TopLevel Traduceri",
+      "url": "toplevel-traduceri.ro",
+      "location": "National",
+      "rates": {
+        "technical": {"per_page": 35, "note": "Personalizat, baza 30"},
+        "general": {"per_page": 30}
+      }
+    },
+    {
+      "name": "TraduceriLegalizate.com",
+      "url": "traducerilegalizate.com",
+      "location": "Bucuresti",
+      "rates": {
+        "technical": {"per_page": 40, "note": "Carti tehnice, manuale instructiuni"},
+        "general": {"per_page": 27.5}
+      }
+    },
+    {
+      "name": "NB Traduceri",
+      "url": "nbtraduceri.ro",
+      "location": "Bucuresti",
+      "rates": {
+        "technical": {"per_page": 32, "note": "Baza 27, medicale 35"},
+        "general": {"per_page": 27}
+      }
+    },
+    {
+      "name": "Tradutex",
+      "url": "tradutex.ro",
+      "location": "Brasov",
+      "rates": {
+        "technical": {"per_page": 50, "note": "Premium, ISO 9001, baza 45+"},
+        "general": {"per_page": 45}
+      }
+    },
+    {
+      "name": "traduceri-autorizate.com",
+      "url": "traduceri-autorizate.com",
+      "location": "National",
+      "rates": {
+        "technical": {"per_page": 32.5, "note": "Grupa 1: 30-35 RON"},
+        "general": {"per_page": 32.5}
+      }
+    },
+    {
+      "name": "Highlights Translations",
+      "url": "highlightstranslations.ro",
+      "location": "National",
+      "rates": {
+        "technical": {"per_page": 35},
+        "general": {"per_page": 30}
+      }
+    },
+    {
+      "name": "TraduceriSupralegalizari.ro",
+      "url": "traducerisupralegalizari.ro",
+      "location": "National",
+      "rates": {
+        "technical": {"per_page": 35, "note": "30-35 normal, 40-45 urgenta"},
+        "general": {"per_page": 32.5}
+      }
+    },
+    {
+      "name": "AS Traduceri",
+      "url": "astraduceri.ro",
+      "location": "National",
+      "rates": {
+        "technical": {"per_page": 35},
+        "general": {"per_page": 30}
+      }
+    },
+    {
+      "name": "AQualityTranslation",
+      "url": "aqualitytranslation.ro",
+      "location": "Bucuresti",
+      "rates": {
+        "technical": {"per_page": 35, "note": "De la 22 general, tehnic ~40"},
+        "general": {"per_page": 22}
+      }
+    },
+    {
+      "name": "Lexitrad",
+      "url": "lexitrad.ro",
+      "location": "Cluj-Napoca",
+      "rates": {
+        "technical": {"per_page": 42, "note": "35-45 range, Cluj"},
+        "general": {"per_page": 40}
+      }
+    },
+    {
+      "name": "Protranslate",
+      "url": "protranslate.net",
+      "location": "International",
+      "rates": {
+        "technical": {"per_page": 35, "per_word": 0.07, "note": "EUR 0.07/cuvant, international"}
+      }
+    }
+  ],
+  "last_updated": "2026-03-17",
+  "methodology": "Playwright MCP direct site visits, 12 Romanian translation agencies"
+}

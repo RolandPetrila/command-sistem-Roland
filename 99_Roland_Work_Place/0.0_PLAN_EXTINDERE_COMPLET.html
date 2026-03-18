@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roland - Command Center — Selector Funcții</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.6; padding: 24px; }
+  h1 { color: #38bdf8; font-size: 24px; margin-bottom: 4px; }
+  .project-name { color: #818cf8; font-size: 14px; font-weight: 400; margin-bottom: 4px; }
+  h2 { color: #818cf8; font-size: 18px; margin: 24px 0 12px; border-bottom: 1px solid #1e293b; padding-bottom: 8px; }
+  .subtitle { color: #94a3b8; font-size: 13px; margin-bottom: 24px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  .phase { background: #1e293b; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; border: 1px solid #334155; }
+  .phase-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .phase-title { color: #818cf8; font-size: 16px; font-weight: 600; }
+  .phase-badge { font-size: 11px; padding: 2px 10px; border-radius: 12px; font-weight: 600; }
+  .prio-urgenta { background: #dc262620; color: #f87171; border: 1px solid #dc262640; }
+  .prio-inalta { background: #f9731620; color: #fb923c; border: 1px solid #f9731640; }
+  .prio-medie { background: #eab30820; color: #fbbf24; border: 1px solid #eab30840; }
+  .prio-medie-inalta { background: #f9731620; color: #fbbf24; border: 1px solid #eab30840; }
+  .prio-normala { background: #22c55e20; color: #4ade80; border: 1px solid #22c55e40; }
+  .prio-normala-inalta { background: #22c55e20; color: #4ade80; border: 1px solid #22c55e40; }
+  .prio-scazuta { background: #64748b20; color: #94a3b8; border: 1px solid #64748b40; }
+  .phase-actions { display: flex; gap: 8px; }
+  .btn-sm { font-size: 11px; padding: 3px 10px; border-radius: 6px; border: 1px solid #475569; background: #334155; color: #cbd5e1; cursor: pointer; transition: all 0.2s; }
+  .btn-sm:hover { background: #475569; }
+  .feature { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-radius: 8px; transition: background 0.2s; }
+  .feature:hover { background: #33415540; }
+  .feature input[type="checkbox"] { margin-top: 4px; accent-color: #818cf8; width: 16px; height: 16px; cursor: pointer; }
+  .feature-text { flex: 1; }
+  .feature-id { color: #64748b; font-size: 12px; font-weight: 600; min-width: 36px; }
+  .feature-name { color: #e2e8f0; font-size: 14px; }
+  .feature-tech { color: #64748b; font-size: 12px; }
+  .feature-cost { color: #4ade80; font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .feature-cost.paid { color: #fbbf24; }
+  .feature.moved { opacity: 0.4; text-decoration: line-through; }
+  .feature.critical { border-left: 3px solid #f87171; padding-left: 9px; }
+  .phase-note { color: #94a3b8; font-size: 12px; font-style: italic; margin-top: 8px; padding-top: 8px; border-top: 1px solid #334155; }
+  .actions-bar { position: sticky; top: 0; z-index: 10; background: #0f172af0; backdrop-filter: blur(8px); padding: 16px 0; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #1e293b; }
+  .btn { padding: 10px 24px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-primary { background: #6366f1; color: white; }
+  .btn-primary:hover { background: #818cf8; }
+  .btn-secondary { background: #334155; color: #cbd5e1; border: 1px solid #475569; }
+  .btn-secondary:hover { background: #475569; }
+  .btn-success { background: #059669; color: white; }
+  .btn-success:hover { background: #10b981; }
+  .counter { color: #94a3b8; font-size: 13px; margin-left: auto; }
+  .counter strong { color: #38bdf8; }
+  .results { display: none; margin-top: 24px; }
+  .results.visible { display: block; }
+  .result-section { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .result-section h3 { margin-top: 0; }
+  .result-section.activ { border: 2px solid #22c55e40; }
+  .result-section.pending { border: 2px solid #f59e0b40; }
+  .result-item { padding: 6px 0; font-size: 14px; border-bottom: 1px solid #1e293b; }
+  .result-item:last-child { border-bottom: none; }
+  .tag-activ { color: #4ade80; font-weight: 600; }
+  .tag-pending { color: #fbbf24; font-weight: 600; }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: #059669; color: white; padding: 12px 24px; border-radius: 8px; font-size: 14px; display: none; z-index: 100; animation: fadeIn 0.3s; }
+  .stats-bar { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stat-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; min-width: 120px; }
+  .stat-label { color: #64748b; font-size: 11px; text-transform: uppercase; }
+  .stat-value { color: #38bdf8; font-size: 20px; font-weight: 700; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Roland - Command Center</h1>
+  <p class="project-name">Selector Funcții — Plan Extindere</p>
+  <p class="subtitle">Bifează funcțiile pe care le dorești ACUM, apoi apasă "Generează Plan" pentru a separa în ACTIV și PENDING. Copiază lista și transmite-o în Claude Code. <em style="color:#f87171">Post-audit arhitectural 2026-03-18 — 16 observații aplicate.</em></p>
+
+  <div class="stats-bar">
+    <div class="stat-card"><div class="stat-label">Faze</div><div class="stat-value" id="statPhases">11</div></div>
+    <div class="stat-card"><div class="stat-label">Features</div><div class="stat-value" id="statTotal">0</div></div>
+    <div class="stat-card"><div class="stat-label">Selectate</div><div class="stat-value" id="statSelected">0</div></div>
+    <div class="stat-card"><div class="stat-label">Cost estimat</div><div class="stat-value">~0 EUR</div></div>
+  </div>
+
+  <div class="actions-bar">
+    <button class="btn btn-primary" onclick="generatePlan()">Generează Plan</button>
+    <button class="btn btn-secondary" onclick="selectAll(true)">Selectează tot</button>
+    <button class="btn btn-secondary" onclick="selectAll(false)">Deselectează tot</button>
+    <button class="btn btn-success" onclick="exportText()">Exportă ca text</button>
+    <div class="counter">Selectate: <strong id="countSelected">0</strong> / <strong id="countTotal">0</strong></div>
+  </div>
+
+  <div id="phases"></div>
+  <div id="results" class="results"></div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+const PHASES = [
+  {
+    id: 8, name: "Deploy + PWA + Securitate", prio: "urgenta",
+    note: "⚠️ Wave 0 (refactorizare) OBLIGATORIU ca PRIMUL pas. Tailscale + HTTPS/TLS cert. API Key Vault (scope redus). Estimare: 3-4 sesiuni.",
+    features: [
+      { id: "8.0", name: "⚠️ Refactorizare modulară OBLIGATORIE (Wave 0)", tech: "Module auto-discovery, sidebar dinamic, migrare DB, activity log→SQLite, URL fix, notificări infra", cost: "Gratuit", critical: true },
+      { id: "8.1", name: "Inițializare repository GitHub", tech: "git + .gitignore complet", cost: "Gratuit" },
+      { id: "8.2", name: "Tailscale setup + HTTPS/TLS", tech: "Tailscale CLI + MagicDNS + tailscale cert + uvicorn SSL + CORS dinamic", cost: "Gratuit" },
+      { id: "8.3", name: "PWA Android installabil (necesită HTTPS!)", tech: "vite-plugin-pwa + manifest.json + service worker", cost: "Gratuit" },
+      { id: "8.4", name: "Mod offline parțial (necesită PWA!)", tech: "Service worker cache pt tool-uri statice", cost: "Gratuit" },
+      { id: "8.5", name: "API Key Vault (scope redus: doar chei API)", tech: "cryptography (Fernet) + master password → DeepL, OAuth, GitHub token", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 9, name: "Modul Traducător Integrat", prio: "inalta",
+    note: "Multi-provider: DeepL → Google → Azure → Gemini → Claude → OpenAI. Split recomandat: 9A (text+TM+glosar) / 9B (fișier+layout+export). Estimare: 7-10 sesiuni.",
+    features: [
+      { id: "9.1", name: "Traducere text multi-provider (6 provideri cu fallback)", tech: "API chain: DeepL → Google → Azure → Gemini → Claude → OpenAI", cost: "Inclus abonament" },
+      { id: "9.2", name: "Traducere fișier PDF/DOCX cu păstrare layout", tech: "Google Translate + Azure Translator + DeepL files", cost: "Inclus abonament" },
+      { id: "9.3", name: "Translation Memory (TM)", tech: "SQLite FTS5, match pe segmente similare", cost: "Gratuit" },
+      { id: "9.4", name: "Glosar tehnic personalizabil", tech: "SQLite tabel terms(ro, en, domain) + UI", cost: "Gratuit" },
+      { id: "9.5", name: "Comparare side-by-side", tech: "React split-pane, sync scroll", cost: "Gratuit" },
+      { id: "9.6", name: "Export traducere PDF/DOCX", tech: "python-docx + reportlab", cost: "Gratuit" },
+      { id: "9.7", name: "Detecție limbă automată", tech: "langdetect library", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 10, name: "Facturare & Evidență Clienți", prio: "inalta",
+    note: "Ecosistem: fișier → preț → factură → statistici. DB COMUNĂ. 10.7=smtplib (upgrade Gmail API la 13.3). 10.8=pipeline reutilizabil cu 15.5.",
+    features: [
+      { id: "10.1", name: "Generator facturi PDF", tech: "reportlab + template Jinja2", cost: "Gratuit" },
+      { id: "10.2", name: "Evidență clienți (CRUD)", tech: "SQLite tabel clients + React forms", cost: "Gratuit" },
+      { id: "10.3", name: "Istoric comenzi per client", tech: "SQLite join clients ↔ calculations", cost: "Gratuit" },
+      { id: "10.4", name: "Raport lunar venituri (grafice)", tech: "Recharts + SQLite agregări", cost: "Gratuit" },
+      { id: "10.5", name: "Export rapoarte Excel/CSV", tech: "openpyxl", cost: "Gratuit" },
+      { id: "10.6", name: "Template documente (contracte, oferte)", tech: "python-docx + Jinja2", cost: "Gratuit" },
+      { id: "10.7", name: "Automatizare email către clienți", tech: "smtplib + App Password (simplu). Upgrade → Gmail API la 13.3", cost: "Gratuit" },
+      { id: "10.8", name: "Scanner facturi primite (OCR → serviciu reutilizabil)", tech: "pytesseract + Gemini Flash → pipeline comun cu 15.5", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 11, name: "Tool-uri Rapide (Quick Wins)", prio: "medie-inalta",
+    note: "Command Palette (11.0) mutat din 16.4 — navigare critică cu 10+ module. 7 items total. Estimare: 1-2 sesiuni.",
+    features: [
+      { id: "11.0", name: "⬆️ Command Palette (Ctrl+K) — mutat din 16.4", tech: "React dialog modal + fuzzy search (fuse.js), navigare rapidă module", cost: "Gratuit" },
+      { id: "11.1", name: "QR Generator", tech: "qrcode.react (JS) sau qrcode (Python)", cost: "Gratuit" },
+      { id: "11.2", name: "Notepad rapid cu salvare", tech: "SQLite + textarea cu auto-save", cost: "Gratuit" },
+      { id: "11.3", name: "Calculator avansat", tech: "mathjs library", cost: "Gratuit" },
+      { id: "11.4", name: "Voice Notes + Transcriere", tech: "Web Speech API / Whisper API", cost: "Gratuit / ~0.006$/min" },
+      { id: "11.5", name: "Generator coduri de bare", tech: "python-barcode (EAN-13, Code128)", cost: "Gratuit" },
+      { id: "11.6", name: "Password Generator", tech: "Frontend JS (lungime, caractere speciale)", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 12, name: "Convertor Fișiere Universal", prio: "medie",
+    note: "12.2: docx2pdf (Word COM pe Windows) principal, LibreOffice headless fallback. Estimare: 2-3 sesiuni.",
+    features: [
+      { id: "12.1", name: "PDF → DOCX", tech: "pdf2docx library", cost: "Gratuit" },
+      { id: "12.2", name: "DOCX → PDF", tech: "docx2pdf (Word COM, principal) + LibreOffice (fallback)", cost: "Gratuit" },
+      { id: "12.3", name: "Imagine → Text (OCR)", tech: "pytesseract + Tesseract", cost: "Gratuit" },
+      { id: "12.4", name: "CSV/Excel ↔ JSON", tech: "pandas / openpyxl", cost: "Gratuit" },
+      { id: "12.5", name: "Compresie ZIP", tech: "zipfile stdlib", cost: "Gratuit" },
+      { id: "12.6", name: "Redimensionare imagini batch", tech: "Pillow", cost: "Gratuit" },
+      { id: "12.7", name: "Merge PDF-uri", tech: "PyMuPDF (deja instalat)", cost: "Gratuit" },
+      { id: "12.8", name: "Split PDF pe pagini", tech: "PyMuPDF", cost: "Gratuit" },
+      { id: "12.9", name: "Compresie imagini", tech: "Pillow / WebP", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 13, name: "Integrări Externe (Gmail, Drive, Calendar, GitHub)", prio: "medie-inalta",
+    note: "Google Cloud Console + OAuth (30 min, o dată). 13.3 = upgrade email de la smtplib (10.7). Estimare: 3-4 sesiuni.",
+    features: [
+      { id: "13.1", name: "Google OAuth2 flow", tech: "google-auth-oauthlib", cost: "Gratuit" },
+      { id: "13.2", name: "Gmail — inbox sumar", tech: "Gmail API", cost: "Gratuit" },
+      { id: "13.3", name: "Gmail — citire + trimitere (upgrade de la smtplib 10.7)", tech: "Gmail API", cost: "Gratuit" },
+      { id: "13.4", name: "Gmail — căutare inbox", tech: "Gmail API search", cost: "Gratuit" },
+      { id: "13.5", name: "Google Drive — navigare + download", tech: "Drive API v3", cost: "Gratuit" },
+      { id: "13.6", name: "Google Drive — upload", tech: "Drive API v3", cost: "Gratuit" },
+      { id: "13.7", name: "Google Calendar — agenda zilei", tech: "Calendar API v3", cost: "Gratuit" },
+      { id: "13.8", name: "Google Calendar — adăugare events", tech: "Calendar API v3", cost: "Gratuit" },
+      { id: "13.9", name: "GitHub — repo-uri + commits", tech: "PyGithub / REST API", cost: "Gratuit" },
+      { id: "13.10", name: "GitHub — issues + PR status", tech: "GitHub REST API", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 14, name: "Manager Fișiere Avansat + Căutare Fulltext", prio: "normala",
+    note: "Eliminat: partajare temporară fișiere (single-user). Estimare: 3-4 sesiuni.",
+    features: [
+      { id: "14.1", name: "File browser cu preview", tech: "PDF.js + img preview", cost: "Gratuit" },
+      { id: "14.2", name: "Operații CRUD fișiere", tech: "pathlib Python", cost: "Gratuit" },
+      { id: "14.3", name: "Upload fișiere din browser", tech: "FastAPI UploadFile", cost: "Gratuit" },
+      { id: "14.4", name: "Download fișiere pe device", tech: "FastAPI FileResponse", cost: "Gratuit" },
+      { id: "14.5", name: "Căutare fulltext în documente", tech: "SQLite FTS5 + indexare", cost: "Gratuit" },
+      { id: "14.6", name: "Tag-uri personalizate pe fișiere", tech: "SQLite file_tags", cost: "Gratuit" },
+      { id: "14.7", name: "Foldere favorite / shortcuts", tech: "SQLite + UI", cost: "Gratuit" },
+      { id: "14.8", name: "Duplicate finder (hash)", tech: "hashlib.md5()", cost: "Gratuit" },
+      { id: "14.9", name: "Organizare automată (reguli)", tech: "watchdog library", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 15, name: "Inteligență Artificială pe Documente", prio: "normala-inalta",
+    note: "100% GRATUIT — Gemini Flash/Pro (principal) + OpenAI/Groq/Azure (fallback). 15.5 reutilizează pipeline 10.8. 15.7 RAG = OPȚIONAL. Estimare: 7-10 sesiuni.",
+    features: [
+      { id: "15.1", name: "Chat AI integrat în panou", tech: "Gemini Flash/Pro + OpenAI free + Groq (Llama 3.1) + streaming", cost: "Gratuit" },
+      { id: "15.2", name: "Rezumat automat document", tech: "Gemini Flash + PyMuPDF", cost: "Gratuit" },
+      { id: "15.3", name: "Q&A pe fișier", tech: "Gemini Flash + context, fallback OpenAI/Groq", cost: "Gratuit" },
+      { id: "15.4", name: "Clasificare tip document", tech: "Gemini Flash / regex", cost: "Gratuit" },
+      { id: "15.5", name: "Extragere date structurate (pipeline reutilizabil 10.8)", tech: "Gemini Flash → JSON. Nu reconstruiește, doar template-uri noi", cost: "Gratuit" },
+      { id: "15.6", name: "Redenumire inteligentă fișiere", tech: "Gemini Flash analizează conținut", cost: "Gratuit" },
+      { id: "15.7", name: "RAG — chatbot pe documente [OPȚIONAL]", tech: "FTS5 + Gemini direct (simplu) SAU Gemini embeddings + FAISS", cost: "Gratuit" },
+      { id: "15.8", name: "Quality assessment traducere", tech: "Gemini Pro compară original vs traducere", cost: "Gratuit" },
+      { id: "15.9", name: "OCR batch cu AI post-procesare", tech: "pytesseract + Gemini Flash structurează", cost: "Gratuit" },
+      { id: "15.10", name: "Comparare documente (diff)", tech: "difflib Python + UI side-by-side", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 16, name: "Automatizări & Shortcuts", prio: "normala",
+    note: "16.4 MUTAT → 11.0. 16.6 split: Parte A (infra toast+DB+WS) = Wave 0, Parte B (polish) = aici. Estimare: 4-5 sesiuni.",
+    features: [
+      { id: "16.1", name: "Task scheduler vizual (cron-like)", tech: "APScheduler + UI", cost: "Gratuit" },
+      { id: "16.2", name: "Web scraping wizard", tech: "BeautifulSoup + Playwright", cost: "Gratuit" },
+      { id: "16.3", name: "Shortcuts personalizate (butoane)", tech: "SQLite + subprocess", cost: "Gratuit" },
+      { id: "16.4", name: "❌ Command Palette — MUTAT → 11.0", tech: "Vezi Faza 11 item 11.0", cost: "—", moved: true },
+      { id: "16.5", name: "Moduri de lucru (Focus/Dashboard/Finance)", tech: "Layout presets localStorage", cost: "Gratuit" },
+      { id: "16.6", name: "Notificări unificate (Parte B — polish)", tech: "Parte A (infra) = Wave 0. Parte B: preferințe, grupare, muting, digest", cost: "Gratuit" },
+      { id: "16.7", name: "Monitorizare uptime platforme proprii", tech: "httpx ping + WebSocket alertă", cost: "Gratuit" },
+      { id: "16.8", name: "API Tester simplu (Postman-like)", tech: "fetch() + React form", cost: "Gratuit" },
+      { id: "16.9", name: "Webhook generic (n8n, altele)", tech: "Webhook endpoint + buton panou", cost: "Gratuit" },
+      { id: "16.10", name: "Health Monitor & Diagnostics + Self-healing", tech: "WebSocket log + pattern matching + fix automat", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 17, name: "Rapoarte, Statistici & Polish", prio: "scazuta",
+    note: "Eliminat: time tracker. 17.7 necesită PWA (8.3). 17.8 necesită Drive API (13.5-13.6). Estimare: 3-4 sesiuni.",
+    features: [
+      { id: "17.1", name: "Statistici spațiu disc (vizual)", tech: "psutil + Recharts", cost: "Gratuit" },
+      { id: "17.2", name: "Timeline fișiere modificate recent", tech: "os.stat() + Recharts", cost: "Gratuit" },
+      { id: "17.3", name: "Fișiere neutilizate (30/60/90 zile)", tech: "os.path.getatime()", cost: "Gratuit" },
+      { id: "17.4", name: "Jurnal zilnic (note per zi)", tech: "SQLite + Markdown editor", cost: "Gratuit" },
+      { id: "17.5", name: "Colecție linkuri organizate", tech: "SQLite + categorii + tags", cost: "Gratuit" },
+      { id: "17.6", name: "Dark/Light mode", tech: "Tailwind dark: classes", cost: "Gratuit" },
+      { id: "17.7", name: "Notificări push (necesită PWA 8.3!)", tech: "Web Push API + service worker", cost: "Gratuit" },
+      { id: "17.8", name: "Backup automat → Drive (necesită 13.5-13.6!)", tech: "Drive API + scheduler", cost: "Gratuit" },
+      { id: "17.9", name: "Export raport complet PDF", tech: "reportlab", cost: "Gratuit" },
+    ]
+  },
+  {
+    id: 18, name: "Modul ITP CIP Inspection", prio: "scazuta",
+    note: "Evidență internă — NU scraping RAR (risc legal). 18.7 necesită notificări infra (16.6A/Wave 0). Estimare: 2-3 sesiuni.",
+    features: [
+      { id: "18.1", name: "Evidență ITP-uri (CRUD)", tech: "SQLite + React forms", cost: "Gratuit" },
+      { id: "18.2", name: "Import CSV/Excel ITP-uri existente", tech: "openpyxl / pandas → SQLite", cost: "Gratuit" },
+      { id: "18.3", name: "Statistici: ITP-uri/zi/lună", tech: "Recharts + SQLite", cost: "Gratuit" },
+      { id: "18.4", name: "Rata admis/respins per perioadă", tech: "Recharts pie/bar + SQLite", cost: "Gratuit" },
+      { id: "18.5", name: "Venituri ITP per perioadă", tech: "Recharts + SQLite", cost: "Gratuit" },
+      { id: "18.6", name: "Top mărci auto (statistici)", tech: "SQLite GROUP BY + Recharts", cost: "Gratuit" },
+      { id: "18.7", name: "Alertă clienți: ITP expiră 30 zile (necesită 16.6A!)", tech: "SQLite query + notificare sistem", cost: "Gratuit" },
+      { id: "18.8", name: "Export rapoarte ITP Excel/PDF", tech: "openpyxl + reportlab", cost: "Gratuit" },
+    ]
+  }
+];
+
+function render() {
+  const container = document.getElementById('phases');
+  let html = '';
+  let total = 0;
+
+  PHASES.forEach(phase => {
+    total += phase.features.length;
+    html += `<div class="phase">
+      <div class="phase-header">
+        <div>
+          <span class="phase-title">FAZA ${phase.id} — ${phase.name}</span>
+          <span class="phase-badge prio-${phase.prio}">${phase.prio.toUpperCase().replace('-', ' ')}</span>
+        </div>
+        <div class="phase-actions">
+          <button class="btn-sm" onclick="togglePhase(${phase.id}, true)">Toate</button>
+          <button class="btn-sm" onclick="togglePhase(${phase.id}, false)">Niciuna</button>
+        </div>
+      </div>`;
+
+    phase.features.forEach(f => {
+      const isPaid = f.cost !== 'Gratuit' && f.cost !== '—';
+      const extraClass = f.moved ? ' moved' : (f.critical ? ' critical' : '');
+      html += `<div class="feature${extraClass}">
+        <input type="checkbox" id="f_${f.id}" data-phase="${phase.id}" data-id="${f.id}" data-name="${f.name}" onchange="updateCount()"${f.moved ? ' disabled' : ''}>
+        <span class="feature-id">${f.id}</span>
+        <div class="feature-text">
+          <span class="feature-name">${f.name}</span>
+          <div class="feature-tech">${f.tech}</div>
+        </div>
+        <span class="feature-cost ${isPaid ? 'paid' : ''}">${f.cost}</span>
+      </div>`;
+    });
+
+    if (phase.note) {
+      html += `<div class="phase-note">${phase.note}</div>`;
+    }
+
+    html += '</div>';
+  });
+
+  container.innerHTML = html;
+  document.getElementById('countTotal').textContent = total;
+  document.getElementById('statTotal').textContent = total;
+  updateCount();
+}
+
+function updateCount() {
+  const checked = document.querySelectorAll('#phases input[type="checkbox"]:checked').length;
+  document.getElementById('countSelected').textContent = checked;
+  document.getElementById('statSelected').textContent = checked;
+}
+
+function togglePhase(phaseId, state) {
+  document.querySelectorAll(`#phases input[data-phase="${phaseId}"]`).forEach(cb => cb.checked = state);
+  updateCount();
+}
+
+function selectAll(state) {
+  document.querySelectorAll('#phases input[type="checkbox"]').forEach(cb => cb.checked = state);
+  updateCount();
+}
+
+function generatePlan() {
+  const activ = [];
+  const pending = [];
+
+  PHASES.forEach(phase => {
+    phase.features.forEach(f => {
+      const cb = document.getElementById(`f_${f.id}`);
+      const item = { id: f.id, name: f.name, phase: phase.id, phaseName: phase.name };
+      if (cb && cb.checked) activ.push(item);
+      else pending.push(item);
+    });
+  });
+
+  let html = '<div class="result-section activ"><h3 class="tag-activ">ACTIV — De implementat acum (' + activ.length + ' funcții)</h3>';
+  if (activ.length === 0) html += '<p style="color:#64748b;padding:8px 0;">Nicio funcție selectată.</p>';
+  else {
+    let currentPhase = -1;
+    activ.forEach(item => {
+      if (item.phase !== currentPhase) {
+        currentPhase = item.phase;
+        html += `<div style="color:#818cf8;font-size:13px;font-weight:600;margin-top:12px;">FAZA ${item.phase} — ${item.phaseName}</div>`;
+      }
+      html += `<div class="result-item">- [x] ${item.id} ${item.name}</div>`;
+    });
+  }
+  html += '</div>';
+
+  html += '<div class="result-section pending"><h3 class="tag-pending">PENDING — Rămân pentru mai târziu (' + pending.length + ' funcții)</h3>';
+  if (pending.length === 0) html += '<p style="color:#64748b;padding:8px 0;">Totul selectat!</p>';
+  else {
+    let currentPhase = -1;
+    pending.forEach(item => {
+      if (item.phase !== currentPhase) {
+        currentPhase = item.phase;
+        html += `<div style="color:#818cf8;font-size:13px;font-weight:600;margin-top:12px;">FAZA ${item.phase} — ${item.phaseName}</div>`;
+      }
+      html += `<div class="result-item">- [ ] ${item.id} ${item.name}</div>`;
+    });
+  }
+  html += '</div>';
+
+  const results = document.getElementById('results');
+  results.innerHTML = html;
+  results.classList.add('visible');
+  results.scrollIntoView({ behavior: 'smooth' });
+}
+
+function exportText() {
+  const activ = [];
+  const pending = [];
+
+  PHASES.forEach(phase => {
+    phase.features.forEach(f => {
+      const cb = document.getElementById(`f_${f.id}`);
+      const line = `${f.id} — ${f.name}`;
+      if (cb && cb.checked) activ.push({ line, phase: phase.id, phaseName: phase.name });
+      else pending.push({ line, phase: phase.id, phaseName: phase.name });
+    });
+  });
+
+  let text = '=== ROLAND COMMAND CENTER — PLAN SELECTAT ===\n\n';
+  text += '=== ACTIV — De implementat acum ===\n';
+  let cp = -1;
+  activ.forEach(item => {
+    if (item.phase !== cp) { cp = item.phase; text += `\nFAZA ${item.phase} — ${item.phaseName}\n`; }
+    text += '- [x] ' + item.line + '\n';
+  });
+  text += '\n=== PENDING — Rămân pentru mai târziu ===\n';
+  cp = -1;
+  pending.forEach(item => {
+    if (item.phase !== cp) { cp = item.phase; text += `\nFAZA ${item.phase} — ${item.phaseName}\n`; }
+    text += '- [ ] ' + item.line + '\n';
+  });
+
+  navigator.clipboard.writeText(text).then(() => showToast('Copiat în clipboard!'));
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2500);
+}
+
+render();
+</script>
+</body>
+</html>
