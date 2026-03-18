@@ -30,9 +30,10 @@ async def init_db() -> None:
     db_path = str(settings.db_path)
 
     async with aiosqlite.connect(db_path) as db:
-        # Activare foreign keys
+        # Activare foreign keys + performance
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("PRAGMA journal_mode = WAL")
+        await db.execute("PRAGMA busy_timeout = 5000")
 
         # Creează tabelele
         for table_sql in CREATE_TABLES:
@@ -73,6 +74,7 @@ async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
     db.row_factory = aiosqlite.Row
     try:
         await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute("PRAGMA busy_timeout = 5000")
         yield db
     finally:
         await db.close()

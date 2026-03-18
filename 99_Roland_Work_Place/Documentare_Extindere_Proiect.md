@@ -92,12 +92,11 @@ Discuția de clarificare a validat, filtrat și completat acest plan.
 | 8.2 Tailscale setup | Mesh VPN, IP privat, acces de pe telefon |
 | 8.5 Password Vault | Master password + stocare criptată (parole, conturi, API keys) — ca un KeePass integrat |
 
-**Discuție Password Vault:**
-- Utilizatorul a cerut explicit un vault de parole integrat
+**Discuție Password Vault → API Key Vault (scope redus post-audit IMPROVEMENT-14):**
+- Scope redus la **doar chei API ale aplicației** (DeepL, Google OAuth, GitHub token)
 - Funcționează cu master password (nu JWT)
-- Stochează: parole site-uri, conturi, API keys, note securizate
 - Criptare: biblioteca `cryptography` (Fernet) + derivare cheie din master password
-- Acces: protejat de master password la deschidere
+- NU este password manager complet (a fost redus din KeePass la API key store)
 
 ### Faza 9 — Traducător Integrat (ACTUALIZATĂ)
 
