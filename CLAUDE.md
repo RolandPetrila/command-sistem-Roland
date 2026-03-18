@@ -33,13 +33,15 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 ### Audit Arhitectural (2026-03-18) — COMPLET
 16 observații (4 critice), toate rezolvate în plan. Detalii: `99_Roland_Work_Place/Documentare_Extindere_Proiect.md` secțiunea 10.
 
-### Următorul pas: Wave 0 — Fundație
-1. `git init` + `.gitignore`
-2. Refactorizare modulară (`backend/modules/` + `frontend/src/modules/`)
-3. Migrare DB (SQL numerotate + `schema_version`)
-4. Fix URL-uri hardcoded (`client.js` → `window.location.origin`)
-5. Activity log → SQLite
-6. Notificări infrastructură (toast + WebSocket)
+### Wave 0 — Fundație (2026-03-18) — IN PROGRESS
+- [x] `git init` + `.gitignore` complet
+- [x] Fix URL-uri hardcoded (`client.js` → URL dinamic, WebSocket protocol dinamic)
+- [x] Sistem migrare DB (`migrations/` + `schema_version` + `run_migrations()`)
+- [x] Module auto-discovery backend (`module_discovery.py` + `modules/calculator/`)
+- [x] Frontend manifest (`modules/manifest.js` + sidebar dinamic cu categorii colapsibile)
+- [x] Activity log → SQLite (migrare completă, async, JSON înlocuit)
+- [x] `busy_timeout = 5000` adăugat (concurrency fix)
+- [ ] Notificări infrastructură (toast + WebSocket) — amânat, se adaugă când e nevoie
 
 **Roadmap complet:** `99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md` (Fazele 8-18, ~40-55 sesiuni)
 **Documentare:** `99_Roland_Work_Place/Documentare_Extindere_Proiect.md`
@@ -82,42 +84,40 @@ python calibrate.py --verbose
 
 ## Architecture
 
-### Structură actuală (pre-refactorizare)
 - **Backend**: FastAPI (Python 3.13) + SQLite (aiosqlite) + WebSocket progress
+- **Module system**: `backend/modules/[modul]/` auto-discovered, `modules/calculator/` = modul fondator
 - **Frontend**: React 18 + Vite + Tailwind CSS + Recharts
-- **PDF Analysis**: PyMuPDF + pdfplumber + pytesseract (OCR)
-- **DOCX Analysis**: python-docx
+- **Navigation**: `frontend/src/modules/manifest.js` → sidebar dinamic cu categorii colapsibile
+- **DB**: SQLite unic cu sistem migrare SQL (`migrations/` + `schema_version`)
+- **PDF/DOCX**: PyMuPDF + pdfplumber + pytesseract + python-docx
 - **Pricing**: Ensemble of 3 methods (base_rate, word_rate, KNN similarity)
-- **Validation**: 3 levels (statistical, similarity, consistency)
-
-### Structură planificată (post-Wave 0)
-- **Backend**: `backend/modules/[modul]/router.py` — module auto-discovery
-- **Frontend**: `frontend/src/modules/[modul]/` — route manifest dinamic
-- **Sidebar**: Dinamic cu categorii colapsibile (nu static 6 items)
-- **DB**: SQLite unic cu sistem migrare (SQL numerotate + `schema_version`)
-- **Notificări**: Toast component + tabelă SQLite + WebSocket broadcast
-- **AI Providers**: Gemini Flash/Pro (principal, gratuit), OpenAI free + Groq free (fallback) — zero costuri
+- **AI Providers** (planificat Faza 15): Gemini Flash/Pro (principal) + OpenAI/Groq/Azure free (fallback)
 
 ## Key Files
 
 ### Backend (backend/)
-- `app/main.py` — FastAPI entry point, CORS, WebSocket
+- `app/main.py` — FastAPI entry point, CORS, WebSocket, module auto-discovery
+- `app/module_discovery.py` — Scanează `modules/` pentru routere
 - `app/config.py` — Settings (pydantic-settings, relative paths via `Path(__file__)`)
 - `app/core/analyzer.py` — PDF/DOCX feature extraction
 - `app/core/pricing/` — 3 pricing methods + ensemble combiner
 - `app/core/calibration.py` — Auto-calibration with scipy.optimize
 - `app/core/validation.py` — 3-level validation
 - `app/core/self_learning.py` — User-validated prices → recalibration
-- `app/core/activity_log.py` — Centralized activity logging (activity_log.json, max 1000 entries)
-- `app/api/routes_*.py` — API endpoints (upload, calculate, history, calibrate, files, settings, competitors, activity-log)
-- `app/db/` — SQLite database + models
+- `app/core/activity_log.py` — Activity logging (async, SQLite-backed)
+- `app/api/routes_*.py` — API endpoints (registered via `modules/calculator/`)
+- `app/db/database.py` — SQLite + migration runner (`run_migrations()`)
+- `migrations/` — SQL numerotate (001_initial, 002_activity_log)
+- `modules/calculator/__init__.py` — MODULE_INFO cu 7 routere
 - `calibrate.py` — CLI calibration script
 
 ### Frontend (frontend/src/)
-- `App.jsx` — Main layout + routing (6 pages)
+- `App.jsx` — Main layout + routing (6 pages), pageTitles din manifest
+- `modules/manifest.js` — Sursa unică navigare (categorii + routes + icons)
 - `pages/` — DashboardPage, UploadPage, HistoryPage, CalibrationPage, FileBrowserPage, SettingsPage
+- `components/Layout/Sidebar.jsx` — Dinamic din manifest, categorii colapsibile
 - `components/` — Upload, Price, History, Calibration, FileBrowser, Settings, Dashboard
-- `api/client.js` — Axios + WebSocket helpers — **⚠️ conține URL hardcoded, fix planificat Wave 0**
+- `api/client.js` — Axios + WebSocket helpers (URL-uri dinamice, fără hardcoded)
 
 ### Reference Data
 - `Fisiere_Reper_Tarif/Pret_Intreg_100la100/` — 26 reference PDFs (120-10820 RON, mean ~1750 RON)
@@ -142,7 +142,8 @@ python calibrate.py --verbose
 | 7 — Enhancements | DONE | DTP auto, calibration protections, multi-file calc, activity logging, competitor research |
 | 8 — Dashboard+Cal | DONE | Activity Log dashboard, calibration run, multi-file E2E test, auto-update rules |
 | Audit + Planning | DONE | Architectural audit (16 obs.), Wave planning, PLAN_EXTINDERE + Documentare (2026-03-18) |
-| Wave 0 — Fundație | NEXT | Git init, refactorizare modulară, migrare DB, URL fix, notificări infra |
+| Wave 0 — Fundație | DONE | Git init, module auto-discovery, DB migrations, URL fix, activity log→SQLite, dynamic sidebar (2026-03-18) |
+| Wave 1 — Deploy | NEXT | Tailscale + HTTPS/TLS, PWA, API Key Vault, backup script, auto-start |
 
 ## Conventions
 
@@ -155,7 +156,8 @@ python calibrate.py --verbose
 - Access: localhost (curent) → Tailscale multi-device (planificat Wave 1)
 - AI providers: **exclusiv gratuit** — Gemini Flash/Pro (principal), OpenAI free / Groq free / Azure free (fallback)
 - Documentation and work files only in `99_Roland_Work_Place/`
-- Modular architecture: `backend/modules/` + `frontend/src/modules/` (planificat Wave 0)
+- Modular architecture: `backend/modules/` + `frontend/src/modules/manifest.js` (implementat Wave 0)
+- New modules: add folder in `backend/modules/[name]/` with `MODULE_INFO` + entry in `manifest.js`
 
 ## Auto-Update Rules
 
@@ -221,5 +223,5 @@ python calibrate.py --verbose
 - config.py uses relative paths (`Path(__file__).resolve()`) — works from any location
 - Windows: uvicorn child workers zombie la restart — trebuie kill toate procesele python.exe
 - ⚠️ **CRITICAL-1:** PWA necesită HTTPS — Tailscale dă IP 100.x.y.z, nu localhost → service worker refuză fără TLS cert
-- ⚠️ **CRITICAL-2:** `frontend/src/api/client.js` liniile 3, 121 — `localhost:8000` hardcoded → eșec pe Android via Tailscale
-- ⚠️ **MISSING-16:** Proiectul NU are Git repo — `git init` = primul pas din Wave 0
+- ~~CRITICAL-2:~~ REZOLVAT — client.js folosește URL-uri dinamice (Wave 0)
+- ~~MISSING-16:~~ REZOLVAT — Git repo inițializat (Wave 0)
