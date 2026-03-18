@@ -242,6 +242,17 @@ Rezultat vizibil: [ce vede utilizatorul diferit după implementare]
 
 **Origine:** Cerere explicită utilizator (2026-03-18).
 
+### Regula 9 — Validare obligatorie între Wave-uri (nouă)
+**Trigger:** La finalizarea implementării unui Wave sau Fază.
+**Obligatoriu** — NU se trece la wave-ul următor fără validare completă.
+
+1. După implementarea unui Wave, **testează** toate funcționalitățile implementate
+2. Dacă ceva nu funcționează → **fix imediat**, nu se trece mai departe
+3. Abia când totul e validat 100% funcțional → se poate începe wave-ul următor
+4. Utilizatorul confirmă explicit că a testat și e mulțumit
+
+**Origine:** Cerere explicită utilizator — `Cerinta_Roland.md` punct 5 (2026-03-18).
+
 ## Known Issues / Notes
 
 - Windows console (cp1252) cannot print Romanian characters (ț, ă, etc.) — always set `PYTHONIOENCODING=utf-8`

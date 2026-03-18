@@ -14,6 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.core.activity_log import log_activity
 from app.db.database import get_db
 
 router = APIRouter(prefix="/api", tags=["notepad"])
@@ -63,7 +64,14 @@ async def create_note(note: NoteCreate):
             (note.title, note.content),
         )
         await db.commit()
-        return {"id": cursor.lastrowid, "title": note.title}
+        note_id = cursor.lastrowid
+
+    await log_activity(
+        action="notepad_create",
+        summary=f"Notă creată: {note.title}",
+        details={"note_id": note_id},
+    )
+    return {"id": note_id, "title": note.title}
 
 
 @router.put("/notes/{note_id}")
@@ -110,4 +118,10 @@ async def delete_note(note_id: int):
 
         await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         await db.commit()
-        return {"status": "deleted", "id": note_id}
+
+    await log_activity(
+        action="notepad_delete",
+        summary=f"Notă #{note_id} ștearsă",
+        details={"note_id": note_id},
+    )
+    return {"status": "deleted", "id": note_id}
