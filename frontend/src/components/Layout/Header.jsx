@@ -26,8 +26,8 @@ export default function Header({ pageTitles }) {
   }, []);
 
   return (
-    <header className="h-14 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between px-6 shrink-0 backdrop-blur-sm">
-      <h2 className="text-lg font-semibold text-slate-100">{pageTitle}</h2>
+    <header className="h-14 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between px-6 pl-14 lg:pl-6 shrink-0 backdrop-blur-sm">
+      <h2 className="text-lg font-semibold text-slate-100 truncate">{pageTitle}</h2>
 
       <div className="flex items-center gap-3">
         <div

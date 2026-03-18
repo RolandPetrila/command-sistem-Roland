@@ -1,15 +1,15 @@
 @echo off
 chcp 65001 >nul 2>&1
 
-title Calculator Pret Traduceri
+title Roland - Command Center
 color 1F
 cls
 
 echo.
 echo  +======================================================+
-echo  :       CALCULATOR PRET TRADUCERI                      :
-echo  :       Sistem automat de estimare preturi             :
-echo  :       pentru traduceri tehnice EN / RO               :
+echo  :       ROLAND - COMMAND CENTER                        :
+echo  :       Panou personal multifunctional                 :
+echo  :       Calculator + Traduceri + Quick Tools           :
 echo  +======================================================+
 echo.
 
@@ -53,12 +53,12 @@ echo  [4/4] Pornire servere...
 echo.
 
 :: Backend
-start "Backend" /min cmd /c "title Calculator - Backend (8000) & cd /d %~dp0backend & set PYTHONIOENCODING=utf-8 & python -m uvicorn app.main:app --reload --port 8000 --host 127.0.0.1"
+start "Backend" /min cmd /c "title Roland - Backend (8000) & cd /d %~dp0backend & set PYTHONIOENCODING=utf-8 & python -m uvicorn app.main:app --reload --reload-dir app --reload-dir modules --port 8000 --host 127.0.0.1"
 
 timeout /t 3 /nobreak >nul
 
 :: Frontend
-start "Frontend" /min cmd /c "title Calculator - Frontend (5173) & cd /d %~dp0frontend & npx vite --host 127.0.0.1 --port 5173"
+start "Frontend" /min cmd /c "title Roland - Frontend (5173) & cd /d %~dp0frontend & npx vite --host 127.0.0.1 --port 5173"
 
 echo.
 echo  ========================================================
@@ -75,6 +75,7 @@ start http://localhost:5173
 echo.
 echo  [OK] Sistem pornit!
 echo  Backend si Frontend ruleaza in ferestre minimizate.
-echo  Pentru oprire: inchide ferestrele "Calculator - Backend/Frontend".
+echo  Pentru oprire: inchide ferestrele "Roland - Backend/Frontend".
+echo  Auto-reload ACTIV: modificarile de cod se aplica automat.
 echo.
 pause

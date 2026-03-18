@@ -16,6 +16,8 @@ import {
   Settings,
   QrCode,
   StickyNote,
+  KeyRound,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 export const NAV_SECTIONS = [
@@ -35,9 +37,10 @@ export const NAV_SECTIONS = [
     ],
   },
   {
-    category: 'Quick Tools',
+    category: 'Instrumente',
     collapsible: true,
     items: [
+      { path: '/converter', label: 'Convertor Fisiere', icon: ArrowRightLeft },
       { path: '/qr', label: 'QR Generator', icon: QrCode },
       { path: '/notepad', label: 'Notepad', icon: StickyNote },
     ],
@@ -46,6 +49,7 @@ export const NAV_SECTIONS = [
     category: 'Sistem',
     collapsible: true,
     items: [
+      { path: '/vault', label: 'API Key Vault', icon: KeyRound },
       { path: '/files', label: 'Browser Fișiere', icon: FolderOpen },
       { path: '/settings', label: 'Setări', icon: Settings },
     ],

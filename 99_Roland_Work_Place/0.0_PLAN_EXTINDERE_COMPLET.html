@@ -37,6 +37,14 @@
   .feature-cost.paid { color: #fbbf24; }
   .feature.moved { opacity: 0.4; text-decoration: line-through; }
   .feature.critical { border-left: 3px solid #f87171; padding-left: 9px; }
+  .feature.done { border-left: 3px solid #22c55e; padding-left: 9px; opacity: 0.7; }
+  .feature.done .feature-name { text-decoration: line-through; color: #4ade80; }
+  .feature.done::after { content: '✅'; margin-left: 8px; }
+  .feature.in-progress { border-left: 3px solid #f59e0b; padding-left: 9px; }
+  .feature.in-progress .feature-name { color: #fbbf24; }
+  .feature.in-progress::after { content: '🔄'; margin-left: 8px; }
+  .feature.pending-user { border-left: 3px solid #64748b; padding-left: 9px; opacity: 0.5; }
+  .feature.pending-user .feature-name { color: #94a3b8; }
   .phase-note { color: #94a3b8; font-size: 12px; font-style: italic; margin-top: 8px; padding-top: 8px; border-top: 1px solid #334155; }
   .actions-bar { position: sticky; top: 0; z-index: 10; background: #0f172af0; backdrop-filter: blur(8px); padding: 16px 0; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #1e293b; }
   .btn { padding: 10px 24px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
@@ -76,6 +84,8 @@
     <div class="stat-card"><div class="stat-label">Faze</div><div class="stat-value" id="statPhases">11</div></div>
     <div class="stat-card"><div class="stat-label">Features</div><div class="stat-value" id="statTotal">0</div></div>
     <div class="stat-card"><div class="stat-label">Selectate</div><div class="stat-value" id="statSelected">0</div></div>
+    <div class="stat-card"><div class="stat-label">✅ Implementate</div><div class="stat-value" id="statDone" style="color:#4ade80">0</div></div>
+    <div class="stat-card"><div class="stat-label">Testat Android</div><div class="stat-value" id="statTestedAndroid" style="color:#38bdf8;font-size:16px">1/9</div></div>
     <div class="stat-card"><div class="stat-label">Cost estimat</div><div class="stat-value">~0 EUR</div></div>
   </div>
 
@@ -98,12 +108,12 @@ const PHASES = [
     id: 8, name: "Deploy + PWA + Securitate", prio: "urgenta",
     note: "⚠️ Wave 0 (refactorizare) OBLIGATORIU ca PRIMUL pas. Tailscale + HTTPS/TLS cert. API Key Vault (scope redus). Estimare: 3-4 sesiuni.",
     features: [
-      { id: "8.0", name: "⚠️ Refactorizare modulară OBLIGATORIE (Wave 0)", tech: "Module auto-discovery, sidebar dinamic, migrare DB, activity log→SQLite, URL fix, notificări infra", cost: "Gratuit", critical: true },
-      { id: "8.1", name: "Inițializare repository GitHub", tech: "git + .gitignore complet", cost: "Gratuit" },
-      { id: "8.2", name: "Tailscale setup + HTTPS/TLS", tech: "Tailscale CLI + MagicDNS + tailscale cert + uvicorn SSL + CORS dinamic", cost: "Gratuit" },
-      { id: "8.3", name: "PWA Android installabil (necesită HTTPS!)", tech: "vite-plugin-pwa + manifest.json + service worker", cost: "Gratuit" },
-      { id: "8.4", name: "Mod offline parțial (necesită PWA!)", tech: "Service worker cache pt tool-uri statice", cost: "Gratuit" },
-      { id: "8.5", name: "API Key Vault (scope redus: doar chei API)", tech: "cryptography (Fernet) + master password → DeepL, OAuth, GitHub token", cost: "Gratuit" },
+      { id: "8.0", name: "✅ Refactorizare modulară OBLIGATORIE (Wave 0)", tech: "Module auto-discovery, sidebar dinamic, migrare DB, activity log→SQLite, URL fix", cost: "Gratuit", done: true },
+      { id: "8.1", name: "✅ Inițializare repository Git", tech: "git init + .gitignore complet", cost: "Gratuit", done: true },
+      { id: "8.2", name: "✅ Tailscale setup + HTTPS/TLS", tech: "Tailscale + MagicDNS + TLS cert + uvicorn SSL + CORS dinamic + sidebar responsive", cost: "Gratuit", done: true },
+      { id: "8.3", name: "✅ PWA Android installabil", tech: "vite-plugin-pwa + manifest.json + service worker + workbox", cost: "Gratuit", done: true },
+      { id: "8.4", name: "✅ Mod offline parțial", tech: "Service worker precache 9 files + runtime cache API", cost: "Gratuit", done: true },
+      { id: "8.5", name: "✅ API Key Vault", tech: "cryptography (Fernet) + PBKDF2 + master password → modules/vault/", cost: "Gratuit", done: true },
     ]
   },
   {
@@ -137,28 +147,28 @@ const PHASES = [
     id: 11, name: "Tool-uri Rapide (Quick Wins)", prio: "medie-inalta",
     note: "Command Palette (11.0) mutat din 16.4 — navigare critică cu 10+ module. 7 items total. Estimare: 1-2 sesiuni.",
     features: [
-      { id: "11.0", name: "⬆️ Command Palette (Ctrl+K) — mutat din 16.4", tech: "React dialog modal + fuzzy search (fuse.js), navigare rapidă module", cost: "Gratuit" },
-      { id: "11.1", name: "QR Generator", tech: "qrcode.react (JS) sau qrcode (Python)", cost: "Gratuit" },
-      { id: "11.2", name: "Notepad rapid cu salvare", tech: "SQLite + textarea cu auto-save", cost: "Gratuit" },
-      { id: "11.3", name: "Calculator avansat", tech: "mathjs library", cost: "Gratuit" },
+      { id: "11.0", name: "✅ Command Palette (Ctrl+K) — mutat din 16.4", tech: "React dialog modal + fuse.js fuzzy search", cost: "Gratuit", done: true },
+      { id: "11.1", name: "✅ QR Generator", tech: "react-qr-code (SVG), download PNG, copy clipboard", cost: "Gratuit", done: true },
+      { id: "11.2", name: "✅ Notepad rapid cu salvare", tech: "SQLite + textarea + auto-save 800ms + activity log", cost: "Gratuit", done: true },
+      { id: "11.3", name: "⏸️ Calculator avansat", tech: "mathjs library", cost: "Gratuit", pendingUser: true },
       { id: "11.4", name: "Voice Notes + Transcriere", tech: "Web Speech API / Whisper API", cost: "Gratuit / ~0.006$/min" },
-      { id: "11.5", name: "Generator coduri de bare", tech: "python-barcode (EAN-13, Code128)", cost: "Gratuit" },
-      { id: "11.6", name: "Password Generator", tech: "Frontend JS (lungime, caractere speciale)", cost: "Gratuit" },
+      { id: "11.5", name: "⏸️ Generator coduri de bare", tech: "python-barcode (EAN-13, Code128)", cost: "Gratuit", pendingUser: true },
+      { id: "11.6", name: "⏸️ Password Generator", tech: "Frontend JS (lungime, caractere speciale)", cost: "Gratuit", pendingUser: true },
     ]
   },
   {
     id: 12, name: "Convertor Fișiere Universal", prio: "medie",
-    note: "12.2: docx2pdf (Word COM pe Windows) principal, LibreOffice headless fallback. Estimare: 2-3 sesiuni.",
+    note: "✅ DONE (2026-03-18). 12.2: docx2pdf (Word COM pe Windows) principal, LibreOffice headless fallback.",
     features: [
-      { id: "12.1", name: "PDF → DOCX", tech: "pdf2docx library", cost: "Gratuit" },
-      { id: "12.2", name: "DOCX → PDF", tech: "docx2pdf (Word COM, principal) + LibreOffice (fallback)", cost: "Gratuit" },
-      { id: "12.3", name: "Imagine → Text (OCR)", tech: "pytesseract + Tesseract", cost: "Gratuit" },
-      { id: "12.4", name: "CSV/Excel ↔ JSON", tech: "pandas / openpyxl", cost: "Gratuit" },
-      { id: "12.5", name: "Compresie ZIP", tech: "zipfile stdlib", cost: "Gratuit" },
-      { id: "12.6", name: "Redimensionare imagini batch", tech: "Pillow", cost: "Gratuit" },
-      { id: "12.7", name: "Merge PDF-uri", tech: "PyMuPDF (deja instalat)", cost: "Gratuit" },
-      { id: "12.8", name: "Split PDF pe pagini", tech: "PyMuPDF", cost: "Gratuit" },
-      { id: "12.9", name: "Compresie imagini", tech: "Pillow / WebP", cost: "Gratuit" },
+      { id: "12.1", name: "✅ PDF → DOCX", tech: "pdf2docx library", cost: "Gratuit", done: true, tested: false },
+      { id: "12.2", name: "✅ DOCX → PDF", tech: "docx2pdf (Word COM, principal) + LibreOffice (fallback)", cost: "Gratuit", done: true, tested: 'bug-fixed' },
+      { id: "12.3", name: "✅ Imagine → Text (OCR)", tech: "pytesseract + Tesseract", cost: "Gratuit", done: true, tested: false },
+      { id: "12.4", name: "✅ CSV/Excel ↔ JSON", tech: "pandas / openpyxl", cost: "Gratuit", done: true, tested: 'local' },
+      { id: "12.5", name: "✅ Compresie ZIP", tech: "zipfile stdlib", cost: "Gratuit", done: true, tested: 'local' },
+      { id: "12.6", name: "✅ Redimensionare imagini batch", tech: "Pillow", cost: "Gratuit", done: true, tested: 'android' },
+      { id: "12.7", name: "✅ Merge PDF-uri", tech: "PyMuPDF (deja instalat)", cost: "Gratuit", done: true, tested: false },
+      { id: "12.8", name: "✅ Split PDF pe pagini", tech: "PyMuPDF", cost: "Gratuit", done: true, tested: false },
+      { id: "12.9", name: "✅ Compresie imagini", tech: "Pillow / WebP", cost: "Gratuit", done: true, tested: false },
     ]
   },
   {
@@ -179,17 +189,17 @@ const PHASES = [
   },
   {
     id: 14, name: "Manager Fișiere Avansat + Căutare Fulltext", prio: "normala",
-    note: "Eliminat: partajare temporară fișiere (single-user). Estimare: 3-4 sesiuni.",
+    note: "✅ PARTIAL (2026-03-18). 14.1-14.4 + 14.8 implementate. 14.5-14.7 + 14.9 DEFERRED.",
     features: [
-      { id: "14.1", name: "File browser cu preview", tech: "PDF.js + img preview", cost: "Gratuit" },
-      { id: "14.2", name: "Operații CRUD fișiere", tech: "pathlib Python", cost: "Gratuit" },
-      { id: "14.3", name: "Upload fișiere din browser", tech: "FastAPI UploadFile", cost: "Gratuit" },
-      { id: "14.4", name: "Download fișiere pe device", tech: "FastAPI FileResponse", cost: "Gratuit" },
-      { id: "14.5", name: "Căutare fulltext în documente", tech: "SQLite FTS5 + indexare", cost: "Gratuit" },
-      { id: "14.6", name: "Tag-uri personalizate pe fișiere", tech: "SQLite file_tags", cost: "Gratuit" },
-      { id: "14.7", name: "Foldere favorite / shortcuts", tech: "SQLite + UI", cost: "Gratuit" },
-      { id: "14.8", name: "Duplicate finder (hash)", tech: "hashlib.md5()", cost: "Gratuit" },
-      { id: "14.9", name: "Organizare automată (reguli)", tech: "watchdog library", cost: "Gratuit" },
+      { id: "14.1", name: "✅ File browser cu preview (2026-03-18)", tech: "modules/filemanager — browse + serve inline (PDF, imagini, text)", cost: "Gratuit", done: true, tested: 'local' },
+      { id: "14.2", name: "✅ Operații CRUD fișiere (2026-03-18)", tech: "pathlib Python — rename, move, delete, mkdir + sandboxing", cost: "Gratuit", done: true, tested: 'local' },
+      { id: "14.3", name: "✅ Upload fișiere din browser (2026-03-18)", tech: "FastAPI UploadFile + drag&drop + auto-rename conflict", cost: "Gratuit", done: true, tested: 'local' },
+      { id: "14.4", name: "✅ Download fișiere pe device (2026-03-18)", tech: "FastAPI FileResponse + activity log", cost: "Gratuit", done: true, tested: 'local' },
+      { id: "14.5", name: "⏸️ Căutare fulltext în documente — DEFERRED", tech: "SQLite FTS5 + indexare", cost: "Gratuit", pendingUser: true },
+      { id: "14.6", name: "⏸️ Tag-uri personalizate pe fișiere — DEFERRED", tech: "SQLite file_tags", cost: "Gratuit", pendingUser: true },
+      { id: "14.7", name: "⏸️ Foldere favorite / shortcuts — DEFERRED", tech: "SQLite + UI", cost: "Gratuit", pendingUser: true },
+      { id: "14.8", name: "✅ Duplicate finder (2026-03-18)", tech: "hashlib.md5() + grupare + wasted space", cost: "Gratuit", done: true, tested: 'local' },
+      { id: "14.9", name: "⏸️ Organizare automată (reguli) — DEFERRED", tech: "watchdog library", cost: "Gratuit", pendingUser: true },
     ]
   },
   {
@@ -276,9 +286,13 @@ function render() {
 
     phase.features.forEach(f => {
       const isPaid = f.cost !== 'Gratuit' && f.cost !== '—';
-      const extraClass = f.moved ? ' moved' : (f.critical ? ' critical' : '');
+      let extraClass = f.moved ? ' moved' : (f.critical ? ' critical' : '');
+      if (f.done) extraClass = ' done';
+      if (f.inProgress) extraClass = ' in-progress';
+      if (f.pendingUser) extraClass = ' pending-user';
+      const isDisabled = f.moved || f.done;
       html += `<div class="feature${extraClass}">
-        <input type="checkbox" id="f_${f.id}" data-phase="${phase.id}" data-id="${f.id}" data-name="${f.name}" onchange="updateCount()"${f.moved ? ' disabled' : ''}>
+        <input type="checkbox" id="f_${f.id}" data-phase="${phase.id}" data-id="${f.id}" data-name="${f.name}" onchange="updateCount()"${isDisabled ? ' disabled checked' : ''}>
         <span class="feature-id">${f.id}</span>
         <div class="feature-text">
           <span class="feature-name">${f.name}</span>
@@ -298,6 +312,16 @@ function render() {
   container.innerHTML = html;
   document.getElementById('countTotal').textContent = total;
   document.getElementById('statTotal').textContent = total;
+  const doneCount = PHASES.reduce((sum, p) => sum + p.features.filter(f => f.done).length, 0);
+  document.getElementById('statDone').textContent = doneCount;
+  // Compute Phase 12 Android testing stats
+  const phase12 = PHASES.find(p => p.id === 12);
+  if (phase12) {
+    const testedAndroid = phase12.features.filter(f => f.tested === 'android').length;
+    const totalP12 = phase12.features.length;
+    const el = document.getElementById('statTestedAndroid');
+    if (el) el.textContent = testedAndroid + '/' + totalP12 + ' testat Android';
+  }
   updateCount();
 }
 

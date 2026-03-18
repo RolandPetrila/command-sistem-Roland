@@ -33,7 +33,7 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 ### Audit Arhitectural (2026-03-18) — COMPLET
 16 observații (4 critice), toate rezolvate în plan. Detalii: `99_Roland_Work_Place/Documentare_Extindere_Proiect.md` secțiunea 10.
 
-### Wave 0 — Fundație (2026-03-18) — IN PROGRESS
+### Wave 0 — Fundație (2026-03-18) — DONE
 - [x] `git init` + `.gitignore` complet
 - [x] Fix URL-uri hardcoded (`client.js` → URL dinamic, WebSocket protocol dinamic)
 - [x] Sistem migrare DB (`migrations/` + `schema_version` + `run_migrations()`)
@@ -42,6 +42,40 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 - [x] Activity log → SQLite (migrare completă, async, JSON înlocuit)
 - [x] `busy_timeout = 5000` adăugat (concurrency fix)
 - [ ] Notificări infrastructură (toast + WebSocket) — amânat, se adaugă când e nevoie
+
+### Wave 2 (parțial) — Quick Tools (2026-03-18) — DONE
+- [x] Command Palette (Ctrl+K) — fuse.js fuzzy search
+- [x] QR Generator — react-qr-code, download PNG, copy clipboard
+- [x] Notepad cu auto-save — CRUD + debounce 800ms + activity log
+- [ ] Calculator avansat — PENDING (neales)
+- [ ] Password Generator — PENDING (neales)
+- [ ] Barcode Generator — PENDING (neales)
+
+### Wave 1 — Deploy + Acces (2026-03-18) — DONE
+- [x] Tailscale + MagicDNS + HTTPS cert (`desktop-cjuecmn.tail7bc485.ts.net`)
+- [x] TLS config uvicorn + CORS dinamic + sidebar responsive mobile
+- [x] `vite build` → servire statică prin FastAPI (port 8000)
+- [x] PWA (manifest + service worker + workbox offline cache)
+- [x] API Key Vault (Fernet + PBKDF2, modul `modules/vault/`)
+- [x] Backup DB (`backup.py` → Google Drive, auto-cleanup >10)
+- [x] Auto-start backend (`setup_autostart.bat`, Task Scheduler)
+- [x] `START_Production.bat` — mod producție cu TLS autodetect
+
+### Faza 12 — Convertor Fișiere (2026-03-18) — DONE
+- [x] 10 tipuri conversie (PDF↔DOCX, merge/split PDF, compress/resize img, CSV/Excel→JSON, ZIP, extract text)
+- [x] Android-safe validation (extension + MIME + octet-stream fallback)
+- [x] COM threading fix (pythoncom.CoInitialize pentru docx2pdf)
+
+### Faza 14 — Manager Fișiere Avansat (2026-03-18) — PARTIAL
+- [x] File browser cu preview (PDF, imagini, text) — `modules/filemanager/`
+- [x] Operații CRUD (rename, move, delete, mkdir) — sandboxing + symlink block
+- [x] Upload fișiere (drag&drop, auto-rename conflict)
+- [x] Download fișiere (FileResponse + activity log)
+- [x] Duplicate finder (MD5 hash, grupare, wasted space)
+- [ ] Căutare fulltext — DEFERRED
+- [ ] Tag-uri — DEFERRED
+- [ ] Foldere favorite — DEFERRED
+- [ ] Organizare automată — DEFERRED
 
 **Roadmap complet:** `99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md` (Fazele 8-18, ~40-55 sesiuni)
 **Documentare:** `99_Roland_Work_Place/Documentare_Extindere_Proiect.md`
@@ -109,12 +143,14 @@ python calibrate.py --verbose
 - `app/db/database.py` — SQLite + migration runner (`run_migrations()`)
 - `migrations/` — SQL numerotate (001_initial, 002_activity_log)
 - `modules/calculator/__init__.py` — MODULE_INFO cu 7 routere
+- `modules/converter/router.py` — 10 conversion endpoints (PDF, DOCX, images, data, ZIP, OCR)
+- `modules/filemanager/router.py` — 9 endpoints: browse, serve, download, upload, mkdir, rename, move, delete, duplicates
 - `calibrate.py` — CLI calibration script
 
 ### Frontend (frontend/src/)
 - `App.jsx` — Main layout + routing (6 pages), pageTitles din manifest
 - `modules/manifest.js` — Sursa unică navigare (categorii + routes + icons)
-- `pages/` — DashboardPage, UploadPage, HistoryPage, CalibrationPage, FileBrowserPage, SettingsPage
+- `pages/` — DashboardPage, UploadPage, HistoryPage, CalibrationPage, FileBrowserPage, SettingsPage, ConverterPage, QRGeneratorPage, NotepadPage, VaultPage
 - `components/Layout/Sidebar.jsx` — Dinamic din manifest, categorii colapsibile
 - `components/` — Upload, Price, History, Calibration, FileBrowser, Settings, Dashboard
 - `api/client.js` — Axios + WebSocket helpers (URL-uri dinamice, fără hardcoded)
@@ -143,7 +179,10 @@ python calibrate.py --verbose
 | 8 — Dashboard+Cal | DONE | Activity Log dashboard, calibration run, multi-file E2E test, auto-update rules |
 | Audit + Planning | DONE | Architectural audit (16 obs.), Wave planning, PLAN_EXTINDERE + Documentare (2026-03-18) |
 | Wave 0 — Fundație | DONE | Git init, module auto-discovery, DB migrations, URL fix, activity log→SQLite, dynamic sidebar (2026-03-18) |
-| Wave 1 — Deploy | NEXT | Tailscale + HTTPS/TLS, PWA, API Key Vault, backup script, auto-start |
+| Wave 2 — Quick Tools | PARTIAL | Command Palette, QR Generator, Notepad (done); Calculator, Password Gen, Barcode (pending) (2026-03-18) |
+| Wave 1 — Deploy | DONE | Tailscale HTTPS, PWA, Vault, Backup→Drive, Auto-start, Production serving, Mobile sidebar (2026-03-18) |
+| Faza 12 — Convertor | DONE | 10 conversii: PDF↔DOCX, merge/split PDF, compress/resize images, CSV/Excel→JSON, ZIP, extract text/OCR (2026-03-18) |
+| Faza 14 — File Manager | PARTIAL | Browse+preview, CRUD, upload, download, duplicate finder (done); fulltext search, tags, favorites, auto-organize (deferred) (2026-03-18) |
 
 ## Conventions
 
@@ -161,16 +200,16 @@ python calibrate.py --verbose
 
 ## Auto-Update Rules
 
-### Regula 1 — PLAN_EXECUTIE.md (existentă)
-**Trigger:** Finalul fiecărei sesiuni de lucru sau completarea unui task semnificativ.
-1. Marchează cu `[x]` orice item implementat în sesiunea curentă
-2. Adaugă itemuri noi pentru funcționalități implementate dar nelistate
-3. Adaugă o nouă Fază dacă implementările nu se încadrează în fazele existente
-4. Mută itemurile finalizate din "Ramas opțional" în faza corespunzătoare
-5. Actualizează și secțiunea "Project Status" din CLAUDE.md cu faza curentă
+### Regula 1 — Actualizare progres implementare (actualizată)
+**Trigger:** După FIECARE execuție de implementare (nu doar la finalul sesiunii).
+1. Marchează cu ✅/🔄/⏸️ itemurile din `0.0_PLAN_EXTINDERE_COMPLET.md` (DONE/IN PROGRESS/PENDING)
+2. Actualizează secțiunea "Project Status" + "Implementation Summary" din CLAUDE.md
+3. Regenerează `0.0_PLAN_EXTINDERE_COMPLET.html` (Regula 2)
+4. Adaugă itemuri noi pentru funcționalități implementate dar nelistate
+5. Include data implementării la fiecare item marcat DONE
 
-**Format item nou:** `- [x] X.Y Descriere scurtă — detalii tehnice (YYYY-MM-DD)`
-**Nu necesită confirmare** — se execută automat.
+**Format item marcat:** `✅ Descriere (YYYY-MM-DD) — detalii tehnice`
+**Nu necesită confirmare** — se execută automat după fiecare implementare.
 
 ### Regula 2 — Regenerare HTML (existentă)
 **Trigger:** Orice modificare a `99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md`.
@@ -252,6 +291,56 @@ Rezultat vizibil: [ce vede utilizatorul diferit după implementare]
 4. Utilizatorul confirmă explicit că a testat și e mulțumit
 
 **Origine:** Cerere explicită utilizator — `Cerinta_Roland.md` punct 5 (2026-03-18).
+
+### Regula 10 — Status testare funcționalități (nouă)
+**Trigger:** După fiecare implementare de funcționalitate nouă.
+**Obligatoriu** — se execută automat, fără confirmare.
+
+1. La implementarea oricărui feature, marchează-l în `0.0_PLAN_EXTINDERE_COMPLET.md` cu statusul testării:
+   - `✅ Testat Android OK` — confirmat de utilizator pe Android
+   - `✅ Testat local OK` — testat cu curl/API, funcțional
+   - `🧪 Netestat Android` — implementat, netestat pe Android
+   - `🧪 Bug fixat, re-test necesar` — a fost un bug, s-a rezolvat, necesită re-testare
+2. Actualizează și HTML-ul cu proprietatea `tested` pe fiecare item
+3. La confirmarea utilizatorului că un feature funcționează pe Android → marchează `✅ Testat Android OK`
+4. Menține un contor total la nivelul fiecărei faze: "X/Y testat Android"
+
+**Origine:** Cerere explicită utilizator (2026-03-18).
+
+### Regula 11 — Prezentare detaliată faze înainte de implementare (nouă)
+**Trigger:** Înainte de implementarea oricărei faze noi.
+**Obligatoriu** — NU se începe cod fără parcurgerea acestui proces.
+
+1. Pentru FIECARE funcționalitate din fază, prezintă:
+   - **Ce face acum** (starea curentă — dacă există ceva deja)
+   - **Ce va face după implementare** (comportamentul nou)
+   - **Exemplu concret** de utilizare (scenariu real din viața utilizatorului)
+   - **Tehnologie** folosită (librării, API-uri)
+2. Adaugă o **recomandare** personalizată: care funcții sunt cele mai utile, care pot fi amânate, cu argumente
+3. **Așteaptă** ca utilizatorul să aleagă/confirme care funcții dorește
+4. Abia DUPĂ confirmare — începe implementarea
+
+**Se combină cu Regula 8** (prezentare wave) — Regula 8 oferă tabelul sumar, Regula 11 oferă detaliile per funcție.
+**Origine:** Cerere explicită utilizator (2026-03-18).
+
+### Regula 12 — Ghid de Testare per Fază (nouă)
+**Trigger:** La finalizarea implementării oricărei faze.
+**Obligatoriu** — se execută automat, fără confirmare.
+
+1. Creează/actualizează fișierul `99_Roland_Work_Place/GHID_TESTARE.md`
+2. Pentru FIECARE funcționalitate implementată, include:
+   - **Funcția** — numele și descrierea scurtă
+   - **Test Web (PC)** — pașii exacți de testare din browser pe PC
+   - **Test Telefon (Android)** — pașii exacți de testare de pe telefon via Tailscale
+   - **Rezultat așteptat** — ce ar trebui să se întâmple dacă funcționează corect
+   - **Status** — ✅ Testat OK / 🧪 Netestat / ❌ Bug cunoscut
+3. Organizează pe faze, cu secțiuni clare și navigare ușoară
+4. La fiecare nouă implementare → adaugă noile funcții ȘI actualizează statusul celor existente
+5. Când utilizatorul confirmă testarea unei funcții → marchează cu ✅ și data confirmării
+
+**Fișier:** `99_Roland_Work_Place/GHID_TESTARE.md` — singurul loc pentru instrucțiuni de testare.
+**Se combină cu Regula 10** — Regula 10 marchează statusul în plan, Regula 12 oferă instrucțiunile detaliate.
+**Origine:** Cerere explicită utilizator (2026-03-18).
 
 ## Known Issues / Notes
 

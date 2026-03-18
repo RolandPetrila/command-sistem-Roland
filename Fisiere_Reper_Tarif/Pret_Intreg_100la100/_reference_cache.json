@@ -1,0 +1,752 @@
+[
+  {
+    "filename": "10820.pdf",
+    "price": 10820.0,
+    "features": {
+      "page_count": 201,
+      "word_count": 52747,
+      "words_per_page": 262.4,
+      "image_count": 1195,
+      "table_count": 3,
+      "has_complex_tables": true,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.69
+    },
+    "vector": [
+      201.0,
+      52747.0,
+      262.4,
+      1195.0,
+      3.0,
+      1.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.69
+    ]
+  },
+  {
+    "filename": "1155.pdf",
+    "price": 1155.0,
+    "features": {
+      "page_count": 17,
+      "word_count": 3144,
+      "words_per_page": 184.9,
+      "image_count": 101,
+      "table_count": 1,
+      "has_complex_tables": false,
+      "chart_count": 1,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.69
+    },
+    "vector": [
+      17.0,
+      3144.0,
+      184.9,
+      101.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      3.0,
+      0.0,
+      0.69
+    ]
+  },
+  {
+    "filename": "120.pdf",
+    "price": 120.0,
+    "features": {
+      "page_count": 2,
+      "word_count": 138,
+      "words_per_page": 69.0,
+      "image_count": 2,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 1,
+      "has_diagrams": true,
+      "layout_complexity": 2,
+      "is_scanned": false,
+      "text_density": 0.2
+    },
+    "vector": [
+      2.0,
+      138.0,
+      69.0,
+      2.0,
+      0.0,
+      0.0,
+      1.0,
+      1.0,
+      2.0,
+      0.0,
+      0.2
+    ]
+  },
+  {
+    "filename": "121.pdf",
+    "price": 121.0,
+    "features": {
+      "page_count": 2,
+      "word_count": 231,
+      "words_per_page": 115.5,
+      "image_count": 2,
+      "table_count": 4,
+      "has_complex_tables": true,
+      "chart_count": 1,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.33
+    },
+    "vector": [
+      2.0,
+      231.0,
+      115.5,
+      2.0,
+      4.0,
+      1.0,
+      1.0,
+      1.0,
+      3.0,
+      0.0,
+      0.33
+    ]
+  },
+  {
+    "filename": "122.pdf",
+    "price": 122.0,
+    "features": {
+      "page_count": 2,
+      "word_count": 546,
+      "words_per_page": 273.0,
+      "image_count": 7,
+      "table_count": 3,
+      "has_complex_tables": true,
+      "chart_count": 1,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.9
+    },
+    "vector": [
+      2.0,
+      546.0,
+      273.0,
+      7.0,
+      3.0,
+      1.0,
+      1.0,
+      1.0,
+      3.0,
+      0.0,
+      0.9
+    ]
+  },
+  {
+    "filename": "123.pdf",
+    "price": 123.0,
+    "features": {
+      "page_count": 2,
+      "word_count": 342,
+      "words_per_page": 171.0,
+      "image_count": 12,
+      "table_count": 3,
+      "has_complex_tables": false,
+      "chart_count": 1,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.55
+    },
+    "vector": [
+      2.0,
+      342.0,
+      171.0,
+      12.0,
+      3.0,
+      0.0,
+      1.0,
+      1.0,
+      3.0,
+      0.0,
+      0.55
+    ]
+  },
+  {
+    "filename": "1485.pdf",
+    "price": 1485.0,
+    "features": {
+      "page_count": 21,
+      "word_count": 3217,
+      "words_per_page": 153.2,
+      "image_count": 41,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.51
+    },
+    "vector": [
+      21.0,
+      3217.0,
+      153.2,
+      41.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.51
+    ]
+  },
+  {
+    "filename": "150.pdf",
+    "price": 150.0,
+    "features": {
+      "page_count": 2,
+      "word_count": 122,
+      "words_per_page": 61.0,
+      "image_count": 47,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 5,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.22
+    },
+    "vector": [
+      2.0,
+      122.0,
+      61.0,
+      47.0,
+      0.0,
+      0.0,
+      5.0,
+      1.0,
+      3.0,
+      0.0,
+      0.22
+    ]
+  },
+  {
+    "filename": "1688.pdf",
+    "price": 1688.0,
+    "features": {
+      "page_count": 28,
+      "word_count": 6258,
+      "words_per_page": 223.5,
+      "image_count": 1564,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.76
+    },
+    "vector": [
+      28.0,
+      6258.0,
+      223.5,
+      1564.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.76
+    ]
+  },
+  {
+    "filename": "185.pdf",
+    "price": 185.0,
+    "features": {
+      "page_count": 3,
+      "word_count": 1066,
+      "words_per_page": 355.3,
+      "image_count": 21,
+      "table_count": 7,
+      "has_complex_tables": true,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 4,
+      "is_scanned": false,
+      "text_density": 0.86
+    },
+    "vector": [
+      3.0,
+      1066.0,
+      355.3,
+      21.0,
+      7.0,
+      1.0,
+      0.0,
+      1.0,
+      4.0,
+      0.0,
+      0.86
+    ]
+  },
+  {
+    "filename": "2100.pdf",
+    "price": 2100.0,
+    "features": {
+      "page_count": 42,
+      "word_count": 9796,
+      "words_per_page": 233.2,
+      "image_count": 75,
+      "table_count": 2,
+      "has_complex_tables": false,
+      "chart_count": 2,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.81
+    },
+    "vector": [
+      42.0,
+      9796.0,
+      233.2,
+      75.0,
+      2.0,
+      0.0,
+      2.0,
+      1.0,
+      3.0,
+      0.0,
+      0.81
+    ]
+  },
+  {
+    "filename": "2376.pdf",
+    "price": 2376.0,
+    "features": {
+      "page_count": 39,
+      "word_count": 6460,
+      "words_per_page": 165.6,
+      "image_count": 412,
+      "table_count": 3,
+      "has_complex_tables": false,
+      "chart_count": 1,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.61
+    },
+    "vector": [
+      39.0,
+      6460.0,
+      165.6,
+      412.0,
+      3.0,
+      0.0,
+      1.0,
+      1.0,
+      3.0,
+      0.0,
+      0.61
+    ]
+  },
+  {
+    "filename": "2600.pdf",
+    "price": 2600.0,
+    "features": {
+      "page_count": 42,
+      "word_count": 8350,
+      "words_per_page": 198.8,
+      "image_count": 90,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.61
+    },
+    "vector": [
+      42.0,
+      8350.0,
+      198.8,
+      90.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.61
+    ]
+  },
+  {
+    "filename": "295.pdf",
+    "price": 295.0,
+    "features": {
+      "page_count": 5,
+      "word_count": 865,
+      "words_per_page": 173.0,
+      "image_count": 0,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": false,
+      "layout_complexity": 1,
+      "is_scanned": false,
+      "text_density": 0.54
+    },
+    "vector": [
+      5.0,
+      865.0,
+      173.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.54
+    ]
+  },
+  {
+    "filename": "300.pdf",
+    "price": 300.0,
+    "features": {
+      "page_count": 5,
+      "word_count": 628,
+      "words_per_page": 125.6,
+      "image_count": 32,
+      "table_count": 1,
+      "has_complex_tables": true,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.36
+    },
+    "vector": [
+      5.0,
+      628.0,
+      125.6,
+      32.0,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.36
+    ]
+  },
+  {
+    "filename": "3250.pdf",
+    "price": 3250.0,
+    "features": {
+      "page_count": 54,
+      "word_count": 8591,
+      "words_per_page": 159.1,
+      "image_count": 128,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.52
+    },
+    "vector": [
+      54.0,
+      8591.0,
+      159.1,
+      128.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.52
+    ]
+  },
+  {
+    "filename": "3360.pdf",
+    "price": 3360.0,
+    "features": {
+      "page_count": 56,
+      "word_count": 8159,
+      "words_per_page": 145.7,
+      "image_count": 855,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.5
+    },
+    "vector": [
+      56.0,
+      8159.0,
+      145.7,
+      855.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.5
+    ]
+  },
+  {
+    "filename": "340.pdf",
+    "price": 340.0,
+    "features": {
+      "page_count": 6,
+      "word_count": 2176,
+      "words_per_page": 362.7,
+      "image_count": 32,
+      "table_count": 19,
+      "has_complex_tables": true,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 4,
+      "is_scanned": false,
+      "text_density": 0.95
+    },
+    "vector": [
+      6.0,
+      2176.0,
+      362.7,
+      32.0,
+      19.0,
+      1.0,
+      0.0,
+      1.0,
+      4.0,
+      0.0,
+      0.95
+    ]
+  },
+  {
+    "filename": "3650.pdf",
+    "price": 3650.0,
+    "features": {
+      "page_count": 52,
+      "word_count": 7626,
+      "words_per_page": 146.7,
+      "image_count": 1247,
+      "table_count": 1,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.5
+    },
+    "vector": [
+      52.0,
+      7626.0,
+      146.7,
+      1247.0,
+      1.0,
+      0.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.5
+    ]
+  },
+  {
+    "filename": "415.pdf",
+    "price": 415.0,
+    "features": {
+      "page_count": 7,
+      "word_count": 1241,
+      "words_per_page": 177.3,
+      "image_count": 13,
+      "table_count": 3,
+      "has_complex_tables": true,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.59
+    },
+    "vector": [
+      7.0,
+      1241.0,
+      177.3,
+      13.0,
+      3.0,
+      1.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.59
+    ]
+  },
+  {
+    "filename": "416.pdf",
+    "price": 416.0,
+    "features": {
+      "page_count": 7,
+      "word_count": 1104,
+      "words_per_page": 157.7,
+      "image_count": 43,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 0,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.53
+    },
+    "vector": [
+      7.0,
+      1104.0,
+      157.7,
+      43.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      3.0,
+      0.0,
+      0.53
+    ]
+  },
+  {
+    "filename": "4670.pdf",
+    "price": 4670.0,
+    "features": {
+      "page_count": 60,
+      "word_count": 10627,
+      "words_per_page": 177.1,
+      "image_count": 187,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 4,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.61
+    },
+    "vector": [
+      60.0,
+      10627.0,
+      177.1,
+      187.0,
+      0.0,
+      0.0,
+      4.0,
+      1.0,
+      3.0,
+      0.0,
+      0.61
+    ]
+  },
+  {
+    "filename": "478.pdf",
+    "price": 478.0,
+    "features": {
+      "page_count": 8,
+      "word_count": 1118,
+      "words_per_page": 139.8,
+      "image_count": 28,
+      "table_count": 3,
+      "has_complex_tables": false,
+      "chart_count": 2,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.46
+    },
+    "vector": [
+      8.0,
+      1118.0,
+      139.8,
+      28.0,
+      3.0,
+      0.0,
+      2.0,
+      1.0,
+      3.0,
+      0.0,
+      0.46
+    ]
+  },
+  {
+    "filename": "780.pdf",
+    "price": 780.0,
+    "features": {
+      "page_count": 15,
+      "word_count": 3440,
+      "words_per_page": 229.3,
+      "image_count": 0,
+      "table_count": 4,
+      "has_complex_tables": true,
+      "chart_count": 0,
+      "has_diagrams": false,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 0.89
+    },
+    "vector": [
+      15.0,
+      3440.0,
+      229.3,
+      0.0,
+      4.0,
+      1.0,
+      0.0,
+      0.0,
+      3.0,
+      0.0,
+      0.89
+    ]
+  },
+  {
+    "filename": "910.pdf",
+    "price": 910.0,
+    "features": {
+      "page_count": 16,
+      "word_count": 5662,
+      "words_per_page": 353.9,
+      "image_count": 25,
+      "table_count": 0,
+      "has_complex_tables": false,
+      "chart_count": 4,
+      "has_diagrams": true,
+      "layout_complexity": 3,
+      "is_scanned": false,
+      "text_density": 1.18
+    },
+    "vector": [
+      16.0,
+      5662.0,
+      353.9,
+      25.0,
+      0.0,
+      0.0,
+      4.0,
+      1.0,
+      3.0,
+      0.0,
+      1.18
+    ]
+  }
+]

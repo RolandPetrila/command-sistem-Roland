@@ -11,6 +11,8 @@ import FileBrowserPage from './pages/FileBrowserPage';
 import SettingsPage from './pages/SettingsPage';
 import QRGeneratorPage from './pages/QRGeneratorPage';
 import NotepadPage from './pages/NotepadPage';
+import VaultPage from './pages/VaultPage';
+import ConverterPage from './pages/ConverterPage';
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import CommandPalette from './components/shared/CommandPalette';
 import { PAGE_TITLES } from './modules/manifest';
@@ -32,6 +34,8 @@ export default function App() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/qr" element={<QRGeneratorPage />} />
               <Route path="/notepad" element={<NotepadPage />} />
+              <Route path="/vault" element={<VaultPage />} />
+              <Route path="/converter" element={<ConverterPage />} />
             </Routes>
           </ErrorBoundary>
         </main>

@@ -3,18 +3,26 @@ Roland Command Center — FastAPI Backend.
 
 Punctul de intrare principal al aplicației.
 Module auto-discovery din backend/modules/.
+Servire frontend static din frontend/dist/ (producție).
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.db.database import init_db
 from app.module_discovery import discover_modules
+
+# Directorul frontend/dist/ (build producție)
+_DIST_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,18 +99,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="Roland Command Center",
     description="Panou personal multifuncțional — traduceri, facturare, tool-uri, AI pe documente.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
-# --- CORS ---
+# --- CORS (dinamic: localhost dev + Tailscale producție) ---
+_cors_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+]
+_tailscale_origin = os.environ.get("TAILSCALE_ORIGIN")
+if _tailscale_origin:
+    _cors_origins.append(_tailscale_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -181,3 +194,25 @@ async def ws_progress_task(websocket: WebSocket, task_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(task_id, websocket)
+
+
+# ---------------------------------------------------------------------------
+# Servire frontend static (producție — din frontend/dist/)
+# ---------------------------------------------------------------------------
+
+if _DIST_DIR.exists():
+    logger.info("Mod producție: servire frontend din %s", _DIST_DIR)
+
+    # Fișiere statice (JS, CSS, imagini) din assets/
+    _assets_dir = _DIST_DIR / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="static-assets")
+
+    # Fișiere din rădăcina dist/ (icons, manifest, sw.js, etc.)
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """SPA fallback — rutele non-API servesc frontend-ul."""
+        file_path = _DIST_DIR / full_path
+        if full_path and file_path.exists() and file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(_DIST_DIR / "index.html"))
