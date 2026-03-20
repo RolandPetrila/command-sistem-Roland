@@ -1,21 +1,45 @@
 # Roland Command Center — Project Status (auto-generated)
 
-Generated: 2026-03-19
+Generated: 2026-03-21 01:26
 
 ## Project Status
 
-| Phase | Status | Key Details |
-|-------|--------|-------------|
-| Faze 0-8 Calculator | DONE | 46 fișiere, MAPE 32%, dashboard, competitori |
-| Audit Arhitectural | DONE | 16 obs (4 critice), toate rezolvate |
-| Wave 0 Fundație | DONE | Git, migrations, module discovery, dynamic sidebar |
-| Wave 2 Quick Tools | PARTIAL | Command Palette, QR, Notepad (done); Calc, PwdGen, Barcode (pending) |
-| Wave 1 Deploy | DONE | Tailscale HTTPS, PWA, Vault, Backup, Auto-start |
-| Faza 12 Convertor | DONE | 10 conversii, Android-safe, COM fix |
-| Faza 14 File Manager | PARTIAL | Browse, CRUD, upload, download, duplicates (done); fulltext, tags (deferred) |
+| Phase | Status | Summary |
+|-------|--------|---------|
+| Faze 0-8 Calculator | DONE | 46 fișiere, MAPE 32%, dashboard, competitori (2026-03-17) |
+| Audit Arhitectural | DONE | 16 obs (4 critice), toate rezolvate (2026-03-18) |
+| Wave 0 Fundație | DONE | Git, migrations, module discovery, dynamic sidebar (2026-03-18) |
+| Wave 2 Quick Tools | DONE | Command Palette, QR, Notepad, Calculator, PwdGen, Barcode (2026-03-19) |
+| Wave 1 Deploy | DONE | Tailscale HTTPS, PWA, Vault, Backup, Auto-start (2026-03-18) |
+| Faza 12 Convertor | DONE | 10 conversii, Android-safe, COM fix (2026-03-18) |
+| Faza 14 File Manager | DONE | Browse, CRUD, upload, download, duplicates, fulltext FTS5, tags, favorites, auto-organize (2026-03-19) |
 | Restructurare reguli | DONE | 12 reguli → 5 fișiere .claude/rules/, hooks, commands, agent (2026-03-19) |
+| Faza 9 Translator | DONE | 5 providers (DeepL→Azure→Google→Gemini→OpenAI), TM, glossary, file translation, langdetect (2026-03-19) |
+| Faza 15A AI Chat+Docs | DONE | Chat SSE streaming (Gemini→OpenAI→Groq), 6 doc endpoints, OCR+AI, diff, 10 API keys (2026-03-19) |
+| Faza 15B AI Enhanced | DONE | 10 AI features + token indicator + provider selector (2026-03-19) |
+| Faza 10 Facturare Ext | DONE | Client history, rapoarte, export CSV/Excel, templates, email, scanner OCR (2026-03-19) |
+| Faza 13 Integrări | DONE | Gmail, Google Drive, Calendar, GitHub — 5 endpoint-uri per provider (2026-03-19) |
+| Faza 15.8 Quality | DONE | Evaluare calitate traducere AI (scor, issues, suggestions) (2026-03-19) |
+| Faza 16 Automatizări | DONE | Scheduler, Shortcuts, Uptime Monitor, API Tester, Health (2026-03-19) |
+| Faza 17 Rapoarte | DONE | Disk stats, system info, timeline, journal, bookmarks, export JSON (2026-03-19) |
+| Faza 18 ITP | DONE | Inspecții CRUD, import, statistici, alerte expirare, export (2026-03-19) |
 
-## Next Suggested (by priority): Faza 9 (Traducător — core business) sau Faza 13 (Integrări Gmail/Drive/Calendar)
+| Faza 19 Unificare Docs | DONE | 3 V2 → 3 documente unificate, strategie API maximala, regula free-tier (2026-03-20) |
+| Faza 20 Quick Wins | DONE | 11/15: GZip, CSP, BNR curs, ANAF CUI, cache AI, convertor numere, useDebounce (2026-03-20) |
+| Faza 21 Audit Full | DONE | Audit A-G: verificare firma ANAF, BNR convertor, numere-litere, dashboard pro, dark/light theme, keyboard shortcuts, code splitting lazy load, backup ZIP, notificari browser, CompanyCheckPage (2026-03-20) |
+| Faza 22 Unificare BAT | DONE | Un singur START_Roland.bat (start/stop/build), sterse 7 fisiere vechi, health check, TLS autodetect, backup local (2026-03-20) |
+| Faza 23 Diagnostice | DONE | Request logger middleware, axios error interceptor, global toast, diagnostics panel, fix catch blocks, rule 07 (2026-03-20) |
+| Faza 24 BAT Hardening | DONE | Aggressive process cleanup, backend log capture, 60s timeout, error display, rule 08 post-validation (2026-03-20) |
+| Faza 25A Provideri AI | DONE | Gemini 2.5-flash (fix deprecated), +Cerebras qwen3-235b, +Mistral small, .env, chain 4 provideri testat OK (2026-03-21) |
+| Faza 25B Security Wins | DONE | SQL whitelist OK, fix catch blocks, AI translate prompt, rate limiting 60/10 req/min (2026-03-21) |
+| Faza 25C Fix Cerinta | DONE | Interceptor network errors, batch PDF (10x), DOCX tables translate, timeout 300s (2026-03-21) |
+| Faza 25D Speed Test | DONE | Network speed indicator in header: Mbps + latency, auto-refresh 60s, click remeasure (2026-03-21) |
+
+**Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
+**Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`
+**Ghid acces remote:** `99_Roland_Work_Place/GHID_ACCES_REMOTE.md`
+**Plan extindere:** `99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md`
+
 
 ## Quick Reference
 - Rules: `.claude/rules/` (5 files)

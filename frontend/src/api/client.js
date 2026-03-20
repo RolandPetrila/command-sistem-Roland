@@ -11,12 +11,114 @@ const apiClient = axios.create({
   },
 });
 
+// --- Error interceptor: report ALL API errors to backend log + show toast ---
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config || {};
+    const url = config.url || '';
+
+    if (error.response && error.response.status >= 400) {
+      const { status } = error.response;
+      let errorDetail = '';
+      let userMessage = '';
+      try {
+        // Handle blob responses (e.g. file translate)
+        if (error.response.data instanceof Blob) {
+          errorDetail = await error.response.data.text();
+        } else if (typeof error.response.data === 'object') {
+          errorDetail = JSON.stringify(error.response.data).slice(0, 500);
+        } else {
+          errorDetail = String(error.response.data).slice(0, 500);
+        }
+        // Extract user-friendly message
+        try {
+          const parsed = JSON.parse(errorDetail);
+          if (parsed.detail) {
+            userMessage = Array.isArray(parsed.detail)
+              ? parsed.detail.map(e => e.msg || e).join('; ')
+              : String(parsed.detail);
+          }
+        } catch { userMessage = errorDetail.slice(0, 150); }
+      } catch { /* ignore */ }
+
+      // Show toast notification (skip health checks and log endpoints)
+      if (!url.includes('/api/log/frontend') && !url.includes('/api/diagnostics') && !url.includes('/api/health')) {
+        const shortUrl = url.replace('/api/', '').split('?')[0];
+        const msg = userMessage || `Eroare ${status}`;
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('global-toast', {
+            detail: {
+              message: `${shortUrl}: ${msg}`,
+              type: 'error',
+              duration: 5000,
+              id: Date.now(),
+            },
+          }));
+        }
+
+        // Fire-and-forget error report to backend
+        axios.post(`${API_BASE_URL}/api/log/frontend`, {
+          level: 'error',
+          message: `API ${status}: ${config.method?.toUpperCase()} ${url}`,
+          page: window.location.pathname,
+          details: {
+            status,
+            method: config.method,
+            url,
+            response_body: errorDetail.slice(0, 300),
+            type: 'api_error',
+          },
+        }).catch(() => {});
+      }
+    } else if (error.code === 'ECONNABORTED' || error.code === 'ERR_NETWORK' || !error.response) {
+      // Network errors, timeouts, server unreachable — no response object
+      const isTimeout = error.code === 'ECONNABORTED';
+      const msg = isTimeout
+        ? `Timeout — serverul nu a raspuns la timp (${config.url || 'unknown'})`
+        : `Eroare retea — serverul nu este accesibil`;
+
+      if (!url.includes('/api/log/frontend') && !url.includes('/api/health')) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('global-toast', {
+            detail: {
+              message: msg,
+              type: 'error',
+              duration: 7000,
+              id: Date.now(),
+            },
+          }));
+        }
+
+        // Try to report (may fail if server is down)
+        axios.post(`${API_BASE_URL}/api/log/frontend`, {
+          level: 'error',
+          message: `Network: ${error.code || 'ERR_UNKNOWN'} ${config.method?.toUpperCase()} ${url}`,
+          page: window.location.pathname,
+          details: {
+            code: error.code,
+            method: config.method,
+            url,
+            message: error.message?.slice(0, 200),
+            type: 'network_error',
+          },
+        }).catch(() => {});
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Extended timeout for long operations (file upload, translate, AI)
+const LONG_TIMEOUT = 300000; // 5 minutes
+
 // Upload a file (multipart/form-data)
 export async function uploadFile(file) {
   const formData = new FormData();
   formData.append('file', file);
   const response = await apiClient.post('/api/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: LONG_TIMEOUT,
   });
   return response.data;
 }
@@ -147,6 +249,44 @@ export function createProgressWebSocket(taskId, onMessage, onClose, onError) {
   };
 
   return ws;
+}
+
+// --- Frontend Logging ---
+
+// Report page view to backend (fire-and-forget)
+export function logPageView(page) {
+  apiClient.post('/api/log/frontend', {
+    level: 'pageview',
+    page,
+    details: { timestamp: new Date().toISOString() },
+  }).catch(() => {}); // silently ignore errors
+}
+
+// Report frontend error to backend (fire-and-forget)
+export function logFrontendError(message, details = {}, page = '') {
+  apiClient.post('/api/log/frontend', {
+    level: 'error',
+    message: String(message).slice(0, 500),
+    page: page || window.location.pathname,
+    details,
+  }).catch(() => {});
+}
+
+// Global unhandled error catcher
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (event) => {
+    logFrontendError(event.message, {
+      source: event.filename,
+      line: event.lineno,
+      col: event.colno,
+    });
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    logFrontendError(`Unhandled Promise: ${event.reason}`, {
+      type: 'unhandledrejection',
+    });
+  });
 }
 
 export default apiClient;

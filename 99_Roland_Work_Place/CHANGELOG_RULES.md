@@ -9,3 +9,8 @@
 - `04-code-safety.md` ← R3+R4+R5
 - `05-rule-governance.md` ← NEW
 **Reason:** Restructurare completă — reguli mutate din CLAUDE.md în `.claude/rules/` pentru auto-load la fiecare mesaj, CLAUDE.md redus de la 354 la ~150 linii, adăugat protocol guvernanță reguli + prioritate local > global.
+
+### 2026-03-20 — 06-free-tier-enforcement.md — ADD
+**Before:** N/A (regulă nouă)
+**After:** Regulă completă Free Tier Enforcement — zero cost policy, checklist 5 puncte (free tier permanent, no card, funcțional, compatibil Python/FastAPI/Windows, data concerns), provider chains aprobate pentru: AI Text (Gemini→Cerebras→Groq→Mistral→SambaNova), Translation (DeepL→Azure→Google→MyMemory→LibreTranslate), TTS (edge-tts→Web Speech→Azure F0), OCR (Tesseract→EasyOCR→OCR.space), Notifications (Web Push→Telegram→ntfy.sh→Email), Embeddings (Gemini→all-MiniLM local), Business APIs RO (BNR XML, ANAF CUI). Violation response protocol inclus.
+**Reason:** Sesiunea de unificare documentație (Faza 19) a stabilit politica zero cost ca regulă permanentă — toate API-urile și serviciile externe trebuie să aibă free tier funcțional permanent. Provideri eliminați: OpenAI (free tier nefuncțional), Perplexity (exclusiv plătit), SMS România (fără opțiune gratuită).

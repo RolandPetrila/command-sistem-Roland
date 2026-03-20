@@ -34,6 +34,15 @@ import NewPage from './pages/NewPage'
 - WebSocket: dynamic protocol (`ws:`/`wss:` based on `location.protocol`)
 - Axios instance with base URL from `window.location.origin`
 
+## Error Handling (MANDATORY)
+- **NEVER** use `catch { /* ignore */ }` for API calls
+- All API errors auto-show toast via axios interceptor in `client.js`
+- All API errors auto-logged to backend via `POST /api/log/frontend`
+- For user actions: optionally add local `setError()` for inline display
+- For blob responses: read error with `await blob.text()` before parsing
+- Diagnostics panel: triangle icon in Header — opens from any page
+- Full rules: `.claude/rules/07-error-handling.md`
+
 ## Build
 - `npm run dev` — development with Vite HMR
 - `npm run build` → `dist/` served statically by FastAPI in production

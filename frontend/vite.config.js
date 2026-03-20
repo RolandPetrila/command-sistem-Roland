@@ -6,12 +6,12 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['icons/icon-192.png', 'icons/icon-512.png'],
       manifest: {
         name: 'Roland - Command Center',
         short_name: 'Roland CC',
-        description: 'Panou personal multifuncțional — calculator traduceri, tool-uri rapide, facturare',
+        description: 'Panou personal multifunctional — calculator traduceri, tool-uri rapide, facturare',
         theme_color: '#0f172a',
         background_color: '#0f172a',
         display: 'standalone',
@@ -58,6 +58,17 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    chunkSizeWarningLimit: 500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-ui': ['lucide-react'],
+          'vendor-charts': ['recharts'],
+          'vendor-axios': ['axios'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

@@ -1,4 +1,5 @@
 import React from 'react';
+import { logFrontendError } from '../../api/client';
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -12,6 +13,10 @@ export default class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error('ErrorBoundary a prins o eroare:', error, errorInfo);
+    logFrontendError(error.message, {
+      stack: error.stack?.slice(0, 1000),
+      componentStack: errorInfo?.componentStack?.slice(0, 500),
+    });
   }
 
   render() {

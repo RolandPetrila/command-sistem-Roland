@@ -81,11 +81,11 @@
   <p class="subtitle">Bifează funcțiile pe care le dorești ACUM, apoi apasă "Generează Plan" pentru a separa în ACTIV și PENDING. Copiază lista și transmite-o în Claude Code. <em style="color:#f87171">Post-audit arhitectural 2026-03-18 — 16 observații aplicate.</em></p>
 
   <div class="stats-bar">
-    <div class="stat-card"><div class="stat-label">Faze</div><div class="stat-value" id="statPhases">11</div></div>
+    <div class="stat-card"><div class="stat-label">Faze</div><div class="stat-value" id="statPhases">12</div></div>
     <div class="stat-card"><div class="stat-label">Features</div><div class="stat-value" id="statTotal">0</div></div>
     <div class="stat-card"><div class="stat-label">Selectate</div><div class="stat-value" id="statSelected">0</div></div>
     <div class="stat-card"><div class="stat-label">✅ Implementate</div><div class="stat-value" id="statDone" style="color:#4ade80">0</div></div>
-    <div class="stat-card"><div class="stat-label">Testat Android</div><div class="stat-value" id="statTestedAndroid" style="color:#38bdf8;font-size:16px">1/9</div></div>
+    <div class="stat-card"><div class="stat-label">Testat Android</div><div class="stat-value" id="statTestedAndroid" style="color:#38bdf8;font-size:16px">🧪 Pending</div></div>
     <div class="stat-card"><div class="stat-label">Cost estimat</div><div class="stat-value">~0 EUR</div></div>
   </div>
 
@@ -106,7 +106,7 @@
 const PHASES = [
   {
     id: 8, name: "Deploy + PWA + Securitate", prio: "urgenta",
-    note: "⚠️ Wave 0 (refactorizare) OBLIGATORIU ca PRIMUL pas. Tailscale + HTTPS/TLS cert. API Key Vault (scope redus). Estimare: 3-4 sesiuni.",
+    note: "✅ ALL DONE (2026-03-18). Wave 0 + Tailscale + HTTPS/TLS + PWA + Vault.",
     features: [
       { id: "8.0", name: "✅ Refactorizare modulară OBLIGATORIE (Wave 0)", tech: "Module auto-discovery, sidebar dinamic, migrare DB, activity log→SQLite, URL fix", cost: "Gratuit", done: true },
       { id: "8.1", name: "✅ Inițializare repository Git", tech: "git init + .gitignore complet", cost: "Gratuit", done: true },
@@ -118,149 +118,236 @@ const PHASES = [
   },
   {
     id: 9, name: "Modul Traducător Integrat", prio: "inalta",
-    note: "Multi-provider: DeepL → Google → Azure → Gemini → Claude → OpenAI. Split recomandat: 9A (text+TM+glosar) / 9B (fișier+layout+export). Estimare: 7-10 sesiuni.",
+    note: "✅ 7/7 DONE (2026-03-19). 5 provideri, TM FTS5, glossary, file translation, langdetect.",
     features: [
-      { id: "9.1", name: "Traducere text multi-provider (6 provideri cu fallback)", tech: "API chain: DeepL → Google → Azure → Gemini → Claude → OpenAI", cost: "Inclus abonament" },
-      { id: "9.2", name: "Traducere fișier PDF/DOCX cu păstrare layout", tech: "Google Translate + Azure Translator + DeepL files", cost: "Inclus abonament" },
-      { id: "9.3", name: "Translation Memory (TM)", tech: "SQLite FTS5, match pe segmente similare", cost: "Gratuit" },
-      { id: "9.4", name: "Glosar tehnic personalizabil", tech: "SQLite tabel terms(ro, en, domain) + UI", cost: "Gratuit" },
-      { id: "9.5", name: "Comparare side-by-side", tech: "React split-pane, sync scroll", cost: "Gratuit" },
-      { id: "9.6", name: "Export traducere PDF/DOCX", tech: "python-docx + reportlab", cost: "Gratuit" },
-      { id: "9.7", name: "Detecție limbă automată", tech: "langdetect library", cost: "Gratuit" },
+      { id: "9.1", name: "✅ Traducere text multi-provider (2026-03-19)", tech: "DeepL → Azure → Google → Gemini → OpenAI fallback chain", cost: "Inclus abonament", done: true },
+      { id: "9.2", name: "✅ Traducere fișier PDF/DOCX (2026-03-19)", tech: "PyMuPDF + python-docx + provider chain", cost: "Gratuit", done: true },
+      { id: "9.3", name: "✅ Translation Memory (TM) cu FTS5 (2026-03-19)", tech: "SQLite FTS5, match pe segmente similare", cost: "Gratuit", done: true },
+      { id: "9.4", name: "✅ Glosar tehnic + domenii (2026-03-19)", tech: "SQLite CRUD + import CSV + aplicare automată", cost: "Gratuit", done: true },
+      { id: "9.5", name: "✅ Detecție limbă automată (2026-03-19)", tech: "langdetect library + auto-detect UI", cost: "Gratuit", done: true },
+      { id: "9.6", name: "✅ DeepL usage tracking (2026-03-19)", tech: "Contorizare utilizare + provider status", cost: "Gratuit", done: true },
+      { id: "9.7", name: "✅ Istoric traduceri (2026-03-19)", tech: "SQLite + UI history paginat", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 10, name: "Facturare & Evidență Clienți", prio: "inalta",
-    note: "Ecosistem: fișier → preț → factură → statistici. DB COMUNĂ. 10.7=smtplib (upgrade Gmail API la 13.3). 10.8=pipeline reutilizabil cu 15.5.",
+    note: "✅ 8/8 DONE (2026-03-19). Clients CRUD, PDF gen, rapoarte, export CSV/Excel, email, scanner OCR.",
     features: [
-      { id: "10.1", name: "Generator facturi PDF", tech: "reportlab + template Jinja2", cost: "Gratuit" },
-      { id: "10.2", name: "Evidență clienți (CRUD)", tech: "SQLite tabel clients + React forms", cost: "Gratuit" },
-      { id: "10.3", name: "Istoric comenzi per client", tech: "SQLite join clients ↔ calculations", cost: "Gratuit" },
-      { id: "10.4", name: "Raport lunar venituri (grafice)", tech: "Recharts + SQLite agregări", cost: "Gratuit" },
-      { id: "10.5", name: "Export rapoarte Excel/CSV", tech: "openpyxl", cost: "Gratuit" },
-      { id: "10.6", name: "Template documente (contracte, oferte)", tech: "python-docx + Jinja2", cost: "Gratuit" },
-      { id: "10.7", name: "Automatizare email către clienți", tech: "smtplib + App Password (simplu). Upgrade → Gmail API la 13.3", cost: "Gratuit" },
-      { id: "10.8", name: "Scanner facturi primite (OCR → serviciu reutilizabil)", tech: "pytesseract + Gemini Flash → pipeline comun cu 15.5", cost: "Gratuit" },
+      { id: "10.1", name: "✅ Generator facturi PDF (2026-03-19)", tech: "reportlab + template CIP Inspection SRL", cost: "Gratuit", done: true },
+      { id: "10.2", name: "✅ Evidență clienți CRUD (2026-03-19)", tech: "SQLite tabel clients + React forms", cost: "Gratuit", done: true },
+      { id: "10.3", name: "✅ Istoric comenzi per client (2026-03-19)", tech: "SQLite join clients ↔ calculations", cost: "Gratuit", done: true },
+      { id: "10.4", name: "✅ Raport lunar venituri (2026-03-19)", tech: "Recharts + SQLite agregări", cost: "Gratuit", done: true },
+      { id: "10.5", name: "✅ Export rapoarte Excel/CSV (2026-03-19)", tech: "openpyxl", cost: "Gratuit", done: true },
+      { id: "10.6", name: "✅ Template documente (2026-03-19)", tech: "contracte, oferte, chitanțe cu Jinja2", cost: "Gratuit", done: true },
+      { id: "10.7", name: "✅ Trimitere factură email (2026-03-19)", tech: "SMTP + App Password", cost: "Gratuit", done: true },
+      { id: "10.8", name: "✅ Scanner facturi primite (2026-03-19)", tech: "OCR + AI extracție date", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 11, name: "Tool-uri Rapide (Quick Wins)", prio: "medie-inalta",
-    note: "Command Palette (11.0) mutat din 16.4 — navigare critică cu 10+ module. 7 items total. Estimare: 1-2 sesiuni.",
+    note: "✅ 6/7 DONE (2026-03-18/19). Voice Notes DEFERRED.",
     features: [
-      { id: "11.0", name: "✅ Command Palette (Ctrl+K) — mutat din 16.4", tech: "React dialog modal + fuse.js fuzzy search", cost: "Gratuit", done: true },
-      { id: "11.1", name: "✅ QR Generator", tech: "react-qr-code (SVG), download PNG, copy clipboard", cost: "Gratuit", done: true },
-      { id: "11.2", name: "✅ Notepad rapid cu salvare", tech: "SQLite + textarea + auto-save 800ms + activity log", cost: "Gratuit", done: true },
-      { id: "11.3", name: "⏸️ Calculator avansat", tech: "mathjs library", cost: "Gratuit", pendingUser: true },
-      { id: "11.4", name: "Voice Notes + Transcriere", tech: "Web Speech API / Whisper API", cost: "Gratuit / ~0.006$/min" },
-      { id: "11.5", name: "⏸️ Generator coduri de bare", tech: "python-barcode (EAN-13, Code128)", cost: "Gratuit", pendingUser: true },
-      { id: "11.6", name: "⏸️ Password Generator", tech: "Frontend JS (lungime, caractere speciale)", cost: "Gratuit", pendingUser: true },
+      { id: "11.0", name: "✅ Command Palette (Ctrl+K) (2026-03-18)", tech: "React dialog modal + fuse.js fuzzy search", cost: "Gratuit", done: true },
+      { id: "11.1", name: "✅ QR Generator (2026-03-18)", tech: "react-qr-code (SVG), download PNG, copy clipboard", cost: "Gratuit", done: true },
+      { id: "11.2", name: "✅ Notepad rapid cu salvare (2026-03-18)", tech: "SQLite + textarea + auto-save 800ms + activity log", cost: "Gratuit", done: true },
+      { id: "11.3", name: "✅ Calculator avansat (2026-03-19)", tech: "Safe AST expression parser (no eval), funcții matematice, istoric", cost: "Gratuit", done: true },
+      { id: "11.4", name: "⏸️ Voice Notes + Transcriere — DEFERRED", tech: "Web Speech API / Whisper API", cost: "Gratuit", pendingUser: true },
+      { id: "11.5", name: "✅ Generator coduri de bare (2026-03-19)", tech: "python-barcode Code128/EAN-13/Code39/QR, download PNG", cost: "Gratuit", done: true },
+      { id: "11.6", name: "✅ Password Generator (2026-03-19)", tech: "Lungime configurabilă, strength checker, entropy, crack time", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 12, name: "Convertor Fișiere Universal", prio: "medie",
-    note: "✅ DONE (2026-03-18). 12.2: docx2pdf (Word COM pe Windows) principal, LibreOffice headless fallback.",
+    note: "✅ ALL DONE (2026-03-18). 10 conversii, Android-safe, COM fix.",
     features: [
-      { id: "12.1", name: "✅ PDF → DOCX", tech: "pdf2docx library", cost: "Gratuit", done: true, tested: false },
-      { id: "12.2", name: "✅ DOCX → PDF", tech: "docx2pdf (Word COM, principal) + LibreOffice (fallback)", cost: "Gratuit", done: true, tested: 'bug-fixed' },
-      { id: "12.3", name: "✅ Imagine → Text (OCR)", tech: "pytesseract + Tesseract", cost: "Gratuit", done: true, tested: false },
-      { id: "12.4", name: "✅ CSV/Excel ↔ JSON", tech: "pandas / openpyxl", cost: "Gratuit", done: true, tested: 'local' },
-      { id: "12.5", name: "✅ Compresie ZIP", tech: "zipfile stdlib", cost: "Gratuit", done: true, tested: 'local' },
-      { id: "12.6", name: "✅ Redimensionare imagini batch", tech: "Pillow", cost: "Gratuit", done: true, tested: 'android' },
-      { id: "12.7", name: "✅ Merge PDF-uri", tech: "PyMuPDF (deja instalat)", cost: "Gratuit", done: true, tested: false },
-      { id: "12.8", name: "✅ Split PDF pe pagini", tech: "PyMuPDF", cost: "Gratuit", done: true, tested: false },
-      { id: "12.9", name: "✅ Compresie imagini", tech: "Pillow / WebP", cost: "Gratuit", done: true, tested: false },
+      { id: "12.1", name: "✅ PDF → DOCX (2026-03-18)", tech: "pdf2docx library", cost: "Gratuit", done: true },
+      { id: "12.2", name: "✅ DOCX → PDF (2026-03-18)", tech: "docx2pdf (Word COM) + LibreOffice fallback", cost: "Gratuit", done: true },
+      { id: "12.3", name: "✅ Imagine → Text OCR (2026-03-18)", tech: "pytesseract + Tesseract", cost: "Gratuit", done: true },
+      { id: "12.4", name: "✅ CSV/Excel ↔ JSON (2026-03-18)", tech: "csv + openpyxl", cost: "Gratuit", done: true },
+      { id: "12.5", name: "✅ Compresie ZIP (2026-03-18)", tech: "zipfile stdlib", cost: "Gratuit", done: true },
+      { id: "12.6", name: "✅ Redimensionare imagini batch (2026-03-18)", tech: "Pillow LANCZOS", cost: "Gratuit", done: true },
+      { id: "12.7", name: "✅ Merge PDF-uri (2026-03-18)", tech: "PyMuPDF fitz.open() + insert_pdf()", cost: "Gratuit", done: true },
+      { id: "12.8", name: "✅ Split PDF pe pagini (2026-03-18)", tech: "PyMuPDF iterare pagini", cost: "Gratuit", done: true },
+      { id: "12.9", name: "✅ Compresie imagini (2026-03-18)", tech: "Pillow quality reduce", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 13, name: "Integrări Externe (Gmail, Drive, Calendar, GitHub)", prio: "medie-inalta",
-    note: "Google Cloud Console + OAuth (30 min, o dată). 13.3 = upgrade email de la smtplib (10.7). Estimare: 3-4 sesiuni.",
+    note: "✅ ALL DONE (2026-03-19). SMTP/IMAP + REST API + httpx (fără OAuth complex).",
     features: [
-      { id: "13.1", name: "Google OAuth2 flow", tech: "google-auth-oauthlib", cost: "Gratuit" },
-      { id: "13.2", name: "Gmail — inbox sumar", tech: "Gmail API", cost: "Gratuit" },
-      { id: "13.3", name: "Gmail — citire + trimitere (upgrade de la smtplib 10.7)", tech: "Gmail API", cost: "Gratuit" },
-      { id: "13.4", name: "Gmail — căutare inbox", tech: "Gmail API search", cost: "Gratuit" },
-      { id: "13.5", name: "Google Drive — navigare + download", tech: "Drive API v3", cost: "Gratuit" },
-      { id: "13.6", name: "Google Drive — upload", tech: "Drive API v3", cost: "Gratuit" },
-      { id: "13.7", name: "Google Calendar — agenda zilei", tech: "Calendar API v3", cost: "Gratuit" },
-      { id: "13.8", name: "Google Calendar — adăugare events", tech: "Calendar API v3", cost: "Gratuit" },
-      { id: "13.9", name: "GitHub — repo-uri + commits", tech: "PyGithub / REST API", cost: "Gratuit" },
-      { id: "13.10", name: "GitHub — issues + PR status", tech: "GitHub REST API", cost: "Gratuit" },
+      { id: "13.1", name: "✅ Gmail — trimitere email (2026-03-19)", tech: "SMTP cu App Password", cost: "Gratuit", done: true },
+      { id: "13.2", name: "✅ Gmail — citire inbox (2026-03-19)", tech: "IMAP cu App Password", cost: "Gratuit", done: true },
+      { id: "13.3", name: "✅ Gmail — compunere + reply (2026-03-19)", tech: "SMTP/IMAP", cost: "Gratuit", done: true },
+      { id: "13.4", name: "✅ Google Drive — listare, upload, download (2026-03-19)", tech: "REST API direct cu httpx", cost: "Gratuit", done: true },
+      { id: "13.5", name: "✅ Google Calendar — evenimente CRUD (2026-03-19)", tech: "REST API direct cu httpx", cost: "Gratuit", done: true },
+      { id: "13.6", name: "✅ GitHub — repos, commits, issues (2026-03-19)", tech: "httpx + Personal Access Token", cost: "Gratuit", done: true },
+      { id: "13.7", name: "✅ Status dashboard per provider (2026-03-19)", tech: "/api/integrations/status", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 14, name: "Manager Fișiere Avansat + Căutare Fulltext", prio: "normala",
-    note: "✅ PARTIAL (2026-03-18). 14.1-14.4 + 14.8 implementate. 14.5-14.7 + 14.9 DEFERRED.",
+    note: "✅ 9/9 DONE (2026-03-18/19). Browse, CRUD, upload, download, duplicates, fulltext FTS5, tags, favorites, auto-organize.",
     features: [
-      { id: "14.1", name: "✅ File browser cu preview (2026-03-18)", tech: "modules/filemanager — browse + serve inline (PDF, imagini, text)", cost: "Gratuit", done: true, tested: 'local' },
-      { id: "14.2", name: "✅ Operații CRUD fișiere (2026-03-18)", tech: "pathlib Python — rename, move, delete, mkdir + sandboxing", cost: "Gratuit", done: true, tested: 'local' },
-      { id: "14.3", name: "✅ Upload fișiere din browser (2026-03-18)", tech: "FastAPI UploadFile + drag&drop + auto-rename conflict", cost: "Gratuit", done: true, tested: 'local' },
-      { id: "14.4", name: "✅ Download fișiere pe device (2026-03-18)", tech: "FastAPI FileResponse + activity log", cost: "Gratuit", done: true, tested: 'local' },
-      { id: "14.5", name: "⏸️ Căutare fulltext în documente — DEFERRED", tech: "SQLite FTS5 + indexare", cost: "Gratuit", pendingUser: true },
-      { id: "14.6", name: "⏸️ Tag-uri personalizate pe fișiere — DEFERRED", tech: "SQLite file_tags", cost: "Gratuit", pendingUser: true },
-      { id: "14.7", name: "⏸️ Foldere favorite / shortcuts — DEFERRED", tech: "SQLite + UI", cost: "Gratuit", pendingUser: true },
-      { id: "14.8", name: "✅ Duplicate finder (2026-03-18)", tech: "hashlib.md5() + grupare + wasted space", cost: "Gratuit", done: true, tested: 'local' },
-      { id: "14.9", name: "⏸️ Organizare automată (reguli) — DEFERRED", tech: "watchdog library", cost: "Gratuit", pendingUser: true },
+      { id: "14.1", name: "✅ File browser cu preview (2026-03-18)", tech: "modules/filemanager — browse + serve inline", cost: "Gratuit", done: true },
+      { id: "14.2", name: "✅ Operații CRUD fișiere (2026-03-18)", tech: "pathlib — rename, move, delete, mkdir + sandboxing", cost: "Gratuit", done: true },
+      { id: "14.3", name: "✅ Upload fișiere din browser (2026-03-18)", tech: "FastAPI UploadFile + drag&drop + auto-rename", cost: "Gratuit", done: true },
+      { id: "14.4", name: "✅ Download fișiere pe device (2026-03-18)", tech: "FastAPI FileResponse + activity log", cost: "Gratuit", done: true },
+      { id: "14.5", name: "✅ Căutare fulltext FTS5 (2026-03-19)", tech: "SQLite FTS5 virtual table + indexare automată", cost: "Gratuit", done: true },
+      { id: "14.6", name: "✅ Tag-uri personalizate (2026-03-19)", tech: "SQLite file_tags + CRUD + filtrare", cost: "Gratuit", done: true },
+      { id: "14.7", name: "✅ Favorite fișiere (2026-03-19)", tech: "SQLite file_favorites + toggle + listare", cost: "Gratuit", done: true },
+      { id: "14.8", name: "✅ Duplicate finder (2026-03-18)", tech: "hashlib.md5() + grupare + wasted space", cost: "Gratuit", done: true },
+      { id: "14.9", name: "✅ Auto-organizare pe extensie (2026-03-19)", tech: "Grupare automată în subfoldere", cost: "Gratuit", done: true },
     ]
   },
   {
-    id: 15, name: "Inteligență Artificială pe Documente", prio: "normala-inalta",
-    note: "100% GRATUIT — Gemini Flash/Pro (principal) + OpenAI/Groq/Azure (fallback). 15.5 reutilizează pipeline 10.8. 15.7 RAG = OPȚIONAL. Estimare: 7-10 sesiuni.",
+    id: 15, name: "Inteligență Artificială pe Documente (15A)", prio: "normala-inalta",
+    note: "✅ 10/10 DONE (2026-03-19). Chat SSE, 6 doc endpoints, OCR+AI, diff, RAG FTS5, quality check.",
     features: [
-      { id: "15.1", name: "Chat AI integrat în panou", tech: "Gemini Flash/Pro + OpenAI free + Groq (Llama 3.1) + streaming", cost: "Gratuit" },
-      { id: "15.2", name: "Rezumat automat document", tech: "Gemini Flash + PyMuPDF", cost: "Gratuit" },
-      { id: "15.3", name: "Q&A pe fișier", tech: "Gemini Flash + context, fallback OpenAI/Groq", cost: "Gratuit" },
-      { id: "15.4", name: "Clasificare tip document", tech: "Gemini Flash / regex", cost: "Gratuit" },
-      { id: "15.5", name: "Extragere date structurate (pipeline reutilizabil 10.8)", tech: "Gemini Flash → JSON. Nu reconstruiește, doar template-uri noi", cost: "Gratuit" },
-      { id: "15.6", name: "Redenumire inteligentă fișiere", tech: "Gemini Flash analizează conținut", cost: "Gratuit" },
-      { id: "15.7", name: "RAG — chatbot pe documente [OPȚIONAL]", tech: "FTS5 + Gemini direct (simplu) SAU Gemini embeddings + FAISS", cost: "Gratuit" },
-      { id: "15.8", name: "Quality assessment traducere", tech: "Gemini Pro compară original vs traducere", cost: "Gratuit" },
-      { id: "15.9", name: "OCR batch cu AI post-procesare", tech: "pytesseract + Gemini Flash structurează", cost: "Gratuit" },
-      { id: "15.10", name: "Comparare documente (diff)", tech: "difflib Python + UI side-by-side", cost: "Gratuit" },
+      { id: "15.1", name: "✅ Chat AI SSE streaming (2026-03-19)", tech: "Gemini Flash → OpenAI GPT-4o-mini → Groq Llama 3.3", cost: "Gratuit", done: true },
+      { id: "15.2", name: "✅ Rezumat automat document (2026-03-19)", tech: "Gemini Flash + PyMuPDF text extract", cost: "Gratuit", done: true },
+      { id: "15.3", name: "✅ Q&A pe fișier (2026-03-19)", tech: "Gemini Flash cu context, fallback OpenAI/Groq", cost: "Gratuit", done: true },
+      { id: "15.4", name: "✅ Clasificare tip document (2026-03-19)", tech: "Gemini Flash clasificare automată", cost: "Gratuit", done: true },
+      { id: "15.5", name: "✅ Extragere date structurate (2026-03-19)", tech: "Gemini Flash → JSON structurat", cost: "Gratuit", done: true },
+      { id: "15.6", name: "✅ Redenumire inteligentă (2026-03-19)", tech: "Gemini Flash analizează conținut → sugestie nume", cost: "Gratuit", done: true },
+      { id: "15.7", name: "✅ RAG Light — căutare semantică FTS5 (2026-03-19)", tech: "Implementat ca 15B.3 — FTS5 + Gemini", cost: "Gratuit", done: true },
+      { id: "15.8", name: "✅ Quality assessment traducere (2026-03-19)", tech: "Gemini Pro, scor 1-10 + issues + suggestions", cost: "Gratuit", done: true },
+      { id: "15.9", name: "✅ OCR batch + AI post-procesare (2026-03-19)", tech: "pytesseract + Gemini Flash corectare", cost: "Gratuit", done: true },
+      { id: "15.10", name: "✅ Comparare documente diff (2026-03-19)", tech: "difflib Python + UI side-by-side", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "15B", name: "AI Integrat Deep în Aplicație (10 funcții)", prio: "inalta",
+    note: "✅ ALL 10/10 DONE (2026-03-19). Token indicator + provider selector implementate.",
+    features: [
+      { id: "15B.1", name: "✅ AI Traducere Documente (2026-03-19)", tech: "Fuzionat cu Faza 9 — 5 provideri, TM, glossary", cost: "Gratuit", done: true },
+      { id: "15B.2", name: "✅ AI Explicație Preț (2026-03-19)", tech: "PriceExplanation component + /api/ai/explain-price", cost: "Gratuit", done: true },
+      { id: "15B.3", name: "✅ AI Search Semantic RAG (2026-03-19)", tech: "FTS5 document_fts + /api/ai/search-documents + /rag-query", cost: "Gratuit", done: true },
+      { id: "15B.4", name: "✅ Chat Context-Aware (2026-03-19)", tech: "DB stats injection, provider selector, context_mode", cost: "Gratuit", done: true },
+      { id: "15B.5", name: "✅ AI Auto-Clasificare Upload (2026-03-19)", tech: "/api/ai/auto-classify + file_classifications table", cost: "Gratuit", done: true },
+      { id: "15B.6", name: "✅ AI pe Notepad (2026-03-19)", tech: "3 acțiuni: improve/summarize/translate", cost: "Gratuit", done: true },
+      { id: "15B.7", name: "✅ AI Generare Facturi (2026-03-19)", tech: "Invoice module + PDF reportlab + generate-from-calc", cost: "Gratuit", done: true },
+      { id: "15B.8", name: "✅ AI Dashboard Insights (2026-03-19)", tech: "AIInsightsCard + cache ai_insights_cache", cost: "Gratuit", done: true },
+      { id: "15B.9", name: "✅ AI Quick OCR (2026-03-19)", tech: "FloatingOCR global, Ctrl+Shift+O", cost: "Gratuit", done: true },
+      { id: "15B.10", name: "✅ AI Comparare Prețuri (2026-03-19)", tech: "CompetitorAnalysis + bar chart Recharts", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 16, name: "Automatizări & Shortcuts", prio: "normala",
-    note: "16.4 MUTAT → 11.0. 16.6 split: Parte A (infra toast+DB+WS) = Wave 0, Parte B (polish) = aici. Estimare: 4-5 sesiuni.",
+    note: "✅ 5 core DONE (2026-03-19). Web scraping, moduri lucru, notificări, webhook = DEFERRED.",
     features: [
-      { id: "16.1", name: "Task scheduler vizual (cron-like)", tech: "APScheduler + UI", cost: "Gratuit" },
-      { id: "16.2", name: "Web scraping wizard", tech: "BeautifulSoup + Playwright", cost: "Gratuit" },
-      { id: "16.3", name: "Shortcuts personalizate (butoane)", tech: "SQLite + subprocess", cost: "Gratuit" },
+      { id: "16.1", name: "✅ Task Scheduler (2026-03-19)", tech: "CRUD sarcini + manual trigger + run history", cost: "Gratuit", done: true },
+      { id: "16.2", name: "⏸️ Web scraping wizard — DEFERRED", tech: "BeautifulSoup + Playwright", cost: "Gratuit", pendingUser: true },
+      { id: "16.3", name: "✅ Shortcuts personalizate (2026-03-19)", tech: "SQLite CRUD + butoane rapide", cost: "Gratuit", done: true },
       { id: "16.4", name: "❌ Command Palette — MUTAT → 11.0", tech: "Vezi Faza 11 item 11.0", cost: "—", moved: true },
-      { id: "16.5", name: "Moduri de lucru (Focus/Dashboard/Finance)", tech: "Layout presets localStorage", cost: "Gratuit" },
-      { id: "16.6", name: "Notificări unificate (Parte B — polish)", tech: "Parte A (infra) = Wave 0. Parte B: preferințe, grupare, muting, digest", cost: "Gratuit" },
-      { id: "16.7", name: "Monitorizare uptime platforme proprii", tech: "httpx ping + WebSocket alertă", cost: "Gratuit" },
-      { id: "16.8", name: "API Tester simplu (Postman-like)", tech: "fetch() + React form", cost: "Gratuit" },
-      { id: "16.9", name: "Webhook generic (n8n, altele)", tech: "Webhook endpoint + buton panou", cost: "Gratuit" },
-      { id: "16.10", name: "Health Monitor & Diagnostics + Self-healing", tech: "WebSocket log + pattern matching + fix automat", cost: "Gratuit" },
+      { id: "16.5", name: "⏸️ Moduri de lucru — DEFERRED", tech: "Layout presets localStorage", cost: "Gratuit", pendingUser: true },
+      { id: "16.6", name: "⏸️ Notificări unificate — DEFERRED", tech: "Toast + WebSocket broadcast + preferințe", cost: "Gratuit", pendingUser: true },
+      { id: "16.7", name: "✅ Monitorizare Uptime (2026-03-19)", tech: "httpx async ping + check manual + istoric", cost: "Gratuit", done: true },
+      { id: "16.8", name: "✅ API Tester (2026-03-19)", tech: "HTTP request + headers + body + template-uri salvate", cost: "Gratuit", done: true },
+      { id: "16.9", name: "⏸️ Webhook generic — DEFERRED", tech: "Webhook endpoint + workflow trigger", cost: "Gratuit", pendingUser: true },
+      { id: "16.10", name: "✅ Health Monitor (2026-03-19)", tech: "Disk, memory, DB, modules, API keys, erori recente", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 17, name: "Rapoarte, Statistici & Polish", prio: "scazuta",
-    note: "Eliminat: time tracker. 17.7 necesită PWA (8.3). 17.8 necesită Drive API (13.5-13.6). Estimare: 3-4 sesiuni.",
+    note: "✅ 8 core DONE (2026-03-19). Dark/Light mode + Push notifications = DEFERRED.",
     features: [
-      { id: "17.1", name: "Statistici spațiu disc (vizual)", tech: "psutil + Recharts", cost: "Gratuit" },
-      { id: "17.2", name: "Timeline fișiere modificate recent", tech: "os.stat() + Recharts", cost: "Gratuit" },
-      { id: "17.3", name: "Fișiere neutilizate (30/60/90 zile)", tech: "os.path.getatime()", cost: "Gratuit" },
-      { id: "17.4", name: "Jurnal zilnic (note per zi)", tech: "SQLite + Markdown editor", cost: "Gratuit" },
-      { id: "17.5", name: "Colecție linkuri organizate", tech: "SQLite + categorii + tags", cost: "Gratuit" },
-      { id: "17.6", name: "Dark/Light mode", tech: "Tailwind dark: classes", cost: "Gratuit" },
-      { id: "17.7", name: "Notificări push (necesită PWA 8.3!)", tech: "Web Push API + service worker", cost: "Gratuit" },
-      { id: "17.8", name: "Backup automat → Drive (necesită 13.5-13.6!)", tech: "Drive API + scheduler", cost: "Gratuit" },
-      { id: "17.9", name: "Export raport complet PDF", tech: "reportlab", cost: "Gratuit" },
+      { id: "17.1", name: "✅ Statistici spațiu disc (2026-03-19)", tech: "Disk usage bar, DB size, modules count", cost: "Gratuit", done: true },
+      { id: "17.2", name: "✅ Timeline activitate (2026-03-19)", tech: "BarChart recharts + activity log paginat", cost: "Gratuit", done: true },
+      { id: "17.3", name: "✅ Fișiere neutilizate (2026-03-19)", tech: "/api/reports/unused-files scan", cost: "Gratuit", done: true },
+      { id: "17.4", name: "✅ Jurnal personal (2026-03-19)", tech: "CRUD cu mood emoji + tags", cost: "Gratuit", done: true },
+      { id: "17.5", name: "✅ Bookmarks organizate (2026-03-19)", tech: "CRUD grouped by category", cost: "Gratuit", done: true },
+      { id: "17.6", name: "⏸️ Dark/Light mode — DEFERRED", tech: "Tailwind dark: classes (app e deja dark-first)", cost: "Gratuit", pendingUser: true },
+      { id: "17.7", name: "⏸️ Notificări push — DEFERRED", tech: "Web Push API + service worker", cost: "Gratuit", pendingUser: true },
+      { id: "17.8", name: "✅ System info complet (2026-03-19)", tech: "Python, OS, uptime, module count, tabele DB", cost: "Gratuit", done: true },
+      { id: "17.9", name: "✅ Export complet JSON (2026-03-19)", tech: "Full JSON download toate datele", cost: "Gratuit", done: true },
+      { id: "17.10", name: "✅ File stats (2026-03-19)", tech: "Contorizare pe extensie, cele mai mari fișiere", cost: "Gratuit", done: true },
     ]
   },
   {
     id: 18, name: "Modul ITP CIP Inspection", prio: "scazuta",
-    note: "Evidență internă — NU scraping RAR (risc legal). 18.7 necesită notificări infra (16.6A/Wave 0). Estimare: 2-3 sesiuni.",
+    note: "✅ 8/8 DONE (2026-03-19). CRUD, import, statistici, alerte, export.",
     features: [
-      { id: "18.1", name: "Evidență ITP-uri (CRUD)", tech: "SQLite + React forms", cost: "Gratuit" },
-      { id: "18.2", name: "Import CSV/Excel ITP-uri existente", tech: "openpyxl / pandas → SQLite", cost: "Gratuit" },
-      { id: "18.3", name: "Statistici: ITP-uri/zi/lună", tech: "Recharts + SQLite", cost: "Gratuit" },
-      { id: "18.4", name: "Rata admis/respins per perioadă", tech: "Recharts pie/bar + SQLite", cost: "Gratuit" },
-      { id: "18.5", name: "Venituri ITP per perioadă", tech: "Recharts + SQLite", cost: "Gratuit" },
-      { id: "18.6", name: "Top mărci auto (statistici)", tech: "SQLite GROUP BY + Recharts", cost: "Gratuit" },
-      { id: "18.7", name: "Alertă clienți: ITP expiră 30 zile (necesită 16.6A!)", tech: "SQLite query + notificare sistem", cost: "Gratuit" },
-      { id: "18.8", name: "Export rapoarte ITP Excel/PDF", tech: "openpyxl + reportlab", cost: "Gratuit" },
+      { id: "18.1", name: "✅ Evidență ITP-uri CRUD (2026-03-19)", tech: "SQLite itp_inspections + React forms + paginare", cost: "Gratuit", done: true },
+      { id: "18.2", name: "✅ Import CSV/Excel (2026-03-19)", tech: "openpyxl / csv → SQLite bulk import", cost: "Gratuit", done: true },
+      { id: "18.3", name: "✅ Statistici lunare (2026-03-19)", tech: "Recharts + /api/itp/stats/monthly", cost: "Gratuit", done: true },
+      { id: "18.4", name: "✅ Statistici per marcă (2026-03-19)", tech: "/api/itp/stats/brands + Recharts bar", cost: "Gratuit", done: true },
+      { id: "18.5", name: "✅ Venituri per perioadă (2026-03-19)", tech: "/api/itp/stats/revenue + Recharts", cost: "Gratuit", done: true },
+      { id: "18.6", name: "✅ Statistici combustibil (2026-03-19)", tech: "/api/itp/stats/fuel-types + Recharts pie", cost: "Gratuit", done: true },
+      { id: "18.7", name: "✅ Alertă expirare 30 zile (2026-03-19)", tech: "/api/itp/expiring?days=30", cost: "Gratuit", done: true },
+      { id: "18.8", name: "✅ Export CSV/Excel (2026-03-19)", tech: "/api/itp/export/csv + /api/itp/export/excel", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: 20, name: "Quick Wins & Security Hardening", prio: "urgenta",
+    note: "11/15 DONE (2026-03-20). GZip, CSP, BNR, ANAF CUI, cache AI, convertor numere, useDebounce.",
+    features: [
+      { id: "20.1", name: "✅ GZip Middleware (2026-03-20)", tech: "starlette GZipMiddleware, min_size=500", cost: "Gratuit", done: true },
+      { id: "20.2", name: "✅ CORS audit OK (pre-existent)", tech: "Nu contine *, Tailscale origin din env", cost: "Gratuit", done: true },
+      { id: "20.3", name: "✅ Index SQLite activity_log (pre-existent)", tech: "migration 002", cost: "Gratuit", done: true },
+      { id: "20.4", name: "✅ Fix zoom Android inputs (2026-03-20)", tech: "CSS font-size:16px mobile, viewport max-scale=5", cost: "Gratuit", done: true },
+      { id: "20.5", name: "✅ CSP + Security Headers (2026-03-20)", tech: "X-Content-Type-Options, X-Frame-Options, CSP", cost: "Gratuit", done: true },
+      { id: "20.6", name: "✅ PRAGMA optimize DB (2026-03-20)", tech: "PRAGMA optimize la startup", cost: "Gratuit", done: true },
+      { id: "20.7", name: "✅ BNR Curs Valutar live (2026-03-20)", tech: "/api/reports/exchange-rates, XML, cache 1h", cost: "Gratuit", done: true },
+      { id: "20.8", name: "✅ Convertor Numere baze (2026-03-20)", tech: "NumberConverterPage bin/oct/dec/hex/ASCII", cost: "Gratuit", done: true },
+      { id: "20.9", name: "✅ useDebounce hook (2026-03-20)", tech: "hooks/useDebounce.js, 300ms", cost: "Gratuit", done: true },
+      { id: "20.10", name: "✅ Validare format key Vault (2026-03-20)", tech: "Regex per provider", cost: "Gratuit", done: true },
+      { id: "20.11", name: "✅ Prompt caching AI (2026-03-20)", tech: "Hash cache, 1h TTL, 200 max", cost: "Gratuit", done: true },
+      { id: "20.12", name: "✅ ANAF CUI Verification (2026-03-20)", tech: "/api/invoice/verify-cui/:cui", cost: "Gratuit", done: true },
+      { id: "20.13", name: "✅ Dashboard Exchange Rate widget (2026-03-20)", tech: "ExchangeRateCard.jsx", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: 19, name: "Unificare Docs & Strategie API", prio: "medie",
+    note: "✅ DONE (2026-03-20). 3 documente unificate, regula free-tier, provider chains actualizate.",
+    features: [
+      { id: "19.1", name: "✅ ROADMAP_IMPLEMENTARE.md (2026-03-20)", tech: "~210 items unificate, deduplicate, zero funcții plătite", cost: "Gratuit", done: true },
+      { id: "19.2", name: "✅ CATALOG_API_GRATUITE.md (2026-03-20)", tech: "34 API-uri gratuite, cod exemplu, provider chains", cost: "Gratuit", done: true },
+      { id: "19.3", name: "✅ GHID_ACCES_REMOTE.md (2026-03-20)", tech: "Tailscale setup, ACL, SSH, PWA, troubleshooting", cost: "Gratuit", done: true },
+      { id: "19.4", name: "✅ Regula 06-free-tier-enforcement (2026-03-20)", tech: "Zero cost policy, checklist 5 puncte, provider chains aprobate", cost: "Gratuit", done: true },
+      { id: "19.5", name: "✅ Eliminare funcții plătite (2026-03-20)", tech: "OpenAI, Perplexity, SMS, e-Factura → alternative gratuite", cost: "Gratuit", done: true },
+      { id: "19.6", name: "✅ Adăugare provideri noi (2026-03-20)", tech: "Cerebras, Mistral, SambaNova, edge-tts, Web Push, BNR, ANAF", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: 25, name: "Provideri AI — Update & Extindere", prio: "urgenta",
+    note: "✅ ALL DONE (2026-03-21). Fix Gemini deprecated, +Cerebras, +Mistral, .env, chain 4 provideri testat OK.",
+    features: [
+      { id: "25.1", name: "✅ Fix Gemini 2.0-flash → 2.5-flash (2026-03-21)", tech: "Model deprecat 3 martie 2026, actualizat in providers.py", cost: "Gratuit", done: true },
+      { id: "25.2", name: "✅ Adauga CerebrasProvider (2026-03-21)", tech: "OpenAI-compatible API, model qwen-3-235b-a22b-instruct-2507, 1M tok/zi", cost: "Gratuit", done: true },
+      { id: "25.3", name: "✅ Adauga MistralProvider (2026-03-21)", tech: "OpenAI-compatible API, model mistral-small-latest, 1B tok/luna", cost: "Gratuit", done: true },
+      { id: "25.4", name: "✅ Creeaza .env securizat (2026-03-21)", tech: "Toate cheile API din folder extern, gitignored, load_dotenv() in main.py", cost: "Gratuit", done: true },
+      { id: "25.5", name: "✅ Update chain order (2026-03-21)", tech: "Gemini → Cerebras → Groq → Mistral → OpenAI (legacy)", cost: "Gratuit", done: true },
+      { id: "25.6", name: "✅ Test toti providerii (2026-03-21)", tech: "Gemini OK, Cerebras OK, Groq OK, Mistral OK — validat cu prompt real", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "25B", name: "Security Quick Wins", prio: "urgenta",
+    note: "✅ ALL DONE (2026-03-21). SQL whitelist OK, fix catch blocks, AI translate prompt, rate limiting.",
+    features: [
+      { id: "25B.1", name: "✅ SQL whitelist verificat (2026-03-21)", tech: "reports/router.py — confirmat fals pozitiv, lista hardcodata", cost: "Gratuit", done: true },
+      { id: "25B.2", name: "✅ Fix catch blocks (2026-03-21)", tech: "SystemConfig.jsx + InvoicePercent.jsx — console.error adaugat", cost: "Gratuit", done: true },
+      { id: "25B.3", name: "✅ AI translate prompt fix (2026-03-21)", tech: "Raspunde EXCLUSIV in target_lang — Gemini + OpenAI providers", cost: "Gratuit", done: true },
+      { id: "25B.4", name: "✅ Rate limiting middleware (2026-03-21)", tech: "60 req/min global, 10 req/min AI + translate, in-memory path-based", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "25C", name: "Fix-uri Cerinta Roland", prio: "urgenta",
+    note: "✅ ALL DONE (2026-03-21). Interceptor network errors, batch PDF, DOCX tables, timeout adaptiv.",
+    features: [
+      { id: "25C.1", name: "✅ Fix interceptor axios (2026-03-21)", tech: "Catch ECONNABORTED + ERR_NETWORK + no response — toast + log", cost: "Gratuit", done: true },
+      { id: "25C.2", name: "✅ Batch traducere PDF (2026-03-21)", tech: "Batch 10 paragrafe/apel API, separator ---PARA---, ~10x mai putin apeluri", cost: "Gratuit", done: true },
+      { id: "25C.3", name: "✅ Traducere tabele DOCX (2026-03-21)", tech: "doc.tables → row → cell, traduce celula pastrind structura tabelului", cost: "Gratuit", done: true },
+      { id: "25C.4", name: "✅ Timeout adaptiv (2026-03-21)", tech: "File upload/translate: 300s (was 120s), default: 60s", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "25D", name: "Speed Test Internet", prio: "medie",
+    note: "✅ ALL DONE (2026-03-21). Indicator permanent in header: viteza + latenta.",
+    features: [
+      { id: "25D.1", name: "✅ Backend speed payload (2026-03-21)", tech: "GET /api/network/speed-payload — 500KB, no-store cache", cost: "Gratuit", done: true },
+      { id: "25D.2", name: "✅ NetworkSpeedIndicator.jsx (2026-03-21)", tech: "Navigator.connection API + fallback download payload, latenta ping health", cost: "Gratuit", done: true },
+      { id: "25D.3", name: "✅ Integrare Header (2026-03-21)", tech: "Indicator in header: Mbps + ms, verde/galben/rosu, click remeasure", cost: "Gratuit", done: true },
+      { id: "25D.4", name: "✅ Auto-refresh 60s (2026-03-21)", tech: "setInterval 60s, fara flood backend", cost: "Gratuit", done: true },
     ]
   }
 ];

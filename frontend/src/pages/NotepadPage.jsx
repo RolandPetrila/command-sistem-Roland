@@ -1,8 +1,35 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Trash2, FileText, StickyNote } from 'lucide-react';
+import { Plus, Trash2, FileText, StickyNote, Wand2, ListChecks, Languages, Loader2 } from 'lucide-react';
 import apiClient from '../api/client';
 
 export default function NotepadPage() {
+  // AI action state
+  const [aiResult, setAiResult] = useState('');
+  const [aiAction, setAiAction] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const handleAiAction = async (action) => {
+    if (!content.trim() || aiLoading) return;
+    setAiLoading(true);
+    setAiAction(action);
+    setAiResult('');
+    try {
+      const { data } = await apiClient.post(`/api/ai/notepad/${action}`, { text: content });
+      setAiResult(data.result || '');
+    } catch {
+      setAiResult('Eroare la procesarea AI.');
+    }
+    setAiLoading(false);
+  };
+
+  const applyAiResult = () => {
+    if (aiResult) {
+      handleContentChange(aiResult);
+      setAiResult('');
+      setAiAction('');
+    }
+  };
+
   const [notes, setNotes] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [title, setTitle] = useState('');
@@ -187,6 +214,42 @@ export default function NotepadPage() {
               className="flex-1 bg-slate-800/50 border border-slate-700 rounded-lg p-4 text-slate-200 text-sm resize-none focus:border-primary-500 focus:outline-none font-mono leading-relaxed transition-colors"
               placeholder="Scrie aici..."
             />
+            {/* AI Action Buttons */}
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-slate-500">AI:</span>
+              <button onClick={() => handleAiAction('improve')} disabled={aiLoading || !content.trim()}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded-lg text-xs transition-colors">
+                {aiLoading && aiAction === 'improve' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                Îmbunătățește
+              </button>
+              <button onClick={() => handleAiAction('summarize')} disabled={aiLoading || !content.trim()}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded-lg text-xs transition-colors">
+                {aiLoading && aiAction === 'summarize' ? <Loader2 size={12} className="animate-spin" /> : <ListChecks size={12} />}
+                Rezumă
+              </button>
+              <button onClick={() => handleAiAction('translate')} disabled={aiLoading || !content.trim()}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 rounded-lg text-xs transition-colors">
+                {aiLoading && aiAction === 'translate' ? <Loader2 size={12} className="animate-spin" /> : <Languages size={12} />}
+                Traduce RO↔EN
+              </button>
+            </div>
+            {/* AI Result */}
+            {aiResult && (
+              <div className="mt-2 bg-purple-900/10 border border-purple-800/30 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-purple-400">Rezultat AI ({aiAction})</span>
+                  <div className="flex gap-1">
+                    <button onClick={applyAiResult}
+                      className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 rounded text-xs">Aplică</button>
+                    <button onClick={() => navigator.clipboard.writeText(aiResult)}
+                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs">Copiază</button>
+                    <button onClick={() => { setAiResult(''); setAiAction(''); }}
+                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs">Închide</button>
+                  </div>
+                </div>
+                <div className="text-sm text-slate-300 whitespace-pre-wrap max-h-32 overflow-y-auto">{aiResult}</div>
+              </div>
+            )}
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-500">

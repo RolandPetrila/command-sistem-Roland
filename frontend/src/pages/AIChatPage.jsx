@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Send, Paperclip, Bot, User, Loader2, X, Settings2 } from 'lucide-react';
+import { Plus, Trash2, Send, Paperclip, Bot, User, Loader2, X, Settings2, Database, ChevronDown, Download } from 'lucide-react';
 import api from '../api/client';
+import TokenIndicator from '../components/shared/TokenIndicator';
 
 export default function AIChatPage() {
   const [sessions, setSessions] = useState([]);
@@ -13,6 +14,11 @@ export default function AIChatPage() {
   const [showConfig, setShowConfig] = useState(false);
   const [providers, setProviders] = useState([]);
   const [apiKeys, setApiKeys] = useState({ gemini: '', openai: '', groq: '' });
+  const [editingKey, setEditingKey] = useState(null);
+  const [backendOk, setBackendOk] = useState(false);
+  // New: provider selector + context mode
+  const [selectedProvider, setSelectedProvider] = useState('auto');
+  const [contextMode, setContextMode] = useState(true);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
@@ -20,7 +26,12 @@ export default function AIChatPage() {
   useEffect(() => {
     loadSessions();
     loadProviders();
-  }, []);
+    loadPreferredProvider();
+    const interval = setInterval(() => {
+      if (!backendOk) loadProviders();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [backendOk]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -30,14 +41,31 @@ export default function AIChatPage() {
     try {
       const { data } = await api.get('/api/ai/chat/sessions');
       setSessions(data);
-    } catch { /* sessions table might not exist yet */ }
+    } catch { /* toast handles it */ }
   };
 
   const loadProviders = async () => {
     try {
       const { data } = await api.get('/api/ai/providers');
       setProviders(data);
-    } catch { /* ignore */ }
+      setBackendOk(true);
+    } catch {
+      setBackendOk(false);
+    }
+  };
+
+  const loadPreferredProvider = async () => {
+    try {
+      const { data } = await api.get('/api/ai/provider-select');
+      if (data.provider) setSelectedProvider(data.provider);
+    } catch { /* toast handles it */ }
+  };
+
+  const handleProviderChange = async (provider) => {
+    setSelectedProvider(provider);
+    try {
+      await api.post('/api/ai/provider-select', { provider });
+    } catch { /* toast handles it */ }
   };
 
   const loadSession = async (id) => {
@@ -45,7 +73,7 @@ export default function AIChatPage() {
       const { data } = await api.get(`/api/ai/chat/sessions/${id}`);
       setMessages(data.messages);
       setActiveSession(id);
-    } catch { /* ignore */ }
+    } catch { /* toast handles it */ }
   };
 
   const newSession = async () => {
@@ -54,7 +82,7 @@ export default function AIChatPage() {
       setSessions(prev => [data, ...prev]);
       setActiveSession(data.id);
       setMessages([]);
-    } catch { /* ignore */ }
+    } catch { /* toast handles it */ }
   };
 
   const deleteSession = async (id, e) => {
@@ -66,20 +94,50 @@ export default function AIChatPage() {
         setActiveSession(null);
         setMessages([]);
       }
-    } catch { /* ignore */ }
+    } catch { /* toast handles it */ }
+  };
+
+  const clearAllSessions = async () => {
+    if (!window.confirm('Stergi toate conversatiile?')) return;
+    try {
+      await api.delete('/api/ai/chat/sessions/all');
+    } catch {
+      // endpoint may not exist — delete individually
+      for (const s of sessions) {
+        try { await api.delete(`/api/ai/chat/sessions/${s.id}`); } catch { /* toast handles it */ }
+      }
+    }
+    setSessions([]);
+    setActiveSession(null);
+    setMessages([]);
+  };
+
+  const exportConversation = () => {
+    if (messages.length === 0) return;
+    const lines = messages.map(msg => {
+      const prefix = msg.role === 'user' ? '**User:**' : `**AI${msg.provider ? ` (${msg.provider})` : ''}:**`;
+      return `${prefix}\n${msg.content}\n`;
+    });
+    const content = lines.join('\n---\n\n');
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat_export_${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleFileAttach = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setAttachedFile(file);
-
-    // Extract text for context
     const formData = new FormData();
     formData.append('file', file);
     formData.append('question', '__extract_only__');
     try {
-      // Use summarize endpoint just to extract text
       const { data } = await api.post('/api/ai/summarize', formData);
       setDocContext(data.text ? `[Document: ${file.name}]\n${data.text}` : null);
     } catch {
@@ -94,9 +152,7 @@ export default function AIChatPage() {
     setInput('');
     setLoading(true);
 
-    // Add user message to UI
     setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
-    // Add empty assistant message for streaming
     setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true }]);
 
     try {
@@ -108,6 +164,8 @@ export default function AIChatPage() {
           message: userMsg,
           session_id: activeSession,
           document_context: docContext,
+          provider: selectedProvider !== 'auto' ? selectedProvider : undefined,
+          context_mode: contextMode,
         }),
       });
 
@@ -171,7 +229,6 @@ export default function AIChatPage() {
         }
       }
 
-      // Update session
       if (sessionId && !activeSession) {
         setActiveSession(sessionId);
       }
@@ -197,10 +254,12 @@ export default function AIChatPage() {
       await api.post('/api/ai/config', { key: `${provider}_api_key`, value: value.trim() });
       loadProviders();
       setApiKeys(prev => ({ ...prev, [provider]: '' }));
-    } catch { /* ignore */ }
+      setEditingKey(null);
+    } catch { /* toast handles it */ }
   };
 
   const anyProviderConfigured = providers.some(p => p.configured);
+  const configuredProviders = providers.filter(p => p.configured);
 
   return (
     <div className="flex h-[calc(100vh-8rem)] -m-6">
@@ -211,6 +270,10 @@ export default function AIChatPage() {
             className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors">
             <Plus size={16} /> Chat Nou
           </button>
+          <button onClick={clearAllSessions} title="Sterge toate conversatiile"
+            className="p-2 rounded-lg hover:bg-red-700/50 text-gray-400 hover:text-red-400 transition-colors">
+            <Trash2 size={16} />
+          </button>
           <button onClick={() => setShowConfig(!showConfig)}
             className={`p-2 rounded-lg transition-colors ${showConfig ? 'bg-gray-600' : 'hover:bg-gray-700'}`}>
             <Settings2 size={16} />
@@ -219,19 +282,42 @@ export default function AIChatPage() {
 
         {showConfig && (
           <div className="p-3 border-b border-gray-700 space-y-2 text-xs">
-            <div className="text-gray-400 font-medium mb-1">Chei API</div>
-            {['gemini', 'openai', 'groq'].map(p => (
-              <div key={p} className="flex items-center gap-1">
-                <span className={`w-2 h-2 rounded-full ${providers.find(pr => pr.name === p)?.configured ? 'bg-green-500' : 'bg-gray-600'}`} />
-                <span className="w-14 capitalize">{p}</span>
-                <input type="password" placeholder="API key..."
-                  value={apiKeys[p]} onChange={e => setApiKeys(prev => ({ ...prev, [p]: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && saveApiKey(p, apiKeys[p])}
-                  className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs" />
-                <button onClick={() => saveApiKey(p, apiKeys[p])}
-                  className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs">OK</button>
-              </div>
-            ))}
+            <div className="text-gray-400 font-medium mb-1">Provideri AI</div>
+            {['gemini', 'openai', 'groq'].map(p => {
+              const configured = providers.find(pr => pr.name === p)?.configured;
+              const isEditing = editingKey === p;
+              return (
+                <div key={p} className="flex items-center gap-1">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${configured ? 'bg-green-500' : 'bg-gray-600'}`} />
+                  <span className="w-14 capitalize flex-shrink-0">{p}</span>
+                  {configured && !isEditing ? (
+                    <>
+                      <span className="flex-1 text-green-400">✓ Configurat</span>
+                      <button onClick={() => setEditingKey(p)}
+                        className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-400">Modifică</button>
+                    </>
+                  ) : (
+                    <>
+                      <input type="password" placeholder="API key..."
+                        value={apiKeys[p]} onChange={e => setApiKeys(prev => ({ ...prev, [p]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === 'Enter') saveApiKey(p, apiKeys[p]); if (e.key === 'Escape') setEditingKey(null); }}
+                        autoFocus={isEditing}
+                        className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs" />
+                      <button onClick={() => saveApiKey(p, apiKeys[p])}
+                        className="px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs">OK</button>
+                      {isEditing && (
+                        <button onClick={() => setEditingKey(null)}
+                          className="px-1 py-1 hover:text-red-400 text-gray-500"><X size={12} /></button>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            {/* Token usage */}
+            <div className="pt-2 border-t border-gray-800">
+              <TokenIndicator />
+            </div>
           </div>
         )}
 
@@ -251,6 +337,28 @@ export default function AIChatPage() {
 
       {/* Chat area */}
       <div className="flex-1 flex flex-col bg-gray-950">
+        {/* Provider selector bar */}
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-800 bg-gray-900/50">
+          <select value={selectedProvider} onChange={e => handleProviderChange(e.target.value)}
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs">
+            <option value="auto">Auto (Chain)</option>
+            {configuredProviders.map(p => (
+              <option key={p.name} value={p.name}>{p.name.charAt(0).toUpperCase() + p.name.slice(1)} — {p.model}</option>
+            ))}
+          </select>
+          <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+            <input type="checkbox" checked={contextMode} onChange={e => setContextMode(e.target.checked)}
+              className="accent-purple-500" />
+            <Database size={12} /> Context DB
+          </label>
+          <TokenIndicator compact />
+          <button onClick={exportConversation} disabled={messages.length === 0}
+            title="Exporta conversatia (.md)"
+            className="ml-auto p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-blue-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+            <Download size={16} />
+          </button>
+        </div>
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.length === 0 && (
@@ -258,10 +366,18 @@ export default function AIChatPage() {
               <Bot size={48} className="mb-4 opacity-30" />
               <p className="text-lg">Începe o conversație</p>
               <p className="text-sm mt-1">
-                {anyProviderConfigured
-                  ? 'Scrie un mesaj sau atașează un document'
-                  : 'Configurează o cheie API din ⚙️ (stânga sus)'}
+                {!backendOk
+                  ? 'Backend deconectat — pornește serverul'
+                  : anyProviderConfigured
+                    ? 'Scrie un mesaj sau atașează un document'
+                    : 'Configurează o cheie API din ⚙️ (stânga sus)'}
               </p>
+              {anyProviderConfigured && (
+                <p className="text-xs text-gray-600 mt-3">
+                  Selectează un provider specific din bara de sus sau folosește Auto Chain.
+                  {contextMode && ' Context DB activ — AI-ul cunoaște datele tale.'}
+                </p>
+              )}
             </div>
           )}
 
@@ -281,7 +397,9 @@ export default function AIChatPage() {
                   {msg.streaming && <span className="inline-block w-2 h-4 bg-blue-400 ml-1 animate-pulse" />}
                 </div>
                 {msg.provider && !msg.streaming && (
-                  <div className="text-xs text-gray-400 mt-1 text-right">{msg.provider}</div>
+                  <div className="text-xs text-gray-400 mt-1 text-right">
+                    {msg.provider}{msg.model ? ` (${msg.model})` : ''}
+                  </div>
                 )}
               </div>
               {msg.role === 'user' && (
@@ -317,10 +435,10 @@ export default function AIChatPage() {
             <input ref={inputRef} type="text" value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-              placeholder={anyProviderConfigured ? "Scrie un mesaj..." : "Configurează un provider AI mai întâi..."}
-              disabled={!anyProviderConfigured}
+              placeholder={!backendOk ? "Backend deconectat..." : anyProviderConfigured ? "Scrie un mesaj..." : "Configurează un provider AI mai întâi..."}
+              disabled={!anyProviderConfigured || !backendOk}
               className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50" />
-            <button onClick={sendMessage} disabled={!input.trim() || loading || !anyProviderConfigured}
+            <button onClick={sendMessage} disabled={!input.trim() || loading || !anyProviderConfigured || !backendOk}
               className="p-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-colors">
               {loading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
             </button>

@@ -2,6 +2,7 @@
 
 **Trigger:** After EVERY implementation execution (not just at session end).
 **Mandatory** — runs automatically, no confirmation needed.
+**Order:** Execute AFTER Rule 08 (validation). Logic: first confirm it works, then document progress.
 
 ## Checklist (all 4 steps, every time):
 

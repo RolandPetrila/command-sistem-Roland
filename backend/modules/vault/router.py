@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
+import re
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException, Header
@@ -50,6 +52,31 @@ class AddKeyRequest(BaseModel):
     name: str
     value: str
     provider: str = "generic"
+
+
+# S9.9 — Key format validation patterns per provider
+_KEY_PATTERNS: dict[str, tuple[str, str]] = {
+    "gemini": (r"^AIza[0-9A-Za-z_-]{35}$", "AIza... (39 caractere)"),
+    "openai": (r"^sk-[a-zA-Z0-9_-]{20,}$", "sk-... (minim 23 caractere)"),
+    "deepl": (r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:fx$", "UUID:fx"),
+    "groq": (r"^gsk_[a-zA-Z0-9]{20,}$", "gsk_... (minim 24 caractere)"),
+    "azure": (r"^[0-9a-f]{32}$", "32 hex characters"),
+    "cerebras": (r"^csk-[a-zA-Z0-9_-]{20,}$", "csk-... (minim 24 caractere)"),
+    "mistral": (r"^[a-zA-Z0-9]{32}$", "32 alphanumeric characters"),
+}
+
+_logger = logging.getLogger(__name__)
+
+
+def _validate_key_format(provider: str, value: str) -> str | None:
+    """Returns warning message if key format doesn't match expected pattern, None if OK."""
+    provider_lower = provider.lower()
+    for key, (pattern, expected) in _KEY_PATTERNS.items():
+        if key in provider_lower:
+            if not re.match(pattern, value.strip()):
+                return f"Format key {provider} neașteptat. Așteptat: {expected}"
+            return None
+    return None  # unknown provider — no validation
 
 
 # --- Endpoints ---
@@ -173,12 +200,17 @@ async def add_key(req: AddKeyRequest, x_master_password: str = Header()):
             )
             await db.commit()
 
+    warning = _validate_key_format(req.provider, req.value)
+
     await log_activity(
         action="vault_add_key",
         summary=f"Cheie API adăugată: {req.name} ({req.provider})",
         details={"name": req.name, "provider": req.provider},
     )
-    return {"status": "stored", "name": req.name}
+    result = {"status": "stored", "name": req.name}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 @router.get("/keys/{name}")

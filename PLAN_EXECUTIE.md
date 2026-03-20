@@ -99,27 +99,29 @@
 - [x] Auto-start backend (setup_autostart.bat, Task Scheduler)
 - [x] START_Production.bat — mod producție cu TLS autodetect
 
-## WAVE 2 — Quick Tools (2026-03-18) — PARTIAL
+## WAVE 2 — Quick Tools (2026-03-18/19) — DONE
 - [x] Command Palette (Ctrl+K) — fuse.js fuzzy search
 - [x] QR Generator — react-qr-code, download PNG, copy clipboard
 - [x] Notepad cu auto-save — CRUD + debounce 800ms + activity log
-- [ ] Calculator avansat — DEFERRED
-- [ ] Password Generator — DEFERRED
-- [ ] Barcode Generator — DEFERRED
+- [x] Calculator avansat — safe expression parser (AST, no eval), funcții matematice, istoric (2026-03-19)
+- [x] Password Generator — lungime configurabilă, strength checker, entropy, crack time (2026-03-19)
+- [x] Barcode Generator — Code128/EAN-13/Code39/QR, download PNG (2026-03-19)
 
 ## FAZA 12 — Convertor Fișiere (2026-03-18) — DONE
 - [x] 10 tipuri conversie (PDF↔DOCX, merge/split PDF, compress/resize img, CSV/Excel→JSON, ZIP, OCR)
 - [x] Android-safe validation (extension + MIME + octet-stream fallback)
 - [x] COM threading fix (pythoncom.CoInitialize)
 
-## FAZA 14 — Manager Fișiere Avansat (2026-03-18) — PARTIAL
+## FAZA 14 — Manager Fișiere Avansat (2026-03-18/19) — DONE
 - [x] File browser cu preview (PDF, imagini, text)
 - [x] Operații CRUD (rename, move, delete, mkdir) — sandboxing + symlink block
 - [x] Upload fișiere (drag&drop, auto-rename conflict)
 - [x] Download fișiere (FileResponse + activity log)
 - [x] Duplicate finder (MD5 hash, grupare, wasted space)
-- [ ] Căutare fulltext — DEFERRED
-- [ ] Tag-uri — DEFERRED
+- [x] Căutare fulltext — FTS5 virtual table, indexare automată, highlight (2026-03-19)
+- [x] Tag-uri — CRUD, filtrare pe tag, contorizare (2026-03-19)
+- [x] Favorite — toggle favorite, listare (2026-03-19)
+- [x] Auto-organizare — grupare automată pe extensie în subfoldere (2026-03-19)
 
 ## RESTRUCTURARE REGULI (2026-03-19) — DONE
 - [x] 12 reguli inline CLAUDE.md → 5 fișiere .claude/rules/
@@ -130,16 +132,84 @@
 - [x] Nested CLAUDE.md: backend/ + frontend/
 - [x] Arhivare 10 fișiere deprecated
 
+## FAZA 15A — AI Chat + Analiză Documente (2026-03-19) — DONE
+- [x] Chat AI SSE streaming (Gemini Flash → OpenAI GPT-4o-mini → Groq Llama 3.3 fallback chain)
+- [x] Sesiuni chat persistente (SQLite, CRUD)
+- [x] 6 endpoint-uri analiză documente (summarize, Q&A, classify, extract, rename, diff)
+- [x] OCR Inteligent (pytesseract + Gemini AI post-procesare)
+- [x] Comparare documente (difflib + UI side-by-side)
+- [x] Multi-provider config UI (10 API keys: Gemini, OpenAI, Groq, DeepL, Azure, Claude, Perplexity)
+- [x] Logging persistent (RotatingFileHandler + frontend error/pageview reporting)
+- [x] Silent launcher (START_Silent.vbs — 0 terminal windows)
+
+## FAZA 15B — AI Deep Integration (2026-03-19) — DONE
+10 funcții AI integrate + token indicator + provider selector:
+- [x] 15B.1 AI Traducere Documente — 5 provideri (DeepL→Azure→Google→Gemini→OpenAI), TM FTS5, glossary, file translation (2026-03-19)
+- [x] 15B.2 AI Explicație Preț la Calculator — PriceExplanation component, /api/ai/explain-price (2026-03-19)
+- [x] 15B.3 AI Search Semantic (RAG Light) — FTS5 document_fts, /api/ai/search-documents + /rag-query (2026-03-19)
+- [x] 15B.4 Chat Context-Aware — DB stats injection în system prompt, provider selector, context_mode toggle (2026-03-19)
+- [x] 15B.5 AI Auto-Clasificare la Upload — /api/ai/auto-classify, file_classifications table (2026-03-19)
+- [x] 15B.6 AI pe Notepad — 3 acțiuni (improve/summarize/translate), Apply/Copy/Close (2026-03-19)
+- [x] 15B.7 AI Generare Facturi — modul invoice complet (clients CRUD, invoices CRUD, PDF reportlab, generate-from-calc) (2026-03-19)
+- [x] 15B.8 AI Dashboard Insights — AIInsightsCard cu cache ai_insights_cache (2026-03-19)
+- [x] 15B.9 AI Quick OCR — FloatingOCR global, Ctrl+Shift+O, drag/paste/click (2026-03-19)
+- [x] 15B.10 AI Comparare Prețuri — CompetitorAnalysis cu bar chart per calcul (2026-03-19)
+- [x] Token Indicator — TokenIndicator component (compact + full), per-provider usage bars, auto-refresh 60s (2026-03-19)
+- [x] Provider Selector — dropdown în chat (Auto Chain / specific provider), persistent selection (2026-03-19)
+
+## FAZA 9 — Traducător Integrat (2026-03-19) — DONE
+Modul complet translator cu 17 endpoint-uri:
+- [x] 9.1 Chain traducere multi-provider: DeepL → Azure → Google (direct HTTP) → Gemini → OpenAI (2026-03-19)
+- [x] 9.2 Translation Memory (TM) — SQLite FTS5, auto-populate, fuzzy search (2026-03-19)
+- [x] 9.3 Glossary — CRUD, domenii, import CSV, aplicare automată (2026-03-19)
+- [x] 9.4 Traducere fișiere (PDF/DOCX) cu păstrare format (2026-03-19)
+- [x] 9.5 Detectare limbă (langdetect) + auto-detect UI (2026-03-19)
+- [x] 9.6 DeepL usage tracking + provider status (2026-03-19)
+- [x] 9.7 Istoric traduceri (SQLite, paginat) (2026-03-19)
+
+## FAZA 10 — Facturare Extinsă (2026-03-19) — DONE
+- [x] Client history endpoint — istoric comenzi per client (2026-03-19)
+- [x] Rapoarte lunare venituri — /api/invoice/reports/monthly + summary (2026-03-19)
+- [x] Export CSV/Excel — /api/invoice/export/csv + excel (openpyxl) (2026-03-19)
+- [x] Template documente — contract, ofertă, chitanță cu /api/invoice/templates (2026-03-19)
+- [x] Trimitere facturi email — SMTP cu /api/invoice/:id/send-email (2026-03-19)
+- [x] Scanner facturi primite — OCR + AI extracție date cu /api/invoice/scan (2026-03-19)
+
+## FAZA 13 — Integrări Externe (2026-03-19) — DONE
+- [x] Gmail — SMTP trimitere + IMAP citire cu app password (2026-03-19)
+- [x] Google Drive — listare, upload, download fișiere via REST API (2026-03-19)
+- [x] Google Calendar — evenimente CRUD, listare upcoming (2026-03-19)
+- [x] GitHub — repos, commits, create issues via Personal Access Token (2026-03-19)
+- [x] Status dashboard — /api/integrations/status per provider (2026-03-19)
+
+## FAZA 15.8 — Evaluare Calitate Traducere (2026-03-19) — DONE
+- [x] Quality check AI — /api/translator/quality-check, scor 1-10, issues, suggestions (2026-03-19)
+
+## FAZA 16 — Automatizări (2026-03-19) — DONE
+- [x] Task Scheduler — CRUD sarcini programate + manual trigger (2026-03-19)
+- [x] Custom Shortcuts — CRUD scurtături rapide (2026-03-19)
+- [x] Uptime Monitor — monitorizare URL-uri, check manual, istoric verificări (2026-03-19)
+- [x] API Tester — send HTTP request (metode, headers, body), afișare response (2026-03-19)
+- [x] Health Monitor — disk, memory, DB, modules, API keys, erori recente (2026-03-19)
+
+## FAZA 17 — Rapoarte & Polish (2026-03-19) — DONE
+- [x] Disk stats — utilizare disk, dimensiuni foldere, DB size (2026-03-19)
+- [x] System info — Python, OS, uptime, module count, tabele DB (2026-03-19)
+- [x] Activity Timeline — timeline paginat cu filtre, statistici per zi (2026-03-19)
+- [x] File stats — contorizare pe extensie, cele mai mari fișiere (2026-03-19)
+- [x] Unused files — fișiere nereferate în DB (2026-03-19)
+- [x] Jurnal personal — CRUD intrări cu mood + tags (2026-03-19)
+- [x] Bookmarks — CRUD semne de carte cu categorii (2026-03-19)
+- [x] Export complet — toate datele ca JSON download (2026-03-19)
+
+## FAZA 18 — Modul ITP CIP Inspection (2026-03-19) — DONE
+- [x] Inspecții CRUD — creare, editare, ștergere, căutare, paginare (2026-03-19)
+- [x] Import CSV/Excel — bulk import inspecții (2026-03-19)
+- [x] Statistici — lunar, per marcă, per combustibil, venituri (2026-03-19)
+- [x] Alerte expirare — vehicule cu ITP expirând în 30 zile (2026-03-19)
+- [x] Export CSV/Excel — descărcare date complete (2026-03-19)
+
 ## Ramas opțional (calculator)
 - [ ] Îmbunătățire acuratețe calibrare (MAPE 32% → sub 25%)
 - [ ] Afișare ponderi metode în UI
 - [ ] Fix comparație competitori endpoint
-
-## Extindere planificată (vezi 99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md)
-- Faza 9: Traducător integrat multi-provider — **NEXT** (core business)
-- Faza 10: Facturare & Evidență clienți
-- Faza 13: Integrări externe (Gmail, Drive, Calendar, GitHub)
-- Faza 15: AI pe documente
-- Faza 16: Automatizări & shortcuts
-- Faza 17: Rapoarte & polish
-- Faza 18: Modul ITP CIP Inspection

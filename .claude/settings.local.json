@@ -9,7 +9,12 @@
       "mcp__playwright__browser_take_screenshot",
       "mcp__playwright__browser_wait_for",
       "mcp__playwright__browser_file_upload",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "mcp__firecrawl__firecrawl_search",
+      "mcp__playwright__browser_console_messages",
+      "mcp__playwright__browser_network_requests",
+      "mcp__playwright__browser_fill_form",
+      "mcp__playwright__browser_close"
     ]
   },
   "hooks": {
@@ -37,14 +42,14 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "bash .claude/hooks/post-edit-check.sh",
             "timeout": 5000
           }
-        ],
-        "matcher": "Edit|Write"
+        ]
       }
     ],
     "PreCompact": [

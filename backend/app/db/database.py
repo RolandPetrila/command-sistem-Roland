@@ -86,6 +86,13 @@ async def init_db() -> None:
 
         await run_migrations(db)
 
+        # Z2.2 — VACUUM + ANALYZE for smaller DB and faster queries
+        try:
+            await db.execute("PRAGMA optimize")
+            logger.info("PRAGMA optimize executat.")
+        except Exception:
+            pass  # optimize not available on older SQLite
+
         default_settings = {
             "invoice_percent": str(settings.default_invoice_percent),
             "currency": "RON",

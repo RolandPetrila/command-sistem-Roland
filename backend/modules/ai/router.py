@@ -99,6 +99,8 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
     document_context: str | None = None
+    provider: str | None = None  # Specific provider name or None for auto chain
+    context_mode: bool = False   # Inject DB stats into system prompt
 
 
 class ConfigSetRequest(BaseModel):
@@ -108,9 +110,47 @@ class ConfigSetRequest(BaseModel):
 
 # === CHAT ENDPOINTS ===
 
+async def _build_context_data() -> str:
+    """Build context string from DB stats for context-aware chat."""
+    parts = []
+    try:
+        async with get_db() as db:
+            cursor = await db.execute("SELECT COUNT(*) AS cnt, SUM(market_price) AS total FROM calculations")
+            row = await cursor.fetchone()
+            parts.append(f"Calculații preț: {row['cnt'] or 0} total, valoare totală {round(row['total'] or 0, 2)} RON")
+
+            cursor = await db.execute(
+                "SELECT c.market_price, u.filename FROM calculations c "
+                "JOIN uploads u ON u.id = c.upload_id ORDER BY c.created_at DESC LIMIT 3"
+            )
+            recent = [dict(r) for r in await cursor.fetchall()]
+            if recent:
+                parts.append("Ultimele calculații: " + ", ".join(f"{r['filename']} ({r['market_price']} RON)" for r in recent))
+
+            cursor = await db.execute("SELECT COUNT(*) AS cnt FROM uploads")
+            row = await cursor.fetchone()
+            parts.append(f"Fișiere încărcate: {row['cnt'] or 0}")
+
+            cursor = await db.execute("SELECT action, summary FROM activity_log ORDER BY timestamp DESC LIMIT 5")
+            activities = [dict(r) for r in await cursor.fetchall()]
+            if activities:
+                parts.append("Activitate recentă: " + "; ".join(a['summary'] for a in activities))
+
+            try:
+                cursor = await db.execute("SELECT COUNT(*) AS cnt FROM notes")
+                row = await cursor.fetchone()
+                parts.append(f"Note: {row['cnt'] or 0}")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Context data build failed: {e}")
+
+    return "\n".join(parts) if parts else ""
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest):
-    """Chat with AI — streaming SSE response."""
+    """Chat with AI — streaming SSE response with provider selection and context mode."""
     session_id = req.session_id or str(uuid.uuid4())
 
     # Ensure session exists
@@ -141,11 +181,21 @@ async def chat(req: ChatRequest):
         )
         history = list(reversed([dict(r) for r in await cursor.fetchall()]))
 
-    # Build prompt with history
+    # Build system prompt
     system_prompt = (
         "Ești un asistent AI integrat în Roland Command Center. "
         "Răspunzi în limba română. Ești concis și util."
     )
+
+    # Context mode: inject DB stats
+    if req.context_mode:
+        context_data = await _build_context_data()
+        if context_data:
+            system_prompt += (
+                "\n\nDatele utilizatorului din sistem:\n"
+                + context_data
+                + "\n\nPoți folosi aceste date pentru a oferi răspunsuri relevante."
+            )
 
     prompt_parts = []
     if req.document_context:
@@ -158,13 +208,14 @@ async def chat(req: ChatRequest):
     prompt_parts.append("Asistent:")
 
     full_prompt = "\n".join(prompt_parts)
+    preferred_provider = req.provider
 
     async def event_stream():
         full_response = []
         provider_name = ""
         model_name = ""
 
-        async for data in ai_generate_stream(full_prompt, system_prompt):
+        async for data in ai_generate_stream(full_prompt, system_prompt, preferred_provider):
             if "error" in data:
                 yield f"data: {json.dumps(data)}\n\n"
                 return
@@ -191,6 +242,11 @@ async def chat(req: ChatRequest):
                 except Exception as e:
                     logger.error(f"Failed to save assistant message: {e}")
 
+                await log_activity(
+                    action="ai.chat",
+                    summary=f"Chat: {req.message[:80]}",
+                    details={"session_id": session_id, "provider": provider_name, "model": model_name, "response_len": len(assistant_text)},
+                )
                 yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'provider': provider_name, 'model': model_name})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -218,6 +274,17 @@ async def create_session():
         )
         await db.commit()
     return {"id": session_id, "title": "Chat nou"}
+
+
+@router.delete("/chat/sessions/all")
+async def delete_all_sessions():
+    """Delete ALL chat sessions and messages."""
+    async with get_db() as db:
+        await db.execute("DELETE FROM chat_messages")
+        await db.execute("DELETE FROM chat_sessions")
+        await db.commit()
+    await log_activity(action="ai.delete_all_sessions", summary="Toate sesiunile chat șterse")
+    return {"status": "deleted", "message": "Toate conversațiile au fost șterse."}
 
 
 @router.get("/chat/sessions/{session_id}")

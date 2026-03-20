@@ -9,6 +9,8 @@ import MethodComparison from '../components/Price/MethodComparison';
 import CompetitorComparison from '../components/Price/CompetitorComparison';
 import ConfidenceBadge from '../components/Price/ConfidenceBadge';
 import SelfLearnButton from '../components/Price/SelfLearnButton';
+import PriceExplanation from '../components/Price/PriceExplanation';
+import CompetitorAnalysis from '../components/Price/CompetitorAnalysis';
 import { uploadFile, calculatePrice, getSettings, createProgressWebSocket } from '../api/client';
 
 export default function UploadPage() {
@@ -258,6 +260,22 @@ export default function UploadPage() {
                       </ul>
                     </div>
                   )}
+
+                  {/* AI Price Explanation */}
+                  <PriceExplanation
+                    calculationId={result._uploadId}
+                    features={{ pages: result.pages, words: result.words, images: result.images, tables: result.tables }}
+                    price={result.market_price}
+                    confidence={result.confidence}
+                  />
+
+                  {/* AI Competitor Comparison */}
+                  <CompetitorAnalysis
+                    price={result.market_price}
+                    pages={result.pages}
+                    words={result.words}
+                    docType={result.doc_type || 'general'}
+                  />
 
                   {/* Self-learn button */}
                   <div className="flex justify-center">

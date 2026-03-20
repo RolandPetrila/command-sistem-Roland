@@ -50,6 +50,7 @@ class Settings(BaseSettings):
         env_prefix = "CALC_"
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
     def ensure_dirs(self) -> None:
         """Creează directoarele necesare dacă nu există."""

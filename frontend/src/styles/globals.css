@@ -31,8 +31,17 @@
   to { transform: translateX(0); }
 }
 
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
 .animate-slide-in {
   animation: slide-in 0.2s ease-out;
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.25s ease-out;
 }
 
 @layer components {
@@ -86,4 +95,88 @@
   .glow-primary {
     box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
   }
+}
+
+/* Light theme overrides */
+.light-theme {
+  --tw-bg-opacity: 1;
+}
+
+.light-theme body {
+  background-color: #f1f5f9 !important;
+  color: #1e293b !important;
+}
+
+.light-theme .bg-slate-900,
+.light-theme .bg-slate-900\/80,
+.light-theme .bg-slate-900\/95 {
+  background-color: #ffffff !important;
+}
+
+.light-theme .bg-slate-950,
+.light-theme .bg-gray-950 {
+  background-color: #f8fafc !important;
+}
+
+.light-theme .bg-gray-900 {
+  background-color: #ffffff !important;
+}
+
+.light-theme .bg-gray-800,
+.light-theme .bg-slate-800,
+.light-theme .bg-slate-800\/60 {
+  background-color: #f1f5f9 !important;
+}
+
+.light-theme .text-slate-100,
+.light-theme .text-gray-100,
+.light-theme .text-white {
+  color: #1e293b !important;
+}
+
+.light-theme .text-slate-200,
+.light-theme .text-gray-200,
+.light-theme .text-gray-300 {
+  color: #334155 !important;
+}
+
+.light-theme .text-slate-400,
+.light-theme .text-gray-400,
+.light-theme .text-slate-500,
+.light-theme .text-gray-500 {
+  color: #64748b !important;
+}
+
+.light-theme .border-slate-800,
+.light-theme .border-slate-700,
+.light-theme .border-gray-800,
+.light-theme .border-gray-700 {
+  border-color: #e2e8f0 !important;
+}
+
+.light-theme ::-webkit-scrollbar-track {
+  background-color: #f1f5f9;
+}
+
+.light-theme ::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+}
+
+.light-theme .card {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Ensure inputs are readable in light mode */
+.light-theme input,
+.light-theme textarea,
+.light-theme select {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #1e293b !important;
+}
+
+.light-theme input::placeholder,
+.light-theme textarea::placeholder {
+  color: #94a3b8 !important;
 }

@@ -8,26 +8,52 @@ Servire frontend static din frontend/dist/ (producție).
 
 import logging
 import os
+import time
+
+# Load .env before anything else reads os.environ
+from dotenv import load_dotenv
+load_dotenv()
+from collections import defaultdict
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import Response as StarletteResponse
 
 from app.config import settings
+from app.core.activity_log import log_activity
 from app.db.database import init_db
 from app.module_discovery import discover_modules
 
 # Directorul frontend/dist/ (build producție)
 _DIST_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+# --- Logging: console + fișier persistent ---
+_LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
+_log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+logging.basicConfig(level=logging.INFO, format=_log_format)
+
+# Suppress noisy Windows asyncio pipe errors (cosmetic, non-critical)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+_file_handler = RotatingFileHandler(
+    _LOG_DIR / "backend.log",
+    maxBytes=5 * 1024 * 1024,  # 5 MB
+    backupCount=3,
+    encoding="utf-8",
+    delay=True,  # open file only when first write (avoids PermissionError on reload)
 )
+_file_handler.setFormatter(logging.Formatter(_log_format))
+logging.getLogger().addHandler(_file_handler)
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,6 +129,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 # --- CORS (dinamic: localhost dev + Tailscale producție) ---
 _cors_origins = [
     "http://localhost:5173",
@@ -120,6 +147,166 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- GZip compression (Z2.9 — reduce response sizes 60-80%) ---
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+# ---------------------------------------------------------------------------
+# Request stats (in-memory, reset on restart) + Request Logger Middleware
+# ---------------------------------------------------------------------------
+
+_request_stats: dict = {
+    "total": 0,
+    "errors": 0,
+    "by_status": defaultdict(int),
+    "slow_requests": [],  # top 10 slowest
+    "started_at": time.time(),
+}
+
+
+@app.middleware("http")
+async def request_logger(request: Request, call_next):
+    """Log ALL API errors (4xx/5xx) to activity_log + track stats."""
+    path = request.url.path
+
+    # Skip non-API and health/frontend-log (too noisy)
+    if not path.startswith("/api/") or path in ("/api/health", "/api/log/frontend"):
+        return await call_next(request)
+
+    start = time.perf_counter()
+    method = request.method
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")[:200]
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start) * 1000
+        _request_stats["total"] += 1
+        _request_stats["errors"] += 1
+        _request_stats["by_status"]["500"] += 1
+        await log_activity(
+            action="api.error",
+            status="error",
+            summary=f"{method} {path} -> 500 ({duration_ms:.0f}ms) {str(exc)[:100]}",
+            details={
+                "method": method, "path": path,
+                "query": str(request.url.query)[:200],
+                "status_code": 500, "duration_ms": round(duration_ms),
+                "error": str(exc)[:500],
+                "client": client_ip, "user_agent": user_agent,
+            },
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - start) * 1000
+    status = response.status_code
+
+    # Track stats
+    _request_stats["total"] += 1
+    _request_stats["by_status"][str(status)] += 1
+
+    # Track slow requests (>2s)
+    if duration_ms > 2000:
+        _request_stats["slow_requests"].append({
+            "path": path, "method": method,
+            "duration_ms": round(duration_ms), "status": status,
+        })
+        _request_stats["slow_requests"] = _request_stats["slow_requests"][-10:]
+
+    # Log errors (4xx/5xx) to activity_log
+    if status >= 400:
+        _request_stats["errors"] += 1
+        error_body = ""
+        try:
+            body_bytes = b""
+            async for chunk in response.body_iterator:
+                body_bytes += chunk
+            error_body = body_bytes.decode("utf-8", errors="replace")[:500]
+
+            await log_activity(
+                action="api.error",
+                status="error",
+                summary=f"{method} {path} -> {status} ({duration_ms:.0f}ms)",
+                details={
+                    "method": method, "path": path,
+                    "query": str(request.url.query)[:200],
+                    "status_code": status, "duration_ms": round(duration_ms),
+                    "response_body": error_body,
+                    "client": client_ip, "user_agent": user_agent,
+                },
+            )
+
+            return StarletteResponse(
+                content=body_bytes,
+                status_code=status,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+        except Exception as log_exc:
+            logger.warning("Request logger error: %s", log_exc)
+
+    return response
+
+
+# --- Rate Limiting middleware (D4 — securitate) ---
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+
+# Paths with stricter limits (10 req/min instead of 60)
+_STRICT_RATE_PATHS = {"/api/ai/", "/api/translator/text", "/api/translator/file", "/api/translator/quality-check"}
+
+
+@app.middleware("http")
+async def rate_limiter(request: Request, call_next):
+    """Simple in-memory rate limiting: 60 req/min global, 10 req/min for AI/translate."""
+    path = request.url.path
+    if not path.startswith("/api/") or path in ("/api/health", "/api/log/frontend"):
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    window = 60  # 1 minute
+
+    # Determine limit based on path
+    is_strict = any(path.startswith(p) for p in _STRICT_RATE_PATHS)
+    limit = 10 if is_strict else 60
+    bucket_key = f"{client_ip}:{'strict' if is_strict else 'global'}"
+
+    # Clean old entries and check
+    _rate_limit_store[bucket_key] = [t for t in _rate_limit_store[bucket_key] if now - t < window]
+
+    if len(_rate_limit_store[bucket_key]) >= limit:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Prea multe cereri ({limit}/min). Incearca din nou in cateva secunde."},
+        )
+
+    _rate_limit_store[bucket_key].append(now)
+    return await call_next(request)
+
+
+# --- CSP Headers middleware (Z1.11 — prevent XSS in PWA) ---
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response: Response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if not request.url.path.startswith("/api/"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' ws: wss: https://*.deepl.com https://api.cognitive.microsofttranslator.com "
+            "https://translation.googleapis.com https://generativelanguage.googleapis.com "
+            "https://api.groq.com https://api.cerebras.ai https://api.mistral.ai https://api.sambanova.ai; "
+            "font-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'"
+        )
+    return response
 
 # --- Module auto-discovery ---
 _modules = discover_modules()
@@ -142,6 +329,55 @@ async def health_check():
     }
 
 
+@app.get("/api/network/speed-payload")
+async def speed_payload():
+    """Return ~500KB payload for client-side download speed measurement."""
+    payload = b"X" * (500 * 1024)  # 500 KB
+    return Response(
+        content=payload,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/diagnostics")
+async def diagnostics():
+    """Diagnostic complet: erori recente, stats request-uri, stare sistem."""
+    from app.core.activity_log import get_activity_log
+    import shutil
+
+    # Recent errors from activity_log
+    errors = await get_activity_log(limit=30, action_filter="api.error")
+    frontend_errors = await get_activity_log(limit=20, action_filter="frontend.error")
+
+    # Disk space
+    disk = shutil.disk_usage(Path(__file__).resolve().drive or "/")
+
+    uptime_sec = time.time() - _request_stats["started_at"]
+
+    return {
+        "request_stats": {
+            "total_requests": _request_stats["total"],
+            "total_errors": _request_stats["errors"],
+            "error_rate": f"{(_request_stats['errors'] / max(1, _request_stats['total'])) * 100:.1f}%",
+            "by_status": dict(_request_stats["by_status"]),
+            "slow_requests": _request_stats["slow_requests"],
+            "uptime_seconds": round(uptime_sec),
+            "uptime_human": f"{int(uptime_sec // 3600)}h {int((uptime_sec % 3600) // 60)}m",
+        },
+        "recent_api_errors": errors,
+        "recent_frontend_errors": frontend_errors,
+        "system": {
+            "disk_total_gb": round(disk.total / (1024**3), 1),
+            "disk_free_gb": round(disk.free / (1024**3), 1),
+            "disk_used_pct": f"{((disk.total - disk.free) / disk.total) * 100:.0f}%",
+            "python_version": os.sys.version.split()[0],
+            "server_version": app.version,
+            "modules_loaded": len(_modules),
+        },
+    }
+
+
 @app.get("/api/modules")
 async def list_modules():
     """Returnează modulele descoperite (fără obiectele router)."""
@@ -155,6 +391,36 @@ async def list_modules():
         }
         for m in _modules
     ]
+
+
+@app.post("/api/log/frontend")
+async def frontend_log(request: Request):
+    """Primește erori și events de la frontend pentru logging persistent."""
+    body = await request.json()
+    level = body.get("level", "error")
+    message = body.get("message", "")
+    details = body.get("details", {})
+    page = body.get("page", "")
+
+    if level == "error":
+        logger.error("Frontend: %s [%s] %s", message, page, details)
+        await log_activity(
+            action="frontend.error",
+            summary=f"{page}: {message[:200]}",
+            details=details,
+            status="error",
+        )
+    elif level == "pageview":
+        logger.info("Pageview: %s", page)
+        await log_activity(
+            action="frontend.pageview",
+            summary=f"Vizită: {page}",
+            details={"page": page, "timestamp": details.get("timestamp", "")},
+        )
+    else:
+        logger.info("Frontend [%s]: %s", level, message)
+
+    return {"status": "ok"}
 
 
 @app.websocket("/ws/progress")

@@ -2,9 +2,27 @@
 <html lang="ro">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Calculator Preț Traduceri</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <style>
+      /* Z3.8 — Prevent unwanted zoom on Android input focus (font-size < 16px triggers zoom) */
+      @media (max-width: 768px) {
+        input, select, textarea { font-size: 16px !important; }
+      }
+    </style>
+    <title>Roland - Command Center</title>
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <script>
+      // Cleanup stale Service Workers (protocol mismatch or localhost HTTPS)
+      if ('serviceWorker' in navigator) {
+        const isLocalSSL = location.hostname === 'localhost' && location.protocol === 'https:';
+        if (isLocalSSL) {
+          // Cert is for Tailscale hostname, not localhost — unregister SW to avoid errors
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(r) { r.unregister(); });
+          });
+        }
+      }
+    </script>
   </head>
   <body class="bg-slate-950 text-white">
     <div id="root"></div>

@@ -1,6 +1,6 @@
 # GHID TESTARE — Roland Command Center
 
-**Ultima actualizare:** 2026-03-18
+**Ultima actualizare:** 2026-03-19
 **Scop:** Instrucțiuni de testare pas-cu-pas pentru fiecare funcționalitate implementată.
 **Web:** `http://localhost:8000` | **Android:** `https://desktop-cjuecmn.tail7bc485.ts.net:8000`
 
@@ -259,6 +259,194 @@
 
 ---
 
+## Faza 15A — AI pe Documente (8 funcții)
+
+### 15.1 Chat AI cu Streaming
+| | Detalii |
+|---|---|
+| **Funcția** | Chat conversațional cu AI — răspunsuri streaming (SSE), sesiuni salvate, provider chain Gemini→OpenAI→Groq |
+| **Test Web** | 1. Sidebar → AI → Chat AI → scrie "Salut, ce poți face?" → Enter → răspunsul apare caracter cu caracter → sesiunea se salvează în sidebar stânga |
+| **Test Telefon** | 1. Aceeași procedură pe Android → textul apare fluid, sesiunea persistă |
+| **Rezultat așteptat** | Răspuns streaming, bula assistant cu provider indicator, sesiune în sidebar |
+| **Status** | ✅ Testat local OK |
+
+### 15.2 Sesiuni Chat (CRUD)
+| | Detalii |
+|---|---|
+| **Funcția** | Creează, listează, șterge sesiuni de chat |
+| **Test Web** | 1. Chat AI → click "Chat nou" (+) → sesiune nouă apare → scrie mesaj → titlul se actualizează → click 🗑️ pe o sesiune → confirmă → dispare |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Sesiuni se creează/șterg, titlul reflectă primul mesaj |
+| **Status** | ✅ Testat local OK |
+
+### 15.3 Rezumat Document
+| | Detalii |
+|---|---|
+| **Funcția** | Încarcă PDF/DOCX/TXT și primești rezumat AI |
+| **Test Web** | 1. Sidebar → AI → Analiză Documente → tab "Analiză" → Upload fișier → click "Rezumă" → rezumatul apare |
+| **Test Telefon** | 1. Selectează document din telefon → încarcă → rezumă |
+| **Rezultat așteptat** | Rezumat clar în română, cu provider indicator |
+| **Status** | ✅ Testat local OK |
+
+### 15.4 Clasificare Document
+| | Detalii |
+|---|---|
+| **Funcția** | Clasifică documentul: tip, domeniu, limbă, nivel încredere |
+| **Test Web** | 1. Analiză Documente → Upload fișier → click "Clasifică" → JSON cu type/domain/language/confidence |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Clasificare structurată cu câmpuri tip, domeniu, limbă |
+| **Status** | ✅ Testat local OK |
+
+### 15.5 Extragere Date + Q&A
+| | Detalii |
+|---|---|
+| **Funcția** | Extrage date structurate sau răspunde la întrebări despre document |
+| **Test Web** | 1. Upload fișier → click "Extrage Date" → date structurate JSON. 2. Scrie o întrebare în câmpul Q&A → click "Întreabă" → răspuns bazat pe document |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Date structurate și răspunsuri relevante la întrebări |
+| **Status** | ✅ Testat local OK |
+
+### 15.6 Sugestie Nume Fișier
+| | Detalii |
+|---|---|
+| **Funcția** | AI sugerează un nume descriptiv pentru documentul încărcat |
+| **Test Web** | 1. Upload fișier → click "Sugerează Nume" → vezi numele original vs. numele sugerat |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Nume descriptiv bazat pe conținut (ex: "Contract_Vanzare_Auto_2026.pdf") |
+| **Status** | ✅ Testat local OK |
+
+### 15.9 OCR + AI Enhancement
+| | Detalii |
+|---|---|
+| **Funcția** | OCR pe imagine/PDF scanat + AI corectează textul |
+| **Test Web** | 1. Tab "OCR Inteligent" → Upload imagine cu text → vezi "Text Raw" (OCR direct) vs "Text Îmbunătățit" (AI corected) |
+| **Test Telefon** | 1. Fotografiază document → încarcă → compară raw vs enhanced |
+| **Rezultat așteptat** | Text raw (cu erori) și text enhanced (corectat de AI) side-by-side |
+| **Status** | 🧪 Netestat Android |
+
+### 15.10 Comparare Documente (Diff)
+| | Detalii |
+|---|---|
+| **Funcția** | Compară 2 documente și arată diferențele (similar Git diff) |
+| **Test Web** | 1. Tab "Comparare" → Upload 2 fișiere → click "Compară" → vezi diff color-coded (verde=adăugat, roșu=șters, galben=modificat) + similarity % |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Diff structurat cu linii color-coded și procent similaritate |
+| **Status** | ✅ Testat local OK |
+
+### 15.API Configurare Chei API
+| | Detalii |
+|---|---|
+| **Funcția** | Configurare chei API pentru provideri AI (Gemini, OpenAI, Groq) din UI |
+| **Test Web** | 1. Chat AI → click ⚙️ (Settings) → vezi provideri cu status verde/gri → poți edita cheile |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Provideri cu chei configurate arată verde, se pot modifica/adăuga chei noi |
+| **Status** | ✅ Testat local OK (10 chei din fișiere) |
+
+---
+
+## Faza 15B — AI Deep Integration (12 funcții)
+
+### 15B.1 Traducător Multi-Provider
+| | Detalii |
+|---|---|
+| **Funcția** | Traducere text/fișiere cu chain: DeepL→Azure→Google→Gemini→OpenAI + TM + Glossary |
+| **Test Web** | 1. Sidebar → Traduceri → Traducător → scrie text EN → click Traduce → rezultat RO cu provider indicator. 2. Tab TM → vezi memoria. 3. Tab Glossary → adaugă termen |
+| **Test Telefon** | 1. Aceeași procedură pe Android → swap limbi, verifică file translation |
+| **Rezultat așteptat** | Text tradus, provider afișat, TM auto-populat, glossary CRUD funcțional |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.2 AI Explicație Preț
+| | Detalii |
+|---|---|
+| **Funcția** | Buton "Explicație AI preț" sub fiecare calcul de preț |
+| **Test Web** | 1. Upload PDF → Calculează → sub rezultat click "Explicație AI preț" → text explicativ apare |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Explicație AI expandabilă sub rezultatul calculului |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.3 Căutare Semantică (RAG)
+| | Detalii |
+|---|---|
+| **Funcția** | Căutare text în documente indexate + AI answer (RAG) |
+| **Test Web** | 1. Sidebar → AI → Căutare Documente → scrie query → click Caută → rezultate. 2. Click "Întreabă AI" → răspuns bazat pe documente |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Rezultate FTS5 cu snippets, răspuns AI din context documente |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.4 Chat Context-Aware
+| | Detalii |
+|---|---|
+| **Funcția** | Chat AI cu context DB (calculații, fișiere, activitate) + provider selector |
+| **Test Web** | 1. Chat AI → activează "Context DB" checkbox → selectează provider specific → scrie "Câte calculații am?" → AI răspunde cu date reale |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | AI răspunde cu date din DB (nr. calculații, valoare totală, activitate recentă) |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.5 Auto-Clasificare Upload
+| | Detalii |
+|---|---|
+| **Funcția** | Endpoint clasificare automată fișiere uploadate |
+| **Test Web** | 1. POST /api/ai/auto-classify cu file_path → clasificare JSON returnată |
+| **Test Telefon** | N/A — endpoint backend |
+| **Rezultat așteptat** | Clasificare cu type, domain, language, confidence |
+| **Status** | 🧪 Netestat |
+
+### 15B.6 AI Notepad
+| | Detalii |
+|---|---|
+| **Funcția** | 3 butoane AI pe notepad: Îmbunătățește, Rezumă, Traduce RO↔EN |
+| **Test Web** | 1. Notepad → scrie text → click "Îmbunătățește" → rezultat AI apare → click "Aplică" → textul se înlocuiește |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Butoane AI funcționează, rezultat se aplică/copiază/închide |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.7 Facturare
+| | Detalii |
+|---|---|
+| **Funcția** | Modul complet facturare: clienți CRUD, facturi CRUD, PDF, AI generate |
+| **Test Web** | 1. Sidebar → Productivitate → Facturare → tab Clienți → adaugă client → tab Factură Nouă → selectează client → adaugă articole → Creează Factura → descarcă PDF |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Client salvat, factură creată cu număr RCC-YYYY-NNN, PDF descărcat |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.8 Dashboard Insights AI
+| | Detalii |
+|---|---|
+| **Funcția** | Card pe dashboard cu insight-uri AI generate din statisticile DB |
+| **Test Web** | 1. Panou Principal → secțiunea "Insight-uri AI" → AI generează observații din date → refresh cu 🔄 |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | 2-3 insight-uri relevante, caching (indicator "cached"), refresh funcțional |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.9 Floating OCR
+| | Detalii |
+|---|---|
+| **Funcția** | Buton flotant (📷) pe orice pagină + shortcut Ctrl+Shift+O |
+| **Test Web** | 1. Oriunde în app → click butonul violet din dreapta-jos → dialog OCR → drag imagine sau click → text extras → Copiază sau Notepad |
+| **Test Telefon** | 1. Click buton violet → selectează poză din galerie → text extras |
+| **Rezultat așteptat** | Dialog OCR se deschide, imagine procesată, text copiat/trimis la notepad |
+| **Status** | 🧪 Netestat Android |
+
+### 15B.10 Comparare Prețuri AI
+| | Detalii |
+|---|---|
+| **Funcția** | Buton "Comparare piață AI" sub fiecare calcul cu bar chart competitori |
+| **Test Web** | 1. Calcul preț → sub rezultat click "Comparare piață AI" → analiză text + grafic bări cu competitori |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Analiză AI cu bări colorate per competitor, sugestie preț |
+| **Status** | 🧪 Netestat Android |
+
+### Token Indicator + Provider Selector
+| | Detalii |
+|---|---|
+| **Funcția** | Indicator utilizare per provider AI + selector provider în chat |
+| **Test Web** | 1. Chat AI → bara sus → dropdown provider (Auto/Gemini/OpenAI/Groq) → selectează → click ⚙️ → vezi barele de utilizare per provider |
+| **Test Telefon** | 1. Aceeași procedură pe Android |
+| **Rezultat așteptat** | Bare colorate (verde/galben/roșu), nr. request-uri azi, selector funcțional |
+| **Status** | 🧪 Netestat Android |
+
+---
+
 ## Contoare Testare
 
 | Fază | Total funcții | Testat Local | Testat Android | Netestat |
@@ -268,4 +456,6 @@
 | Wave 2 | 3 | 1 | 0 | 2 |
 | Faza 12 | 9 | 3 | 1 | 5 |
 | Faza 14 | 5 | 5 | 0 | 5 |
-| **TOTAL** | **25** | **15** | **3** | **13** |
+| Faza 15A | 9 | 8 | 0 | 1 |
+| Faza 15B | 12 | 0 | 0 | 12 |
+| **TOTAL** | **46** | **23** | **3** | **26** |

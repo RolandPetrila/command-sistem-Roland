@@ -64,8 +64,8 @@ export default function SystemConfig() {
       setOriginal(settings);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
-    } catch {
-      // Handle gracefully
+    } catch (err) {
+      console.error('Settings save error:', err);
     } finally {
       setSaving(false);
     }

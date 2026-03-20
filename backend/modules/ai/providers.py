@@ -1,16 +1,18 @@
 """
-Multi-provider AI chain: Gemini Flash (primary) → OpenAI (fallback) → Groq (fallback).
+Multi-provider AI chain: Gemini Flash (primary) → Cerebras → Groq → Mistral → OpenAI (legacy).
 
 Providers are initialized lazily. API keys are read from:
-1. Environment variables (GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY)
+1. Environment variables (GEMINI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY)
 2. ai_config SQLite table (set from UI)
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import time
 from typing import AsyncGenerator, Optional
 
 from app.db.database import get_db
@@ -37,7 +39,7 @@ class BaseProvider:
 
 class GeminiProvider(BaseProvider):
     name = "gemini"
-    model = "gemini-2.0-flash"
+    model = "gemini-2.5-flash"
 
     async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         import google.generativeai as genai
@@ -99,7 +101,7 @@ class OpenAIProvider(BaseProvider):
 
 class GroqProvider(BaseProvider):
     name = "groq"
-    model = "llama-3.1-70b-versatile"
+    model = "llama-3.3-70b-versatile"
 
     async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
         from groq import AsyncGroq
@@ -132,18 +134,92 @@ class GroqProvider(BaseProvider):
                 yield content
 
 
+class CerebrasProvider(BaseProvider):
+    name = "cerebras"
+    model = "qwen-3-235b-a22b-instruct-2507"
+
+    async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=self.api_key, base_url="https://api.cerebras.ai/v1")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        response = await client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+        )
+        return response.choices[0].message.content
+
+    async def generate_stream(self, prompt: str, system_prompt: str | None = None) -> AsyncGenerator[str, None]:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=self.api_key, base_url="https://api.cerebras.ai/v1")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        stream = await client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+        )
+        async for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+
+
+class MistralProvider(BaseProvider):
+    name = "mistral"
+    model = "mistral-small-latest"
+
+    async def generate(self, prompt: str, system_prompt: str | None = None) -> str:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=self.api_key, base_url="https://api.mistral.ai/v1")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        response = await client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+        )
+        return response.choices[0].message.content
+
+    async def generate_stream(self, prompt: str, system_prompt: str | None = None) -> AsyncGenerator[str, None]:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=self.api_key, base_url="https://api.mistral.ai/v1")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        stream = await client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+        )
+        async for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+
+
 # --- Provider chain ---
 
 PROVIDER_CLASSES = {
     "gemini": GeminiProvider,
-    "openai": OpenAIProvider,
+    "cerebras": CerebrasProvider,
     "groq": GroqProvider,
+    "mistral": MistralProvider,
+    "openai": OpenAIProvider,
 }
 
 ENV_KEY_MAP = {
     "gemini": "GEMINI_API_KEY",
-    "openai": "OPENAI_API_KEY",
+    "cerebras": "CEREBRAS_API_KEY",
     "groq": "GROQ_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "openai": "OPENAI_API_KEY",
 }
 
 
@@ -186,9 +262,43 @@ async def get_available_providers() -> list[dict]:
     return result
 
 
-async def ai_generate(prompt: str, system_prompt: str | None = None) -> dict:
-    """Generate response using first available provider."""
-    providers = await get_provider_chain()
+def _reorder_providers(providers: list[BaseProvider], preferred: str | None) -> list[BaseProvider]:
+    """Move preferred provider to front of the chain."""
+    if not preferred or preferred == "auto":
+        return providers
+    reordered = []
+    rest = []
+    for p in providers:
+        if p.name == preferred:
+            reordered.insert(0, p)
+        else:
+            rest.append(p)
+    return reordered + rest
+
+
+# Z4.6 — Prompt cache: reuse responses for identical prompts within TTL
+_prompt_cache: dict[str, tuple[float, dict]] = {}
+_CACHE_TTL = 3600  # 1 hour
+_CACHE_MAX = 200   # max entries
+
+
+def _cache_key(prompt: str, system_prompt: str | None) -> str:
+    h = hashlib.md5(f"{system_prompt or ''}|||{prompt}".encode(), usedforsecurity=False).hexdigest()
+    return h
+
+
+async def ai_generate(prompt: str, system_prompt: str | None = None, preferred_provider: str | None = None) -> dict:
+    """Generate response using first available provider. Caches identical prompts for 1h."""
+    # Check cache
+    ck = _cache_key(prompt, system_prompt)
+    if ck in _prompt_cache:
+        cached_at, cached_result = _prompt_cache[ck]
+        if time.time() - cached_at < _CACHE_TTL:
+            return {**cached_result, "cached": True}
+        else:
+            del _prompt_cache[ck]
+
+    providers = _reorder_providers(await get_provider_chain(), preferred_provider)
     if not providers:
         raise RuntimeError(
             "Niciun provider AI configurat. Adaugă o cheie API în setările AI."
@@ -198,7 +308,13 @@ async def ai_generate(prompt: str, system_prompt: str | None = None) -> dict:
     for provider in providers:
         try:
             text = await provider.generate(prompt, system_prompt)
-            return {"text": text, "provider": provider.name, "model": provider.model}
+            result = {"text": text, "provider": provider.name, "model": provider.model}
+            # Store in cache (evict oldest if full)
+            if len(_prompt_cache) >= _CACHE_MAX:
+                oldest = min(_prompt_cache, key=lambda k: _prompt_cache[k][0])
+                del _prompt_cache[oldest]
+            _prompt_cache[ck] = (time.time(), result)
+            return result
         except Exception as e:
             errors.append(f"{provider.name}: {e}")
             logger.warning(f"Provider {provider.name} failed: {e}")
@@ -208,10 +324,10 @@ async def ai_generate(prompt: str, system_prompt: str | None = None) -> dict:
 
 
 async def ai_generate_stream(
-    prompt: str, system_prompt: str | None = None
+    prompt: str, system_prompt: str | None = None, preferred_provider: str | None = None
 ) -> AsyncGenerator[dict, None]:
     """Stream response from first available provider. Yields dicts with 'chunk' and 'provider'."""
-    providers = await get_provider_chain()
+    providers = _reorder_providers(await get_provider_chain(), preferred_provider)
     if not providers:
         yield {"error": "Niciun provider AI configurat. Adaugă o cheie API în setările AI."}
         return

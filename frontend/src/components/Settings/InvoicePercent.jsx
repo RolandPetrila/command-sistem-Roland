@@ -16,7 +16,7 @@ export default function InvoicePercent() {
         setPercent(val);
         setSavedPercent(val);
       })
-      .catch(() => {})
+      .catch(() => { /* toast handles it */ })
       .finally(() => setLoading(false));
   }, []);
 
@@ -28,8 +28,8 @@ export default function InvoicePercent() {
       setSavedPercent(percent);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
-    } catch {
-      // Silently handle - backend might not be available
+    } catch (err) {
+      console.error('Invoice percent save error:', err);
     } finally {
       setSaving(false);
     }
