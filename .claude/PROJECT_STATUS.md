@@ -34,6 +34,7 @@ Generated: 2026-03-21 01:26
 | Faza 25B Security Wins | DONE | SQL whitelist OK, fix catch blocks, AI translate prompt, rate limiting 60/10 req/min (2026-03-21) |
 | Faza 25C Fix Cerinta | DONE | Interceptor network errors, batch PDF (10x), DOCX tables translate, timeout 300s (2026-03-21) |
 | Faza 25D Speed Test | DONE | Network speed indicator in header: Mbps + latency, auto-refresh 60s, click remeasure (2026-03-21) |
+| Faza 25E Testare | DONE | pytest + 18 teste (health, translate, AI, invoice CRUD, ITP) — 18/18 PASSED (2026-03-21) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`
