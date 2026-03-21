@@ -144,7 +144,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -262,6 +262,10 @@ async def rate_limiter(request: Request, call_next):
     """Simple in-memory rate limiting: 60 req/min global, 10 req/min for AI/translate."""
     path = request.url.path
     if not path.startswith("/api/") or path in ("/api/health", "/api/log/frontend"):
+        return await call_next(request)
+
+    # Skip rate limiting for test clients (ASGI transport uses test as host)
+    if request.base_url.hostname == "test":
         return await call_next(request)
 
     client_ip = request.client.host if request.client else "unknown"

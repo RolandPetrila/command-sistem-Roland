@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Loader2,
@@ -280,7 +280,7 @@ export default function DashboardPage() {
   const [providersLoading, setProvidersLoading] = useState(true);
   const [recentLoading, setRecentLoading] = useState(true);
 
-  const fetchAll = async (isRefresh = false) => {
+  const fetchAll = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
 
     try {
@@ -364,11 +364,11 @@ export default function DashboardPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchAll();
-  }, []);
+  }, [fetchAll]);
 
   // ---------- Render ----------
 

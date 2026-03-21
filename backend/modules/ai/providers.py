@@ -277,7 +277,9 @@ def _reorder_providers(providers: list[BaseProvider], preferred: str | None) -> 
 
 
 # Z4.6 — Prompt cache: reuse responses for identical prompts within TTL
+import asyncio as _asyncio
 _prompt_cache: dict[str, tuple[float, dict]] = {}
+_prompt_lock = _asyncio.Lock()
 _CACHE_TTL = 3600  # 1 hour
 _CACHE_MAX = 200   # max entries
 
@@ -289,14 +291,15 @@ def _cache_key(prompt: str, system_prompt: str | None) -> str:
 
 async def ai_generate(prompt: str, system_prompt: str | None = None, preferred_provider: str | None = None) -> dict:
     """Generate response using first available provider. Caches identical prompts for 1h."""
-    # Check cache
+    # Check cache (lock protects concurrent access)
     ck = _cache_key(prompt, system_prompt)
-    if ck in _prompt_cache:
-        cached_at, cached_result = _prompt_cache[ck]
-        if time.time() - cached_at < _CACHE_TTL:
-            return {**cached_result, "cached": True}
-        else:
-            del _prompt_cache[ck]
+    async with _prompt_lock:
+        if ck in _prompt_cache:
+            cached_at, cached_result = _prompt_cache[ck]
+            if time.time() - cached_at < _CACHE_TTL:
+                return {**cached_result, "cached": True}
+            else:
+                del _prompt_cache[ck]
 
     providers = _reorder_providers(await get_provider_chain(), preferred_provider)
     if not providers:
@@ -310,10 +313,11 @@ async def ai_generate(prompt: str, system_prompt: str | None = None, preferred_p
             text = await provider.generate(prompt, system_prompt)
             result = {"text": text, "provider": provider.name, "model": provider.model}
             # Store in cache (evict oldest if full)
-            if len(_prompt_cache) >= _CACHE_MAX:
-                oldest = min(_prompt_cache, key=lambda k: _prompt_cache[k][0])
-                del _prompt_cache[oldest]
-            _prompt_cache[ck] = (time.time(), result)
+            async with _prompt_lock:
+                if len(_prompt_cache) >= _CACHE_MAX:
+                    oldest = min(_prompt_cache, key=lambda k: _prompt_cache[k][0])
+                    del _prompt_cache[oldest]
+                _prompt_cache[ck] = (time.time(), result)
             return result
         except Exception as e:
             errors.append(f"{provider.name}: {e}")

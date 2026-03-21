@@ -132,6 +132,8 @@ async def convert_currency(
 # ---------------------------------------------------------------------------
 
 _ANAF_URL = "https://webservicesp.anaf.ro/api/PlatitorTvaRest/api/v8/ws/tva"
+_anaf_cache: dict = {}  # {cui_int: {"data": ..., "ts": float}}
+_ANAF_CACHE_TTL = 86400  # 24 hours
 
 
 @router.get("/company-check/{cui}")
@@ -147,6 +149,11 @@ async def check_company(cui: str):
         cui_int = int(clean)
     except ValueError:
         raise HTTPException(400, f"CUI invalid: '{cui}'. Trebuie sa fie numeric.")
+
+    # Check cache (24h TTL)
+    cached = _anaf_cache.get(cui_int)
+    if cached and (time.time() - cached["ts"]) < _ANAF_CACHE_TTL:
+        return cached["data"]
 
     today_str = date.today().strftime("%Y-%m-%d")
     payload = [{"cui": cui_int, "data": today_str}]
@@ -170,7 +177,7 @@ async def check_company(cui: str):
 
     found_list = body.get("found", [])
     if not found_list:
-        return {
+        result = {
             "found": False,
             "cui": cui_int,
             "denumire": None,
@@ -181,22 +188,25 @@ async def check_company(cui: str):
             "tva": None,
             "data_verificare": today_str,
         }
+    else:
+        item = found_list[0]
+        general = item.get("date_generale", {})
+        tva_info = item.get("inregistrare_scop_Tva", {})
 
-    item = found_list[0]
-    general = item.get("date_generale", {})
-    tva_info = item.get("inregistrare_scop_Tva", {})
+        result = {
+            "found": True,
+            "cui": cui_int,
+            "denumire": general.get("denumire"),
+            "adresa": general.get("adresa"),
+            "telefon": general.get("telefon"),
+            "cod_postal": general.get("cod_postal"),
+            "stare": general.get("stare_inregistrare"),
+            "tva": tva_info.get("scpTVA", False),
+            "data_verificare": today_str,
+        }
 
-    return {
-        "found": True,
-        "cui": cui_int,
-        "denumire": general.get("denumire"),
-        "adresa": general.get("adresa"),
-        "telefon": general.get("telefon"),
-        "cod_postal": general.get("cod_postal"),
-        "stare": general.get("stare_inregistrare"),
-        "tva": tva_info.get("scpTVA", False),
-        "data_verificare": today_str,
-    }
+    _anaf_cache[cui_int] = {"data": result, "ts": time.time()}
+    return result
 
 
 # ---------------------------------------------------------------------------

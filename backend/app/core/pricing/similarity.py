@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sklearn.preprocessing import StandardScaler
+# sklearn — lazy imported inside calculate_similarity_price() to cut cold-start time
 
 from app.core.analyzer import extract_features, get_feature_vector
 
@@ -143,6 +143,7 @@ def calculate_similarity_price(
     ref_names = [r["filename"] for r in reference_data]
 
     # Normalizare (StandardScaler pe referințe, apoi transform pe target)
+    from sklearn.preprocessing import StandardScaler
     scaler = StandardScaler()
     ref_normalized = scaler.fit_transform(ref_vectors)
     target_normalized = scaler.transform(target_vector)

@@ -11,6 +11,7 @@ Flux:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -230,7 +231,8 @@ async def trigger_recalibration() -> dict[str, Any]:
             "reason": f"Prea puține referințe ({len(all_refs)}). Minimum necesar: 5.",
         }
 
-    result = run_calibration(
+    result = await asyncio.to_thread(
+        run_calibration,
         reference_dir=settings.reference_dir,
         output_path=settings.calibration_file,
     )

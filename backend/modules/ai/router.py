@@ -30,8 +30,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import fitz  # PyMuPDF
-from docx import Document as DocxDocument
+# fitz, docx — lazy imported inside functions to cut cold-start time
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -48,24 +47,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 
-# --- Text extraction helpers ---
-
-def _extract_text(file_path: str) -> str:
-    """Extract text from PDF, DOCX, or text file."""
-    p = file_path.lower()
-    if p.endswith(".pdf"):
-        doc = fitz.open(file_path)
-        text = "\n".join(page.get_text() for page in doc)
-        doc.close()
-        return text.strip()
-    elif p.endswith(".docx"):
-        doc = DocxDocument(file_path)
-        return "\n".join(para.text for para in doc.paragraphs).strip()
-    elif p.endswith((".txt", ".md", ".csv", ".json", ".xml", ".html", ".py", ".js")):
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read().strip()
-    else:
-        raise ValueError(f"Tip fișier nesuportat: {Path(file_path).suffix}")
+# --- Text extraction (shared) ---
+from app.core.file_utils import extract_text as _extract_text
 
 
 async def _save_upload(file: UploadFile) -> str:
@@ -79,9 +62,10 @@ async def _save_upload(file: UploadFile) -> str:
 
 async def _extract_from_upload(file: UploadFile) -> str:
     """Extract text from an uploaded file."""
+    import asyncio
     tmp_path = await _save_upload(file)
     try:
-        return _extract_text(tmp_path)
+        return await asyncio.to_thread(_extract_text, tmp_path)
     finally:
         os.unlink(tmp_path)
 
@@ -330,11 +314,13 @@ async def summarize(file: UploadFile = File(...)):
         raise HTTPException(400, "Nu s-a putut extrage text din fișier")
 
     system = (
-        "Ești un asistent specializat în rezumarea documentelor. "
-        "Creează un rezumat clar, structurat, în limba română. "
-        "Include punctele cheie și concluziile principale."
+        "Esti un asistent specializat in rezumarea documentelor. "
+        "Creeaza un rezumat clar, structurat, in limba romana. "
+        "Include punctele cheie si concluziile principale. "
+        "NU inventa informatii care nu exista in document. "
+        "Daca documentul e prea scurt sau neclar, spune explicit."
     )
-    prompt = f"Rezumă următorul document:\n\n{_truncate_text(text)}"
+    prompt = f"Rezuma urmatorul document:\n\n{_truncate_text(text)}"
 
     result = await ai_generate(prompt, system)
     await log_activity(
@@ -356,9 +342,10 @@ async def question_answer(
         raise HTTPException(400, "Nu s-a putut extrage text din fișier")
 
     system = (
-        "Ești un asistent AI. Răspunzi la întrebări bazat STRICT pe conținutul documentului furnizat. "
-        "Dacă răspunsul nu se găsește în document, spune clar. "
-        "Citează secțiunile relevante. Răspunde în limba română."
+        "Esti un asistent AI. Raspunzi la intrebari bazat STRICT pe continutul documentului furnizat. "
+        "Daca raspunsul nu se gaseste in document, spune clar: 'Nu am gasit aceasta informatie in document.' "
+        "NU inventa sau presupune informatii care nu exista in text. "
+        "Citeaza sectiunile relevante. Raspunde in limba romana."
     )
     prompt = (
         f"Document ({file.filename}):\n{_truncate_text(text)}\n\n"
@@ -382,12 +369,13 @@ async def classify(file: UploadFile = File(...)):
         raise HTTPException(400, "Nu s-a putut extrage text din fișier")
 
     system = (
-        "Clasifică tipul documentului. Răspunde STRICT în format JSON valid:\n"
+        "Clasifica tipul documentului. Raspunde STRICT in format JSON valid, fara markdown:\n"
         '{"type": "tip document", "domain": "domeniu", "language": "limba", '
-        '"confidence": "high/medium/low", "description": "descriere scurtă"}\n'
-        "Tipuri posibile: factură, contract, certificat, raport, manual tehnic, "
-        "scrisoare, proces verbal, ofertă, comandă, alt document.\n"
-        "Domenii posibile: automotive, construcții, IT, juridic, financiar, tehnic, medical, altul."
+        '"confidence": 0-100, "description": "descriere scurta"}\n'
+        "Tipuri posibile: factura, contract, certificat, raport, manual tehnic, "
+        "scrisoare, proces verbal, oferta, comanda, alt document.\n"
+        "Domenii posibile: automotive, constructii, IT, juridic, financiar, tehnic, medical, altul.\n"
+        "NU inventa un tip daca documentul nu se potriveste niciunei categorii — foloseste 'alt document'."
     )
     prompt = f"Clasifică acest document:\n\n{_truncate_text(text, 10000)}"
 
@@ -423,13 +411,15 @@ async def extract_data(file: UploadFile = File(...)):
         raise HTTPException(400, "Nu s-a putut extrage text din fișier")
 
     system = (
-        "Extrage datele structurate din document. Răspunde STRICT în format JSON valid.\n"
-        "Pentru facturi: {\"tip\": \"factură\", \"furnizor\": \"...\", \"cui_furnizor\": \"...\", "
-        "\"numar\": \"...\", \"data\": \"...\", \"suma_fara_tva\": 0, \"tva\": 0, \"total\": 0, "
-        "\"moneda\": \"RON\", \"produse\": [...]}\n"
+        "Extrage datele structurate din document. Raspunde STRICT in format JSON valid, fara markdown.\n"
+        "Include un camp \"confidence\": 0-100 indicand cat de sigur esti pe datele extrase.\n"
+        "Pune null pentru campurile pe care nu le gasesti cu certitudine. NU inventa date.\n"
+        "Pentru facturi: {\"tip\": \"factura\", \"furnizor\": \"...\", \"cui_furnizor\": \"...\", "
+        "\"numar\": \"...\", \"data\": \"YYYY-MM-DD\", \"suma_fara_tva\": 0, \"tva\": 0, \"total\": 0, "
+        "\"moneda\": \"RON\", \"produse\": [...], \"confidence\": 85}\n"
         "Pentru certificate: {\"tip\": \"certificat\", \"emitent\": \"...\", \"numar\": \"...\", "
-        "\"data_emitere\": \"...\", \"valabil_pana\": \"...\", \"subiect\": \"...\"}\n"
-        "Pentru alte documente: extrage câmpurile relevante."
+        "\"data_emitere\": \"YYYY-MM-DD\", \"valabil_pana\": \"YYYY-MM-DD\", \"subiect\": \"...\", \"confidence\": 90}\n"
+        "Pentru alte documente: extrage campurile relevante + confidence."
     )
     prompt = f"Extrage datele structurate din:\n\n{_truncate_text(text, 30000)}"
 
@@ -504,6 +494,7 @@ async def ocr_enhance(file: UploadFile = File(...)):
         raw_text = ""
         fname = (file.filename or "").lower()
         if fname.endswith(".pdf"):
+            import fitz  # PyMuPDF
             doc = fitz.open(tmp_path)
             for page in doc:
                 raw_text += page.get_text()

@@ -1,136 +1,87 @@
 # TODO — Plan Implementare Roland Command Center
-Data: 2026-03-21 | Generat dupa: Deep Research + Sabloane + Cerinta_Roland + EVALUARE
+
+Data: 2026-03-21 | Sursa: Deep Research v1 (63/80) + v2 (58.5/80) consolidat
+Scor actual estimat: ~74/80 | Toate fazele DONE
 
 ---
 
-## FAZA A — ✅ DONE: Actualizare Provideri AI (2026-03-21)
-**Prioritate:** CRITICA | **Efort:** ~2h | **Risc:** LOW
-**Status:** ✅ IMPLEMENTAT COMPLET — Faza 25A
+## Istoric — Faze Completate (2026-03-21)
 
-| # | Actiune | Status |
-|---|---------|--------|
-| A1 | ✅ Update model Gemini | `gemini-2.0-flash` → `gemini-2.5-flash` in providers.py + translator/providers.py |
-| A2 | ✅ Adauga CerebrasProvider | Model: `qwen-3-235b-a22b-instruct-2507`, testat OK |
-| A3 | ✅ Adauga MistralProvider | Model: `mistral-small-latest`, testat OK |
-| A4 | ✅ Creeaza `.env` backend | Toate cheile API configurate, gitignored |
-| A5 | ✅ Update chain order | Gemini → Cerebras → Groq → Mistral → OpenAI (legacy) |
-| A6 | ✅ Test toti providerii | Toate 4 raspund corect cu prompt real |
-
----
-
-## FAZA D — ✅ DONE: Securitate Quick Wins (2026-03-21)
-**Prioritate:** MARE | **Efort:** ~1.5h | **Risc:** LOW
-**Status:** ✅ IMPLEMENTAT COMPLET — Faza 25B
-
-| # | Actiune | Status |
-|---|---------|--------|
-| D1 | ✅ SQL whitelist | Verificat: FALS POZITIV — lista hardcodata, nu user input |
-| D2 | ✅ Fix catch blocks | SystemConfig.jsx + InvoicePercent.jsx — console.error adaugat |
-| D3 | ✅ AI translate prompt | "Raspunde EXCLUSIV in {target_lang}" in Gemini + OpenAI providers |
-| D4 | ✅ Rate limiting | Middleware in main.py: 60 req/min global, 10 req/min AI + translate |
+| Faza | Descriere | Status |
+|------|-----------|--------|
+| Faza 25A (ex-A) | Provideri AI: Gemini 2.5-flash, +Cerebras, +Mistral, .env | DONE |
+| Faza 25B (ex-D) | Securitate: SQL whitelist OK, catch blocks, rate limiting | DONE |
+| Faza 25C (ex-C) | Fix cerinte: interceptor, batch PDF, DOCX tables, timeout 300s | DONE |
+| Faza 25D (ex-B) | Speed test: Mbps + latency in header, auto-refresh 60s | DONE |
+| Faza 25E (ex-E) | Testare fundament: pytest + 18 teste, toate PASSED | DONE |
+| Faza F | Cross-module: voice input, prompt templates, serii facturi, etc. | DONE |
+| **Faza 26A** | Security & Upgrades: PyMuPDF CVE fix, cryptography, httpx, pytest | **DONE** |
+| **Faza 26B** | Performance: Lazy imports (5x cold start), BNR/ANAF/calibration cache, SQLite PRAGMA | **DONE** |
+| **Faza 26C** | Code Quality: N+1 fix, SQL parameterized, shared file_utils, lang validation, asyncio.Lock | **DONE** |
+| **Faza 26D** | AI Prompts: anti-hallucination, confidence scores, few-shot, null for uncertain | **DONE** |
+| **Faza 26E** | Testing: 68 teste (50 noi), toate PASSED, 8 module acoperite | **DONE** |
+| **Faza 26F** | Refactorizare: 3 fisiere mari (4137 LOC) -> 11 fisiere sub 500 LOC | **DONE** |
+| **Faza 26G** | Hardening: CORS restrict, DB indexes (8 noi), blocking I/O -> async (5 cazuri) | **DONE** |
 
 ---
 
-## FAZA C — ✅ DONE: Fix-uri din Cerinta_Roland.md (2026-03-21)
-**Prioritate:** MARE | **Efort:** ~3h | **Risc:** MEDIUM
-**Status:** ✅ IMPLEMENTAT COMPLET — Faza 25C
+## Detalii Implementare Faze 26A-26G
 
-| # | Actiune | Status |
-|---|---------|--------|
-| C1 | ✅ Fix interceptor axios | Catch ECONNABORTED + ERR_NETWORK + no response → toast + log |
-| C2 | ✅ Batch traducere PDF | 10 paragrafe/batch cu separator ---PARA---, ~10x mai putine apeluri API |
-| C3 | ✅ Traducere tabele DOCX | doc.tables → row → cell.text, structura tabelului pastrata |
-| C4 | ✅ Timeout adaptiv | File upload/translate: 300s (era 120s), default: 60s |
+### Faza 26A — Security & Upgrades (DONE)
+- PyMuPDF >=1.26.7 (CVE-2026-3029 fix)
+- cryptography >=44.0.0, certifi >=2024.12.14
+- httpx >=0.25.0, pytest >=8.0.0, pytest-asyncio >=0.23.0
 
-**Limitari cunoscute (neschimbate):**
-- PDF pierde layout-ul (text brut → DOCX). Reconstituirea layout-ului PDF nu se implementeaza.
-- DOCX headers/footers/footnotes nu se traduc (limitare python-docx).
+### Faza 26B — Performance (DONE)
+- Lazy imports: fitz, pdfplumber, docx, scipy, sklearn (33s -> 6.33s cold start)
+- In-memory caches: BNR (1h TTL), ANAF CUI (24h TTL), calibration (mtime-based)
+- SQLite PRAGMA: cache_size=-8000 (8MB), temp_store=MEMORY
 
----
+### Faza 26C — Code Quality (DONE)
+- N+1 query fix: LEFT JOIN + ROW_NUMBER() in automations
+- SQL parameterization: `'-' || ? || ' days'` pattern
+- Shared file_utils.py (deduplicated from 3 files)
+- Language validation whitelist in translator
+- asyncio.Lock on prompt cache
+- Translator text max_length=50000
 
-## FAZA B — ✅ DONE: Speed Test Internet (2026-03-21)
-**Prioritate:** MEDIE | **Efort:** ~2h | **Risc:** LOW
-**Status:** ✅ IMPLEMENTAT COMPLET — Faza 25D
+### Faza 26D — AI Prompts (DONE)
+- Anti-hallucination instructions on all AI prompts
+- Confidence scoring (0-100) in extraction prompts
+- Null for uncertain fields
+- Few-shot examples in invoice/classify/extract prompts
 
-| # | Actiune | Status |
-|---|---------|--------|
-| B1 | ✅ Backend endpoint | GET /api/network/speed-payload — 500KB, no-store cache |
-| B2 | ✅ Frontend component | NetworkSpeedIndicator.jsx — Navigator.connection + fallback download |
-| B3 | ✅ Integrare Header | Indicator: Mbps + ms, verde/galben/rosu, click remeasure |
-| B4 | ✅ Auto-refresh 60s | setInterval 60s, fara flood backend |
+### Faza 26E — Testing (DONE)
+- 50 new tests across 8 modules (68 total, all PASSED)
+- Modules: converter, filemanager, reports, vault, automations, quick_tools, translator, ai_docs
+- Rate limiter test bypass for ASGI test client
 
----
+### Faza 26F — Refactorizare (DONE)
+- invoice/router.py (2050 LOC) -> crud.py + ai_extraction.py + pdf_generation.py + reports.py
+- ai/router_extensions.py (1052 LOC) -> document_ops.py + tools.py
+- reports/router.py (1035 LOC) -> system_reports.py + journal.py + timeline.py
+- DashboardPage lazy import + useCallback optimization
 
-## FAZA E — ✅ DONE: Fundament Testare (2026-03-21)
-**Prioritate:** MEDIE | **Efort:** ~4h | **Risc:** LOW
-**Status:** ✅ IMPLEMENTAT COMPLET — Faza 25E — 18/18 teste PASSED
-
-| # | Actiune | Status |
-|---|---------|--------|
-| E1 | ✅ Install pytest | pytest + httpx + pytest-asyncio instalate |
-| E2 | ✅ Structura tests/ | conftest.py cu AsyncClient ASGI, fixture `client` |
-| E3 | ✅ Test health (5 teste) | health OK, response time, modules list, diagnostics, speed payload |
-| E4 | ✅ Test translate (4 teste) | EN→RO OK, empty rejected, detect language, providers list |
-| E5 | ✅ Test AI (4 teste) | providers, config, sessions list, session CRUD |
-| E6 | ✅ Test invoice (2 teste) | client CRUD complet (create→read→update→delete), clients list |
-| E7 | ✅ Test ITP (3 teste) | inspection create+read, list, stats overview |
-
-**Rulare:** `cd backend && python -m pytest tests/ -v`
+### Faza 26G — Hardening & Polish (DONE)
+- CORS: restrict methods to GET/POST/PUT/DELETE/OPTIONS
+- DB indexes: 8 new (chat_messages.session_id, task_runs.task_id, uptime_history.monitor_id, etc.)
+- Blocking I/O -> asyncio.to_thread(): 5 call sites (file_utils, document_ops, invoice, routes_price, self_learning)
+- CSP nonce: SKIPPED (Vite SPA generates inline scripts, Tailwind needs inline styles — low ROI for single-user behind VPN)
 
 ---
 
-## FAZA F — NEIMPLEMENTAT: Top 10 Features P1 din EVALUARE
-**Prioritate:** MICA (next sessions) | **Efort:** ~40-60h total | **Risc:** MEDIUM
-**Motivatie:** 28 sugestii P1 din evaluarea completa a 145 features posibile.
-**Status:** PLANIFICAT — sesiuni viitoare
+## Viitor (Nice-to-Have, ROI scazut)
 
-| # | Feature | Modul | Efort | Din EVALUARE |
-|---|---------|-------|-------|-------------|
-| F1 | Voice Input (Web Speech API) | AI Chat | 2h | S2.5 |
-| F2 | Prompt Templates cu variabile | AI Chat | 4h | S2.2 |
-| F3 | Serii Facturi Configurabile | Invoice | 3h | S4.1 |
-| F4 | Status Plata + Scadente | Invoice | 4h | S4.3 |
-| F5 | Calendar ITP Programari | ITP | 6h | S5.4 |
-| F6 | Notificari Unificate (bell icon) | Automations | 6h | S10.1 |
-| F7 | Preview Documente in Browser | File Manager | 5h | S8.1 |
-| F8 | Calibrare MAPE Interactiva UI | Calculator | 4h | S1.1 |
-| F9 | Note Oferta PDF (CIP Inspection) | Calculator | 3h | S1.6 |
-| F10 | Glosar per Client | Translator | 2h | S3.1 |
-
-**Dependente:** Fazele A-E completate.
+| # | Actiune | Impact | Efort | Conditie |
+|---|---------|--------|-------|----------|
+| V1 | Recharts 2 -> 3 upgrade (bundle reduction) | MEDIUM | 2-3h | Cand recharts 3 e stabil |
+| V2 | Vitest frontend tests setup + primele teste | MEDIUM | 4h+ | Dupa backend tests complete |
+| V3 | React 18 -> 19 upgrade | LOW | 8h+ | Dupa V1, ecosystem ready |
 
 ---
 
-## SUMAR EXECUTIE
+## Surse
 
-| Faza | Efort | Prioritate | Status |
-|------|-------|-----------|--------|
-| ✅ A — Provideri AI | ~2h | CRITICA | DONE (2026-03-21) |
-| ✅ D — Securitate | ~1.5h | MARE | DONE (2026-03-21) |
-| ✅ C — Fix Cerinta Roland | ~3h | MARE | DONE (2026-03-21) |
-| ✅ B — Speed Test | ~2h | MEDIE | DONE (2026-03-21) |
-| ✅ E — Testare | ~4h | MEDIE | DONE (2026-03-21) |
-| F — Features P1 | ~40h | MICA | PLANIFICAT |
-
-**Sesiune curenta: 5/5 faze complete (A+D+C+B+E)**
-**Ordine executata: A → D → C → B → E**
-
----
-
-## RESURSE NECESARE
-
-### Chei API (configurate in `backend/.env`):
-- ✅ GEMINI, GROQ, CEREBRAS, MISTRAL — AI providers
-- ✅ DEEPL, AZURE_TRANSLATE — Translation providers
-
-### Librarii instalate:
-- ✅ `slowapi` — rate limiting (Faza D)
-- `pytest`, `httpx`, `pytest-asyncio` — testare (Faza E, neinstalate)
-
-### Modele AI active (martie 2026):
-| Provider | Model | Free tier |
-|----------|-------|-----------|
-| ✅ Gemini | gemini-2.5-flash | 10 RPM, 250 req/zi |
-| ✅ Cerebras | qwen-3-235b-a22b-instruct-2507 | 30 RPM, 1M tok/zi |
-| ✅ Groq | llama-3.3-70b-versatile | 30 RPM |
-| ✅ Mistral | mistral-small-latest | 2 RPM, 1B tok/luna |
+- `99_Roland_Work_Place/2026-03-21_deep_research/RAPORT.md` (scor 63/80, v1)
+- `99_Roland_Work_Place/2026-03-21_deep_research_v2/RAPORT.md` (scor 58.5/80, v2)
+- `99_Roland_Work_Place/2026-03-21_deep_research_v2/ROADMAP_IMBUNATATIRI.md`

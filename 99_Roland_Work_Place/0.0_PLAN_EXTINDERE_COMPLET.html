@@ -362,6 +362,94 @@ const PHASES = [
       { id: "25E.6", name: "✅ 2 teste invoice (2026-03-21)", tech: "client CRUD complet, clients list", cost: "Gratuit", done: true },
       { id: "25E.7", name: "✅ 3 teste ITP (2026-03-21)", tech: "inspection create+read, list, stats overview", cost: "Gratuit", done: true },
     ]
+  },
+  {
+    id: "F", name: "Cross-Module Enhancements", prio: "medie",
+    note: "✅ ALL DONE (2026-03-21). 10 features transversale — voice, templates, serii, scadente, programari, notificari.",
+    features: [
+      { id: "F.1", name: "✅ Voice Input AI Chat (2026-03-21)", tech: "Web Speech API SpeechRecognition, lang ro-RO", cost: "Gratuit", done: true },
+      { id: "F.2", name: "✅ Prompt Templates cu variabile (2026-03-21)", tech: "CRUD templates, {variable} substitution", cost: "Gratuit", done: true },
+      { id: "F.3", name: "✅ Serii Facturi Configurabile (2026-03-21)", tech: "invoice_series table, auto-numbering", cost: "Gratuit", done: true },
+      { id: "F.4", name: "✅ Status Plata + Scadente (2026-03-21)", tech: "payment_date, mark paid, /overdue", cost: "Gratuit", done: true },
+      { id: "F.5", name: "✅ Calendar ITP Programari (2026-03-21)", tech: "itp_appointments table, status workflow", cost: "Gratuit", done: true },
+      { id: "F.6", name: "✅ Notificari Unificate bell (2026-03-21)", tech: "notifications table, unread count, bell dropdown Header", cost: "Gratuit", done: true },
+      { id: "F.7", name: "✅ Preview Documente Fullscreen (2026-03-21)", tech: "Fullscreen modal PDF/image/text, download", cost: "Gratuit", done: true },
+      { id: "F.8", name: "✅ Calibrare MAPE Interactiva (2026-03-21)", tech: "Weight sliders, POST /calibrate/weights", cost: "Gratuit", done: true },
+      { id: "F.9", name: "✅ Oferta PDF CIP Inspection (2026-03-21)", tech: "reportlab + fitz fallback, CIP header", cost: "Gratuit", done: true },
+      { id: "F.10", name: "✅ Glosar per Client (2026-03-21)", tech: "client_id FK glossary_terms, scoped", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "26A", name: "Security & Upgrades", prio: "urgenta",
+    note: "✅ ALL DONE (2026-03-21). CVE-2026-3029 fix, cryptography, httpx, pytest.",
+    features: [
+      { id: "26A.1", name: "✅ PyMuPDF >=1.26.7 CVE fix (2026-03-21)", tech: "CVE-2026-3029 path traversal fix", cost: "Gratuit", done: true },
+      { id: "26A.2", name: "✅ cryptography >=44.0.0 (2026-03-21)", tech: "Transitive vulnerability fix", cost: "Gratuit", done: true },
+      { id: "26A.3", name: "✅ httpx + pytest deps (2026-03-21)", tech: "httpx>=0.25.0, pytest>=8.0.0, pytest-asyncio", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "26B", name: "Performance: Lazy Imports + Caching", prio: "inalta",
+    note: "✅ ALL DONE (2026-03-21). Cold start 33s→6.33s (5x). BNR/ANAF/calibration cache.",
+    features: [
+      { id: "26B.1", name: "✅ Lazy import fitz/pdfplumber/docx (2026-03-21)", tech: "Module-level → function-level imports", cost: "Gratuit", done: true },
+      { id: "26B.2", name: "✅ Lazy import scipy/sklearn (2026-03-21)", tech: "calibration.py + similarity.py", cost: "Gratuit", done: true },
+      { id: "26B.3", name: "✅ BNR + ANAF + calibration cache (2026-03-21)", tech: "In-memory dict, TTL 1h/24h/mtime", cost: "Gratuit", done: true },
+      { id: "26B.4", name: "✅ SQLite PRAGMA tuning (2026-03-21)", tech: "cache_size=-8000, temp_store=MEMORY", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "26C", name: "Code Quality & Safety", prio: "medie-inalta",
+    note: "✅ ALL DONE (2026-03-21). N+1 fix, SQL param, shared utils, validation.",
+    features: [
+      { id: "26C.1", name: "✅ N+1 query fix automations (2026-03-21)", tech: "LEFT JOIN + ROW_NUMBER() window function", cost: "Gratuit", done: true },
+      { id: "26C.2", name: "✅ SQL parameterization reports (2026-03-21)", tech: "'-' || ? || ' days' safe pattern", cost: "Gratuit", done: true },
+      { id: "26C.3", name: "✅ Shared file_utils.py (2026-03-21)", tech: "Deduplicated extract_text from 3 files", cost: "Gratuit", done: true },
+      { id: "26C.4", name: "✅ Lang validation + text limit (2026-03-21)", tech: "Whitelist ro/en, max_length=50000", cost: "Gratuit", done: true },
+      { id: "26C.5", name: "✅ asyncio.Lock prompt cache (2026-03-21)", tech: "Protect shared mutable state in async", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "26D", name: "AI Prompts Enhancement", prio: "medie",
+    note: "✅ ALL DONE (2026-03-21). Anti-hallucination, confidence, few-shot.",
+    features: [
+      { id: "26D.1", name: "✅ Anti-hallucination instructions (2026-03-21)", tech: "NU inventa date — on all AI prompts", cost: "Gratuit", done: true },
+      { id: "26D.2", name: "✅ Confidence + null uncertain (2026-03-21)", tech: "Scor 0-100, null for unknown fields", cost: "Gratuit", done: true },
+      { id: "26D.3", name: "✅ Few-shot examples (2026-03-21)", tech: "Invoice/classify/extract example output", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "26E", name: "Testing Expansion (50 teste noi)", prio: "medie",
+    note: "✅ ALL DONE (2026-03-21). 68 teste total (50 noi), 8 module acoperite, ALL PASSED.",
+    features: [
+      { id: "26E.1", name: "✅ test_converter.py 8 teste (2026-03-21)", tech: "PDF/DOCX conversion, extract-text, number-words", cost: "Gratuit", done: true },
+      { id: "26E.2", name: "✅ test_filemanager.py 8 teste (2026-03-21)", tech: "Browse, search, tags, favorites, upload", cost: "Gratuit", done: true },
+      { id: "26E.3", name: "✅ test_reports.py 7 teste (2026-03-21)", tech: "Disk-stats, timeline, journal, bookmarks", cost: "Gratuit", done: true },
+      { id: "26E.4", name: "✅ test_vault.py 6 teste (2026-03-21)", tech: "Status, keys, setup, unlock", cost: "Gratuit", done: true },
+      { id: "26E.5", name: "✅ test_automations.py 5 teste (2026-03-21)", tech: "Tasks, shortcuts, monitors, health", cost: "Gratuit", done: true },
+      { id: "26E.6", name: "✅ test_quick_tools.py 5 teste (2026-03-21)", tech: "Exchange-rate, CUI, number-words", cost: "Gratuit", done: true },
+      { id: "26E.7", name: "✅ test_translator_files.py 5 teste (2026-03-21)", tech: "Providers, TM, glossary, file upload", cost: "Gratuit", done: true },
+      { id: "26E.8", name: "✅ test_ai_docs.py 6 teste (2026-03-21)", tech: "Providers, summarize, classify, context", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "26F", name: "Refactorizare Module Mari", prio: "medie",
+    note: "✅ ALL DONE (2026-03-21). 3 fisiere (4137 LOC) → 11 fisiere sub 500 LOC.",
+    features: [
+      { id: "26F.1", name: "✅ Split invoice/router.py 2050 LOC (2026-03-21)", tech: "→ crud.py + ai_extraction.py + pdf_generation.py + reports.py", cost: "Gratuit", done: true },
+      { id: "26F.2", name: "✅ Split ai/router_extensions.py 1052 LOC (2026-03-21)", tech: "→ document_ops.py + tools.py", cost: "Gratuit", done: true },
+      { id: "26F.3", name: "✅ Split reports/router.py 1035 LOC (2026-03-21)", tech: "→ system_reports.py + journal.py + timeline.py", cost: "Gratuit", done: true },
+      { id: "26F.4", name: "✅ DashboardPage lazy + useCallback (2026-03-21)", tech: "React.lazy() + useCallback fetchAll", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: "26G", name: "Hardening & Polish", prio: "normala",
+    note: "✅ ALL DONE (2026-03-21). CORS restrict, 8 DB indexes, 5 async I/O fixes.",
+    features: [
+      { id: "26G.1", name: "✅ CORS restrict methods (2026-03-21)", tech: "GET/POST/PUT/DELETE/OPTIONS only", cost: "Gratuit", done: true },
+      { id: "26G.2", name: "✅ 8 DB indexes migration 016 (2026-03-21)", tech: "chat_messages, task_runs, uptime_history, journal, bookmarks, glossary, tasks", cost: "Gratuit", done: true },
+      { id: "26G.3", name: "✅ Blocking I/O → async 5 sites (2026-03-21)", tech: "asyncio.to_thread() in ai, invoice, price, self_learning", cost: "Gratuit", done: true },
+    ]
   }
 ];
 

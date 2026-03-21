@@ -447,9 +447,48 @@
 
 ---
 
+---
+
+## Faza 26A-G — Deep Research Implementation (2026-03-21)
+
+### Teste Automatizate pytest (68 teste, TOATE PASSED)
+
+**Rulare:** `cd backend && python -m pytest tests/ -v`
+
+| Fisier test | Nr. teste | Module acoperite |
+|------------|-----------|-----------------|
+| test_health.py | 5 | Health, modules, diagnostics |
+| test_translate.py | 4 | Translate text, detect, providers |
+| test_ai.py | 4 | AI providers, config, sessions |
+| test_invoice.py | 2 | Client CRUD, clients list |
+| test_itp.py | 3 | Inspection CRUD, list, stats |
+| test_converter.py | 8 | PDF/DOCX conversion, extract-text, number-words |
+| test_filemanager.py | 8 | Browse, search, tags, favorites, upload, mkdir |
+| test_reports.py | 7 | Disk-stats, system-info, timeline, journal, bookmarks |
+| test_vault.py | 6 | Status, keys, setup, unlock |
+| test_automations.py | 5 | Tasks, shortcuts, monitors, health, notifications |
+| test_quick_tools.py | 5 | Exchange-rate, convert, company-check, number-words |
+| test_translator_files.py | 5 | Providers, TM, glossary, file upload |
+| test_ai_docs.py | 6 | Providers, config, summarize, classify, token-usage |
+| **TOTAL** | **68** | **13 module** |
+
+### Functionalitati Noi (test manual recomandat)
+
+| Functie | Test Web (PC) | Test Telefon (Android) | Status |
+|---------|--------------|----------------------|--------|
+| **26A: PyMuPDF upgrade** | Upload PDF in translator/converter → functioneaza normal | Acelasi test pe Android | Testat local OK |
+| **26B: Cold start 5x** | START_Roland.bat → observa viteza pornire (~6s vs ~33s) | N/A (server-side) | Testat local OK |
+| **26B: BNR/ANAF cache** | Dashboard → Exchange Rate card se incarca rapid. Company Check → al doilea search e instant | Acelasi test | Testat local OK |
+| **26C: N+1 fix automations** | Automations → Tasks tab → lista se incarca rapid | Acelasi test | Testat local OK |
+| **26D: AI anti-hallucination** | AI Chat → intreaba ceva → raspunsurile contin mai putine inventii | Acelasi test | Testat local OK |
+| **26F: Module refactorizate** | Invoice, AI, Reports — toate functioneaza identic ca inainte | Acelasi test | Testat local OK |
+| **26G: DB indexes** | Toate paginile cu date din DB se incarca la fel sau mai rapid | Acelasi test | Testat local OK |
+
+---
+
 ## Contoare Testare
 
-| Fază | Total funcții | Testat Local | Testat Android | Netestat |
+| Faza | Total functii | Testat Local | Testat Android | Netestat |
 |------|--------------|-------------|----------------|----------|
 | Wave 0 | 5 | 5 | 0 | 0 |
 | Wave 1 | 3 | 1 | 2 | 1 |
@@ -458,4 +497,11 @@
 | Faza 14 | 5 | 5 | 0 | 5 |
 | Faza 15A | 9 | 8 | 0 | 1 |
 | Faza 15B | 12 | 0 | 0 | 12 |
-| **TOTAL** | **46** | **23** | **3** | **26** |
+| Faza F | 10 | 10 | 0 | 0 |
+| Faza 26A-G | 7 | 7 | 0 | 0 |
+| **TOTAL** | **63** | **40** | **3** | **26** |
+
+### Teste Automatizate (pytest)
+| Suita | Nr. teste | Status |
+|-------|-----------|--------|
+| Backend pytest | 68 | ALL PASSED (2026-03-21) |

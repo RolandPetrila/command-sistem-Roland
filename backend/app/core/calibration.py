@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from scipy.optimize import minimize
+# scipy — lazy imported inside calibrate() to cut cold-start time
 
 from app.core.analyzer import extract_features, get_feature_vector
 from app.core.pricing.base_rate import calculate_base_rate_price
@@ -160,6 +160,8 @@ def run_calibration(
     ]
 
     # 3. Optimizare
+    from scipy.optimize import minimize
+
     logger.info("Rulare optimizare...")
     result = minimize(
         _objective_function,

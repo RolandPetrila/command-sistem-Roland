@@ -341,6 +341,9 @@ async def get_translation_chain() -> list[TranslationProvider]:
     return providers
 
 
+_VALID_LANGS = {"ro", "en"}
+
+
 async def translate_with_chain(
     text: str, source_lang: str, target_lang: str, preferred_provider: str | None = None
 ) -> dict:
@@ -350,6 +353,11 @@ async def translate_with_chain(
     Returns: {"translated_text": str, "provider": str}
     Raises RuntimeError if all providers fail.
     """
+    if target_lang.lower() not in _VALID_LANGS:
+        raise ValueError(f"Target language '{target_lang}' not in allowed list: {_VALID_LANGS}")
+    if source_lang.lower() not in _VALID_LANGS:
+        raise ValueError(f"Source language '{source_lang}' not in allowed list: {_VALID_LANGS}")
+
     providers = await get_translation_chain()
 
     if not providers:

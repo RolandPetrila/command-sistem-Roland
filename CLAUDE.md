@@ -51,6 +51,7 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 | Faza 25D Speed Test | DONE | Network speed indicator in header: Mbps + latency, auto-refresh 60s, click remeasure (2026-03-21) |
 | Faza 25E Testare | DONE | pytest + 18 teste (health, translate, AI, invoice CRUD, ITP) — toate PASSED (2026-03-21) |
 | Faza F Cross-Module | DONE | Voice input, prompt templates, serii facturi, scadente, programari ITP, notificari, preview docs, calibrare interactiva, oferte PDF, glosar per client (2026-03-21) |
+| Faza 26A-G Deep Research | DONE | Security (CVE fix), Performance (5x cold start), Code Quality (N+1, SQL param), AI Prompts (anti-hallucination), Testing (68 tests), Refactorizare (3 fisiere mari split), Hardening (DB indexes, async I/O) (2026-03-21) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`
@@ -106,7 +107,7 @@ cd backend && set PYTHONIOENCODING=utf-8 && python calibrate.py --verbose
 - **OCR Providers**: Tesseract + EasyOCR local → OCR.space cloud
 - **Notification Providers**: Web Push VAPID → Telegram Bot → ntfy.sh → Email digest
 - **Modules** (13+): calculator, ai, translator, invoice, itp, quick_tools, quick_tools_extra, converter, filemanager, vault, automations, integrations, reports
-- **DB Tables**: 57, **Migrations**: 15
+- **DB Tables**: 57, **Migrations**: 16, **Tests**: 68 (pytest)
 - **Business APIs**: BNR curs valutar (XML, free), ANAF Verificare CUI (REST, free)
 
 ## Key Files

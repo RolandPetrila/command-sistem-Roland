@@ -4,6 +4,7 @@ Rute pentru calcularea prețului de traducere.
 POST /api/calculate — analizează document, calculează preț, validează, salvează.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -252,7 +253,8 @@ async def validate_price_endpoint(request: ValidatePriceRequest):
             features = {}
         original_estimate = calc["market_price"]
 
-    result = sl_add_validated_price(
+    result = await asyncio.to_thread(
+        sl_add_validated_price,
         filename=upload["filename"],
         features=features,
         confirmed_price=request.validated_price,
@@ -338,18 +340,26 @@ def _load_reference_data() -> list[dict[str, Any]]:
         return []
 
 
+_calibration_cache: dict = {"data": None, "mtime": 0.0}
+
+
 def _load_calibration_data() -> dict[str, Any] | None:
-    """Încarcă datele de calibrare din fișierul JSON, dacă există."""
+    """Încarcă datele de calibrare din fișierul JSON, dacă există. Cached until file changes."""
     cal_file = settings.calibration_file
-    if cal_file.exists():
-        try:
-            with open(cal_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # Returnează secțiunea calibration dacă există
-            return data.get("calibration", data)
-        except (json.JSONDecodeError, OSError):
-            return None
-    return None
+    if not cal_file.exists():
+        return None
+    try:
+        current_mtime = cal_file.stat().st_mtime
+        if _calibration_cache["data"] is not None and current_mtime == _calibration_cache["mtime"]:
+            return _calibration_cache["data"]
+        with open(cal_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        result = data.get("calibration", data)
+        _calibration_cache["data"] = result
+        _calibration_cache["mtime"] = current_mtime
+        return result
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 async def _get_invoice_percent() -> float:

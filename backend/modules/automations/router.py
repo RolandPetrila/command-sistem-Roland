@@ -174,25 +174,47 @@ async def _run_action(action_type: str, action_config: dict | None) -> str:
 async def list_tasks():
     """List all scheduled tasks with their last run info."""
     async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM scheduled_tasks ORDER BY created_at DESC"
-        )
-        tasks = [_row_dict(r) for r in await cursor.fetchall()]
-
-        # Attach last run info to each task
-        for task in tasks:
-            cur2 = await db.execute(
-                "SELECT * FROM task_runs WHERE task_id = ? ORDER BY started_at DESC LIMIT 1",
-                (task["id"],),
-            )
-            last_run_row = await cur2.fetchone()
-            task["last_run_info"] = _row_dict(last_run_row) if last_run_row else None
-            # Parse action_config from JSON string
-            if task.get("action_config"):
+        cursor = await db.execute("""
+            SELECT t.*,
+                   lr.id as lr_id, lr.started_at as lr_started_at,
+                   lr.finished_at as lr_finished_at, lr.status as lr_status,
+                   lr.output as lr_output, lr.error as lr_error
+            FROM scheduled_tasks t
+            LEFT JOIN (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY started_at DESC) as rn
+                FROM task_runs
+            ) lr ON lr.task_id = t.id AND lr.rn = 1
+            ORDER BY t.created_at DESC
+        """)
+        rows = await cursor.fetchall()
+        tasks = []
+        for r in rows:
+            rd = _row_dict(r)
+            last_run = None
+            if rd.get("lr_id"):
+                last_run = {
+                    "id": rd.pop("lr_id"),
+                    "started_at": rd.pop("lr_started_at"),
+                    "finished_at": rd.pop("lr_finished_at"),
+                    "status": rd.pop("lr_status"),
+                    "output": rd.pop("lr_output"),
+                    "error": rd.pop("lr_error"),
+                }
+            else:
+                rd.pop("lr_id", None)
+                rd.pop("lr_started_at", None)
+                rd.pop("lr_finished_at", None)
+                rd.pop("lr_status", None)
+                rd.pop("lr_output", None)
+                rd.pop("lr_error", None)
+            rd.pop("rn", None)
+            rd["last_run_info"] = last_run
+            if rd.get("action_config"):
                 try:
-                    task["action_config"] = json.loads(task["action_config"])
+                    rd["action_config"] = json.loads(rd["action_config"])
                 except (json.JSONDecodeError, TypeError):
                     pass
+            tasks.append(rd)
 
         return tasks
 

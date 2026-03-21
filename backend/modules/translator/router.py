@@ -29,11 +29,10 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
-import fitz  # PyMuPDF
-from docx import Document as DocxDocument
+# fitz, docx — lazy imported inside functions to cut cold-start time
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
@@ -71,7 +70,7 @@ router = APIRouter(prefix="/api/translator", tags=["Traducator"])
 # ---------------------------------------------------------------------------
 
 class TranslateTextRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=50000)
     source_lang: str = "en"
     target_lang: str = "ro"
     provider: str = "auto"
@@ -118,6 +117,9 @@ class GlossaryUpdateRequest(BaseModel):
 
 def _extract_text_from_file(file_path: str) -> str:
     """Extract text from PDF, DOCX, or text file."""
+    import fitz  # PyMuPDF
+    from docx import Document as DocxDocument
+
     p = file_path.lower()
     if p.endswith(".pdf"):
         doc = fitz.open(file_path)
@@ -261,6 +263,7 @@ async def translate_file_endpoint(
 
         if ext == ".docx":
             # Translate DOCX paragraphs in-place
+            from docx import Document as DocxDocument
             doc = DocxDocument(tmp_path)
 
             # Helper: translate a single text through TM/glossary/chain
@@ -341,6 +344,8 @@ async def translate_file_endpoint(
 
         elif ext == ".pdf":
             # PDF: extract text, translate in batches, return as DOCX
+            import fitz  # PyMuPDF
+            from docx import Document as DocxDocument
             BATCH_SIZE = 10  # paragraphs per API call
 
             pdf_doc = fitz.open(tmp_path)

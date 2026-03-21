@@ -11,10 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import fitz  # PyMuPDF
-import pdfplumber
-from docx import Document as DocxDocument
-from docx.opc.constants import RELATIONSHIP_TYPE as RT
+# fitz, pdfplumber, docx — lazy imported inside functions to cut cold-start time
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +48,9 @@ def extract_features(file_path: str | Path) -> dict[str, Any]:
 
 def _extract_pdf_features(path: Path) -> dict[str, Any]:
     """Extrage caracteristici din PDF folosind PyMuPDF + pdfplumber."""
+    import fitz  # PyMuPDF
+    import pdfplumber
+
     features: dict[str, Any] = {}
 
     # --- PyMuPDF: text, imagini, pagini ---
@@ -178,6 +178,8 @@ def _extract_pdf_features(path: Path) -> dict[str, Any]:
 
 def _extract_docx_features(path: Path) -> dict[str, Any]:
     """Extrage caracteristici din DOCX folosind python-docx."""
+    from docx import Document as DocxDocument
+
     doc = DocxDocument(str(path))
     features: dict[str, Any] = {}
 

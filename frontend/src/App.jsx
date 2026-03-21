@@ -3,7 +3,7 @@ import { Routes, Route, useLocation } from 'react-router-dom';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
 import Footer from './components/Layout/Footer';
-import DashboardPage from './pages/DashboardPage';
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import CommandPalette from './components/shared/CommandPalette';
 import FloatingOCR from './components/shared/FloatingOCR';
