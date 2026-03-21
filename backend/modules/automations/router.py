@@ -808,3 +808,81 @@ async def health_check():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "components": report,
     }
+
+
+# ═══════════════════════════════════════════
+# F6: Unified Notifications
+# ═══════════════════════════════════════════
+
+class NotificationCreate(BaseModel):
+    title: str
+    message: str
+    type: str = "info"  # info, warning, error, success
+    source: str | None = None
+    link: str | None = None
+
+
+@router.get("/notifications")
+async def list_notifications(
+    unread_only: bool = False,
+    limit: int = 50,
+):
+    """List notifications, optionally only unread."""
+    async with get_db() as db:
+        if unread_only:
+            cursor = await db.execute(
+                "SELECT * FROM notifications WHERE is_read = 0 ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        # Count unread
+        cursor2 = await db.execute("SELECT COUNT(*) as cnt FROM notifications WHERE is_read = 0")
+        unread_count = (await cursor2.fetchone())["cnt"]
+    return {"items": [dict(r) for r in rows], "unread_count": unread_count}
+
+
+@router.post("/notifications", status_code=201)
+async def create_notification(data: NotificationCreate):
+    """Create a new notification."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO notifications (title, message, type, source, link) VALUES (?, ?, ?, ?, ?)",
+            (data.title, data.message, data.type, data.source, data.link),
+        )
+        await db.commit()
+        notif_id = cursor.lastrowid
+    return {"id": notif_id, "message": "Notificare creata."}
+
+
+@router.put("/notifications/{notif_id}/read")
+async def mark_notification_read(notif_id: int):
+    """Mark a notification as read."""
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE notifications SET is_read = 1 WHERE id = ?", (notif_id,)
+        )
+        await db.commit()
+    return {"message": "Notificare marcata ca citita."}
+
+
+@router.put("/notifications/read-all")
+async def mark_all_notifications_read():
+    """Mark all notifications as read."""
+    async with get_db() as db:
+        await db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+        await db.commit()
+    return {"message": "Toate notificarile marcate ca citite."}
+
+
+@router.delete("/notifications/{notif_id}")
+async def delete_notification(notif_id: int):
+    """Delete a notification."""
+    async with get_db() as db:
+        await db.execute("DELETE FROM notifications WHERE id = ?", (notif_id,))
+        await db.commit()
+    return {"message": "Notificare stearsa."}

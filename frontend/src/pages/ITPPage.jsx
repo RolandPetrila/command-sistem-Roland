@@ -12,6 +12,7 @@ import apiClient from '../api/client';
 
 const TABS = [
   { id: 'inspections', label: 'Inspectii', icon: Car },
+  { id: 'appointments', label: 'Programari', icon: Calendar },
   { id: 'stats', label: 'Statistici', icon: BarChart3 },
   { id: 'expiring', label: 'Expirari', icon: AlertTriangle },
   { id: 'import-export', label: 'Import/Export', icon: FileSpreadsheet },
@@ -510,6 +511,111 @@ function ImportExportTab() {
   );
 }
 
+// ===== F5: PROGRAMARI =====
+function AppointmentsTab() {
+  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({
+    plate_number: '', owner_name: '', owner_phone: '',
+    scheduled_date: new Date().toISOString().split('T')[0],
+    scheduled_time: '08:00', duration_min: 30, notes: '',
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await apiClient.get('/api/itp/appointments');
+      setAppointments(data || []);
+    } catch { setAppointments([]); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    try {
+      if (editing && editing !== 'new') {
+        await apiClient.put(`/api/itp/appointments/${editing}`, form);
+      } else {
+        await apiClient.post('/api/itp/appointments', form);
+      }
+      setEditing(null);
+      setForm({ plate_number: '', owner_name: '', owner_phone: '', scheduled_date: new Date().toISOString().split('T')[0], scheduled_time: '08:00', duration_min: 30, notes: '' });
+      load();
+    } catch { /* toast handles it */ }
+  };
+
+  const remove = async (id) => {
+    try { await apiClient.delete(`/api/itp/appointments/${id}`); load(); } catch { /* toast handles it */ }
+  };
+
+  const updateStatus = async (id, status) => {
+    try { await apiClient.put(`/api/itp/appointments/${id}`, { status }); load(); } catch { /* toast handles it */ }
+  };
+
+  const statusColors = { scheduled: 'text-blue-400', confirmed: 'text-green-400', completed: 'text-gray-400', cancelled: 'text-red-400', no_show: 'text-yellow-400' };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-base font-medium">Programari ITP</h3>
+        <button onClick={() => { setEditing('new'); setForm({ plate_number: '', owner_name: '', owner_phone: '', scheduled_date: new Date().toISOString().split('T')[0], scheduled_time: '08:00', duration_min: 30, notes: '' }); }}
+          className="flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm">
+          <Plus size={14} /> Programare noua
+        </button>
+      </div>
+
+      {editing && (
+        <div className="bg-gray-900 rounded-xl p-4 space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <input value={form.plate_number} onChange={e => setForm(f => ({ ...f, plate_number: e.target.value }))} placeholder="Nr. inmatriculare *" className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            <input value={form.owner_name} onChange={e => setForm(f => ({ ...f, owner_name: e.target.value }))} placeholder="Proprietar" className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            <input value={form.owner_phone} onChange={e => setForm(f => ({ ...f, owner_phone: e.target.value }))} placeholder="Telefon" className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            <input type="date" value={form.scheduled_date} onChange={e => setForm(f => ({ ...f, scheduled_date: e.target.value }))} className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            <input type="time" value={form.scheduled_time} onChange={e => setForm(f => ({ ...f, scheduled_time: e.target.value }))} className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            <input type="number" value={form.duration_min} onChange={e => setForm(f => ({ ...f, duration_min: parseInt(e.target.value) || 30 }))} placeholder="Durata (min)" className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note" className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm col-span-2" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={save} className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm flex items-center gap-1"><Save size={14} /> Salveaza</button>
+            <button onClick={() => setEditing(null)} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"><X size={14} /></button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-8"><Loader2 className="animate-spin text-gray-500" size={24} /></div>
+      ) : appointments.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">Nicio programare</div>
+      ) : (
+        <div className="space-y-2">
+          {appointments.map(a => (
+            <div key={a.id} className="bg-gray-900 rounded-lg p-3 flex items-center gap-3">
+              <div className="flex-1">
+                <div className="font-medium text-sm">{a.plate_number} {a.owner_name && `— ${a.owner_name}`}</div>
+                <div className="text-xs text-gray-400">{a.scheduled_date} la {a.scheduled_time} ({a.duration_min} min)</div>
+                {a.notes && <div className="text-xs text-gray-500 mt-0.5">{a.notes}</div>}
+              </div>
+              <span className={`text-xs font-medium ${statusColors[a.status] || 'text-gray-400'}`}>{a.status}</span>
+              <div className="flex gap-1">
+                {a.status === 'scheduled' && (
+                  <button onClick={() => updateStatus(a.id, 'confirmed')} className="p-1.5 hover:bg-green-700/30 rounded text-green-400" title="Confirma">
+                    <Car size={14} />
+                  </button>
+                )}
+                <button onClick={() => { setEditing(a.id); setForm({ plate_number: a.plate_number, owner_name: a.owner_name || '', owner_phone: a.owner_phone || '', scheduled_date: a.scheduled_date, scheduled_time: a.scheduled_time, duration_min: a.duration_min, notes: a.notes || '' }); }}
+                  className="p-1.5 hover:bg-gray-700 rounded text-gray-400"><Edit3 size={14} /></button>
+                <button onClick={() => remove(a.id)} className="p-1.5 hover:bg-red-700/30 rounded text-red-400"><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== MAIN PAGE =====
 export default function ITPPage() {
   const [activeTab, setActiveTab] = useState('inspections');
@@ -517,6 +623,7 @@ export default function ITPPage() {
   const renderTab = () => {
     switch (activeTab) {
       case 'inspections': return <InspectionsTab />;
+      case 'appointments': return <AppointmentsTab />;
       case 'stats': return <StatsTab />;
       case 'expiring': return <ExpiringTab />;
       case 'import-export': return <ImportExportTab />;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Send, Paperclip, Bot, User, Loader2, X, Settings2, Database, ChevronDown, Download } from 'lucide-react';
+import { Plus, Trash2, Send, Paperclip, Bot, User, Loader2, X, Settings2, Database, ChevronDown, Download, Mic, MicOff, FileText } from 'lucide-react';
 import api from '../api/client';
 import TokenIndicator from '../components/shared/TokenIndicator';
 
@@ -19,6 +19,12 @@ export default function AIChatPage() {
   // New: provider selector + context mode
   const [selectedProvider, setSelectedProvider] = useState('auto');
   const [contextMode, setContextMode] = useState(true);
+  // F1: Voice Input
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef(null);
+  // F2: Prompt Templates
+  const [templates, setTemplates] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
@@ -27,10 +33,14 @@ export default function AIChatPage() {
     loadSessions();
     loadProviders();
     loadPreferredProvider();
+    loadTemplates();
     const interval = setInterval(() => {
       if (!backendOk) loadProviders();
     }, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (recognitionRef.current) recognitionRef.current.stop();
+    };
   }, [backendOk]);
 
   useEffect(() => {
@@ -110,6 +120,61 @@ export default function AIChatPage() {
     setSessions([]);
     setActiveSession(null);
     setMessages([]);
+  };
+
+  // F2: Load templates
+  const loadTemplates = async () => {
+    try {
+      const { data } = await api.get('/api/ai/templates');
+      setTemplates(data);
+    } catch { /* toast handles it */ }
+  };
+
+  const applyTemplate = (tpl) => {
+    let text = tpl.prompt_text;
+    // Replace variables with placeholders
+    if (tpl.variables && tpl.variables.length > 0) {
+      tpl.variables.forEach(v => {
+        text = text.replace(`{${v}}`, `[${v}]`);
+      });
+    }
+    setInput(text);
+    setShowTemplates(false);
+    inputRef.current?.focus();
+    // Increment usage
+    api.post(`/api/ai/templates/${tpl.id}/use`).catch(() => {});
+  };
+
+  // F1: Voice Input
+  const toggleVoice = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      window.dispatchEvent(new CustomEvent('global-toast', {
+        detail: { message: 'Web Speech API nu este suportata in acest browser', type: 'error', duration: 4000, id: Date.now() },
+      }));
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'ro-RO';
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.onresult = (event) => {
+      let transcript = '';
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setInput(transcript);
+    };
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
   };
 
   const exportConversation = () => {
@@ -423,19 +488,47 @@ export default function AIChatPage() {
           </div>
         )}
 
+        {/* Template selector */}
+        {showTemplates && templates.length > 0 && (
+          <div className="px-4 pb-2 border-t border-gray-800 pt-2">
+            <div className="bg-gray-900 rounded-lg border border-gray-700 max-h-48 overflow-y-auto">
+              {templates.map(tpl => (
+                <button key={tpl.id} onClick={() => applyTemplate(tpl)}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-800 border-b border-gray-800 last:border-b-0">
+                  <div className="text-sm font-medium">{tpl.name}</div>
+                  {tpl.description && <div className="text-xs text-gray-400">{tpl.description}</div>}
+                  {tpl.variables?.length > 0 && (
+                    <div className="text-xs text-blue-400 mt-0.5">Variabile: {tpl.variables.join(', ')}</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Input area */}
         <div className="p-4 border-t border-gray-800">
           <div className="flex gap-2">
             <button onClick={() => fileInputRef.current?.click()}
-              className="p-3 bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors" title="Atașează document">
+              className="p-3 bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors" title="Ataseaza document">
               <Paperclip size={18} />
             </button>
             <input type="file" ref={fileInputRef} onChange={handleFileAttach} className="hidden"
               accept=".pdf,.docx,.txt,.md,.csv,.json" />
+            <button onClick={() => setShowTemplates(!showTemplates)}
+              className={`p-3 rounded-xl transition-colors ${showTemplates ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700'}`}
+              title="Sabloane prompt">
+              <FileText size={18} />
+            </button>
+            <button onClick={toggleVoice}
+              className={`p-3 rounded-xl transition-colors ${isListening ? 'bg-red-600 animate-pulse text-white' : 'bg-gray-800 hover:bg-gray-700'}`}
+              title={isListening ? 'Opreste dictarea' : 'Dicteaza mesaj'}>
+              {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+            </button>
             <input ref={inputRef} type="text" value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-              placeholder={!backendOk ? "Backend deconectat..." : anyProviderConfigured ? "Scrie un mesaj..." : "Configurează un provider AI mai întâi..."}
+              placeholder={!backendOk ? "Backend deconectat..." : anyProviderConfigured ? "Scrie un mesaj sau dicteaza..." : "Configureaza un provider AI mai intai..."}
               disabled={!anyProviderConfigured || !backendOk}
               className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50" />
             <button onClick={sendMessage} disabled={!input.trim() || loading || !anyProviderConfigured || !backendOk}

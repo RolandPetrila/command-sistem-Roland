@@ -21,6 +21,7 @@ import {
   Copy,
   X,
   Eye,
+  Maximize2,
 } from 'lucide-react';
 
 const API = `${window.location.origin}/api/fm`;
@@ -81,6 +82,8 @@ export default function FileBrowserPage() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [dupeResults, setDupeResults] = useState(null);
   const [dupeLoading, setDupeLoading] = useState(false);
+  // F7: Fullscreen preview
+  const [fullPreview, setFullPreview] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -323,10 +326,18 @@ export default function FileBrowserPage() {
           <div className="w-full lg:w-96 card flex flex-col overflow-hidden shrink-0">
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
               <span className="text-sm font-medium text-slate-200 truncate">{selected.name}</span>
-              <button onClick={() => { setSelected(null); setPreview(null); }}
-                className="p-1 text-slate-500 hover:text-white">
-                <X size={14} />
-              </button>
+              <div className="flex items-center gap-1">
+                {preview && preview.type !== 'unsupported' && (
+                  <button onClick={() => setFullPreview(true)}
+                    className="p-1 text-slate-500 hover:text-white" title="Vizualizare completa">
+                    <Maximize2 size={14} />
+                  </button>
+                )}
+                <button onClick={() => { setSelected(null); setPreview(null); }}
+                  className="p-1 text-slate-500 hover:text-white">
+                  <X size={14} />
+                </button>
+              </div>
             </div>
 
             {/* Preview content */}
@@ -376,6 +387,36 @@ export default function FileBrowserPage() {
           </div>
         )}
       </div>
+
+      {/* F7: Fullscreen Preview Modal */}
+      {fullPreview && selected && preview && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-sm" onClick={() => setFullPreview(false)}>
+          <div className="flex items-center justify-between px-6 py-3 bg-slate-900/90 border-b border-slate-700 shrink-0" onClick={e => e.stopPropagation()}>
+            <span className="text-sm font-medium text-slate-200 truncate">{selected.name}</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => handleDownload(selected)}
+                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-xs">
+                <Download size={13} /> Descarca
+              </button>
+              <button onClick={() => setFullPreview(false)}
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-auto flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
+            {preview.type === 'image' ? (
+              <img src={preview.url} alt={selected.name} className="max-w-full max-h-full object-contain rounded-lg" />
+            ) : preview.type === 'pdf' ? (
+              <iframe src={preview.url} className="w-full h-full rounded-lg border border-slate-700 bg-white" title={selected.name} />
+            ) : preview.type === 'text' ? (
+              <pre className="text-sm text-slate-300 font-mono bg-slate-800/80 rounded-lg p-6 overflow-auto whitespace-pre-wrap break-words w-full max-w-4xl max-h-full">
+                {preview.content}
+              </pre>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (

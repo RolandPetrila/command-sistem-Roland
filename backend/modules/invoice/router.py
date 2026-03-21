@@ -96,10 +96,19 @@ class InvoiceItem(BaseModel):
 class InvoiceCreate(BaseModel):
     client_id: int
     items: list[InvoiceItem]
+    series_prefix: Optional[str] = None
     date: str = Field(default_factory=lambda: date.today().isoformat())
     due_date: Optional[str] = None
     notes: Optional[str] = None
     vat_percent: float = 0.0
+
+
+class OfferPdfRequest(BaseModel):
+    client_name: str
+    client_address: Optional[str] = None
+    items: list[InvoiceItem]
+    notes: Optional[str] = None
+    validity_days: int = 30
 
 
 class InvoiceUpdate(BaseModel):
@@ -119,6 +128,18 @@ class GenerateFromCalcRequest(BaseModel):
     calculation_id: int
 
 
+class InvoiceSeriesCreate(BaseModel):
+    prefix: str
+    name: str
+    description: str | None = None
+
+
+class InvoiceSeriesUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    active: bool | None = None
+
+
 class SendEmailRequest(BaseModel):
     to_email: str
     subject: Optional[str] = None
@@ -135,11 +156,18 @@ class TemplateGenerateRequest(BaseModel):
 # Helper functions
 # ═══════════════════════════════════════════
 
-async def _next_invoice_number() -> str:
-    """Generate next sequential invoice number: RCC-YYYY-NNN."""
+async def _next_invoice_number(series_prefix: str | None = None) -> str:
+    """Generate next sequential invoice number using configurable series."""
     year = date.today().year
-    prefix = f"RCC-{year}-"
     async with get_db() as db:
+        if not series_prefix:
+            # Get default series prefix
+            cursor = await db.execute(
+                "SELECT prefix FROM invoice_series WHERE is_default = 1 AND active = 1 LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            series_prefix = row["prefix"] if row else "RCC"
+        prefix = f"{series_prefix}-{year}-"
         cursor = await db.execute(
             "SELECT invoice_number FROM invoices WHERE invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1",
             (f"{prefix}%",),
@@ -335,7 +363,7 @@ async def create_invoice(data: InvoiceCreate):
         item.total = round(item.quantity * item.unit_price, 2)
 
     subtotal, vat_amount, total = _calculate_totals(data.items, data.vat_percent)
-    invoice_number = await _next_invoice_number()
+    invoice_number = await _next_invoice_number(data.series_prefix)
     items_json = _items_to_json(data.items)
 
     async with get_db() as db:
@@ -921,6 +949,255 @@ Text factura:
 
 
 # ═══════════════════════════════════════════
+# F3: Invoice Series CRUD (MUST be before /{invoice_id})
+# ═══════════════════════════════════════════
+
+@router.get("/series")
+async def list_series_early():
+    """Lista toate seriile de facturi."""
+    async with get_db() as db:
+        cursor = await db.execute("SELECT * FROM invoice_series ORDER BY is_default DESC, name ASC")
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/series", status_code=201)
+async def create_series_early(data: InvoiceSeriesCreate):
+    """Creare serie noua de facturi."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO invoice_series (prefix, name, description) VALUES (?, ?, ?)",
+            (data.prefix.upper().strip(), data.name, data.description),
+        )
+        await db.commit()
+        series_id = cursor.lastrowid
+    await log_activity(
+        action="invoice.series_create",
+        summary=f"Serie facturi creata: {data.prefix} — {data.name}",
+    )
+    return {"id": series_id, "message": f"Serie '{data.prefix}' creata cu succes."}
+
+
+@router.put("/series/{series_id}")
+async def update_series_early(series_id: int, data: InvoiceSeriesUpdate):
+    """Actualizare serie facturi."""
+    updates = data.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "Niciun camp de actualizat")
+    if "active" in updates:
+        updates["active"] = 1 if updates["active"] else 0
+    fields = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [series_id]
+    async with get_db() as db:
+        cursor = await db.execute(
+            f"UPDATE invoice_series SET {fields} WHERE id = ?", values
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Serie negasita")
+    return {"message": "Serie actualizata cu succes."}
+
+
+@router.put("/series/{series_id}/default")
+async def set_default_series_early(series_id: int):
+    """Seteaza o serie ca implicita."""
+    async with get_db() as db:
+        await db.execute("UPDATE invoice_series SET is_default = 0")
+        cursor = await db.execute(
+            "UPDATE invoice_series SET is_default = 1 WHERE id = ?", (series_id,)
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Serie negasita")
+    return {"message": "Serie setata ca implicita."}
+
+
+@router.delete("/series/{series_id}")
+async def delete_series_early(series_id: int):
+    """Sterge o serie (doar daca nu e implicita si nu are facturi)."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT is_default, prefix FROM invoice_series WHERE id = ?", (series_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Serie negasita")
+        if row["is_default"]:
+            raise HTTPException(409, "Nu se poate sterge seria implicita")
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM invoices WHERE series = ?", (row["prefix"],)
+        )
+        cnt_row = await cursor.fetchone()
+        if cnt_row and cnt_row["cnt"] > 0:
+            raise HTTPException(409, f"Seria are {cnt_row['cnt']} facturi asociate")
+        await db.execute("DELETE FROM invoice_series WHERE id = ?", (series_id,))
+        await db.commit()
+    return {"message": "Serie stearsa cu succes."}
+
+
+# ═══════════════════════════════════════════
+# F4: Overdue invoices (MUST be before /{invoice_id})
+# ═══════════════════════════════════════════
+
+@router.get("/overdue")
+async def list_overdue_early():
+    """Lista facturi cu scadenta depasita (neplatite)."""
+    today = date.today().isoformat()
+    async with get_db() as db:
+        cursor = await db.execute(
+            """SELECT i.*, c.name as client_name, c.email as client_email, c.phone as client_phone
+               FROM invoices i
+               LEFT JOIN clients c ON i.client_id = c.id
+               WHERE i.due_date IS NOT NULL AND i.due_date < ? AND i.status NOT IN ('paid', 'cancelled')
+               ORDER BY i.due_date ASC""",
+            (today,),
+        )
+        rows = await cursor.fetchall()
+    result = []
+    today_d = date.today()
+    for row in rows:
+        d = _row_to_dict(row)
+        try:
+            due = date.fromisoformat(d["due_date"])
+            d["days_overdue"] = (today_d - due).days
+        except (ValueError, TypeError):
+            d["days_overdue"] = 0
+        result.append(d)
+    return result
+
+
+# ═══════════════════════════════════════════
+# F9: Offer/Quote PDF (MUST be before /{invoice_id})
+# ═══════════════════════════════════════════
+
+@router.post("/offer-pdf")
+async def generate_offer_pdf_early(data: OfferPdfRequest):
+    """Generate an offer/quote PDF for CIP Inspection SRL."""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.pdfgen import canvas as pdf_canvas
+    except ImportError:
+        return await _generate_offer_fitz(data)
+
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(2 * cm, height - 2 * cm, "OFERTA DE PRET")
+    c.setFont("Helvetica", 10)
+    c.drawString(2 * cm, height - 2.8 * cm, "CIP Inspection SRL | CUI 43978110")
+    c.drawString(2 * cm, height - 3.4 * cm, f"Data: {date.today().strftime('%d.%m.%Y')}")
+    c.drawString(2 * cm, height - 3.9 * cm, f"Valabilitate: {data.validity_days} zile")
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(2 * cm, height - 5 * cm, f"Catre: {data.client_name}")
+    if data.client_address:
+        c.setFont("Helvetica", 10)
+        c.drawString(2 * cm, height - 5.5 * cm, data.client_address)
+
+    y = height - 7 * cm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(2 * cm, y, "Nr.")
+    c.drawString(3 * cm, y, "Descriere")
+    c.drawString(12 * cm, y, "Cant.")
+    c.drawString(14 * cm, y, "Pret unit.")
+    c.drawString(17 * cm, y, "Total")
+    y -= 0.6 * cm
+
+    c.setFont("Helvetica", 10)
+    subtotal = 0
+    for i, item in enumerate(data.items, 1):
+        total_item = round(item.quantity * item.unit_price, 2)
+        subtotal += total_item
+        c.drawString(2 * cm, y, str(i))
+        c.drawString(3 * cm, y, item.description[:50])
+        c.drawString(12 * cm, y, str(item.quantity))
+        c.drawString(14 * cm, y, f"{item.unit_price:.2f}")
+        c.drawString(17 * cm, y, f"{total_item:.2f}")
+        y -= 0.5 * cm
+
+    y -= 0.5 * cm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(14 * cm, y, f"TOTAL: {subtotal:.2f} RON")
+
+    if data.notes:
+        y -= 1.5 * cm
+        c.setFont("Helvetica", 9)
+        c.drawString(2 * cm, y, f"Observatii: {data.notes}")
+
+    c.save()
+    buf.seek(0)
+
+    await log_activity(
+        action="invoice.offer_pdf",
+        summary=f"Oferta PDF generata: {data.client_name} — {subtotal:.2f} RON",
+        details={"client": data.client_name, "total": subtotal, "items": len(data.items)},
+    )
+
+    filename = f"oferta_{data.client_name.replace(' ', '_')}_{date.today().isoformat()}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def _generate_offer_fitz(data: OfferPdfRequest):
+    """Fallback offer PDF using PyMuPDF (fitz) if reportlab not available."""
+    import fitz as fitz_mod
+
+    doc = fitz_mod.open()
+    page = doc.new_page()
+
+    y = 50
+    page.insert_text((50, y), "OFERTA DE PRET", fontsize=18, fontname="helv")
+    y += 25
+    page.insert_text((50, y), "CIP Inspection SRL | CUI 43978110", fontsize=10)
+    y += 15
+    page.insert_text((50, y), f"Data: {date.today().strftime('%d.%m.%Y')} | Valabilitate: {data.validity_days} zile", fontsize=10)
+    y += 25
+    page.insert_text((50, y), f"Catre: {data.client_name}", fontsize=12, fontname="helv")
+    if data.client_address:
+        y += 15
+        page.insert_text((50, y), data.client_address, fontsize=10)
+    y += 30
+
+    subtotal = 0
+    for i, item in enumerate(data.items, 1):
+        total_item = round(item.quantity * item.unit_price, 2)
+        subtotal += total_item
+        line = f"{i}. {item.description} — {item.quantity} x {item.unit_price:.2f} = {total_item:.2f} RON"
+        page.insert_text((50, y), line, fontsize=10)
+        y += 15
+
+    y += 10
+    page.insert_text((50, y), f"TOTAL: {subtotal:.2f} RON", fontsize=13, fontname="helv")
+
+    if data.notes:
+        y += 25
+        page.insert_text((50, y), f"Observatii: {data.notes}", fontsize=9)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    doc.close()
+    buf.seek(0)
+
+    await log_activity(
+        action="invoice.offer_pdf",
+        summary=f"Oferta PDF (fitz): {data.client_name} — {subtotal:.2f} RON",
+    )
+
+    filename = f"oferta_{data.client_name.replace(' ', '_')}_{date.today().isoformat()}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ═══════════════════════════════════════════
 # Invoice detail endpoints (parametric /{invoice_id})
 # ═══════════════════════════════════════════
 
@@ -1141,6 +1418,26 @@ async def change_status(invoice_id: int, data: StatusUpdate):
         },
     )
     return {"message": f"Status actualizat: {current} -> {new_status}."}
+
+
+@router.put("/{invoice_id}/payment")
+async def mark_payment(invoice_id: int):
+    """Marcheaza o factura ca platita cu data curenta."""
+    today = date.today().isoformat()
+    async with get_db() as db:
+        cursor = await db.execute(
+            "UPDATE invoices SET status = 'paid', payment_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (today, invoice_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Factura negasita")
+    await log_activity(
+        action="invoice.payment",
+        summary=f"Factura #{invoice_id} marcata ca platita",
+        details={"invoice_id": invoice_id, "payment_date": today},
+    )
+    return {"message": "Factura marcata ca platita.", "payment_date": today}
 
 
 # ═══════════════════════════════════════════
@@ -1749,3 +2046,5 @@ async def verify_cui(cui: str):
     except httpx.HTTPError as exc:
         logger.error("Eroare ANAF API: %s", exc)
         raise HTTPException(502, f"Nu s-a putut verifica CUI la ANAF: {exc}")
+
+

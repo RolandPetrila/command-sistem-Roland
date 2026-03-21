@@ -50,6 +50,7 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 | Faza 25C Fix Cerinta | DONE | Interceptor network errors, batch PDF (10x), DOCX tables translate, timeout 300s (2026-03-21) |
 | Faza 25D Speed Test | DONE | Network speed indicator in header: Mbps + latency, auto-refresh 60s, click remeasure (2026-03-21) |
 | Faza 25E Testare | DONE | pytest + 18 teste (health, translate, AI, invoice CRUD, ITP) — toate PASSED (2026-03-21) |
+| Faza F Cross-Module | DONE | Voice input, prompt templates, serii facturi, scadente, programari ITP, notificari, preview docs, calibrare interactiva, oferte PDF, glosar per client (2026-03-21) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`
@@ -105,7 +106,7 @@ cd backend && set PYTHONIOENCODING=utf-8 && python calibrate.py --verbose
 - **OCR Providers**: Tesseract + EasyOCR local → OCR.space cloud
 - **Notification Providers**: Web Push VAPID → Telegram Bot → ntfy.sh → Email digest
 - **Modules** (13+): calculator, ai, translator, invoice, itp, quick_tools, quick_tools_extra, converter, filemanager, vault, automations, integrations, reports
-- **DB Tables**: 53, **Migrations**: 14
+- **DB Tables**: 57, **Migrations**: 15
 - **Business APIs**: BNR curs valutar (XML, free), ANAF Verificare CUI (REST, free)
 
 ## Key Files

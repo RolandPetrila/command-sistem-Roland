@@ -99,6 +99,7 @@ class GlossaryAddRequest(BaseModel):
     target_lang: str = "ro"
     domain: str = "general"
     notes: str | None = None
+    client_id: int | None = None
 
 
 class GlossaryUpdateRequest(BaseModel):
@@ -108,6 +109,7 @@ class GlossaryUpdateRequest(BaseModel):
     target_lang: str | None = None
     domain: str | None = None
     notes: str | None = None
+    client_id: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -601,15 +603,17 @@ async def list_glossary(
     search: str | None = Query(None),
     source_lang: str | None = Query(None),
     target_lang: str | None = Query(None),
+    client_id: int | None = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
 ):
-    """Lista termeni glosar cu filtre optionale."""
+    """Lista termeni glosar cu filtre optionale, inclusiv per client."""
     return await get_glossary(
         domain=domain,
         search=search,
         source_lang=source_lang,
         target_lang=target_lang,
+        client_id=client_id,
         skip=skip,
         limit=limit,
     )
@@ -633,6 +637,7 @@ async def add_glossary_term(req: GlossaryAddRequest):
             target_lang=req.target_lang,
             domain=req.domain,
             notes=req.notes,
+            client_id=req.client_id,
         )
     except ValueError as e:
         raise HTTPException(409, str(e))

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Receipt, Plus, Trash2, Pencil, Download, Send, Check, X, Users, FileText, Loader2, Bot } from 'lucide-react';
+import { Receipt, Plus, Trash2, Pencil, Download, Send, Check, X, Users, FileText, Loader2, Bot, DollarSign, AlertTriangle, List } from 'lucide-react';
 import api from '../api/client';
 
 export default function InvoicePage() {
-  const [tab, setTab] = useState('invoices'); // invoices | clients | create
+  const [tab, setTab] = useState('invoices'); // invoices | clients | create | series | overdue | offer
   const [invoices, setInvoices] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -20,8 +20,15 @@ export default function InvoicePage() {
   const [editClient, setEditClient] = useState(null);
   const [clientForm, setClientForm] = useState({ name: '', cui: '', address: '', email: '', phone: '', notes: '' });
   const [showClientForm, setShowClientForm] = useState(false);
+  // F3: Series
+  const [series, setSeries] = useState([]);
+  const [newSeries, setNewSeries] = useState({ prefix: '', name: '', description: '' });
+  // F4: Overdue
+  const [overdue, setOverdue] = useState([]);
+  // F9: Offer PDF
+  const [offerForm, setOfferForm] = useState({ client_name: '', client_address: '', items: [{ description: '', quantity: 1, unit_price: 0 }], notes: '', validity_days: 30 });
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); loadSeries(); loadOverdue(); }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -152,6 +159,39 @@ export default function InvoicePage() {
     } catch { /* toast handles it */ }
   };
 
+  // F3: Series management
+  const loadSeries = async () => {
+    try { const { data } = await api.get('/api/invoice/series'); setSeries(data || []); } catch { /* toast handles it */ }
+  };
+  const createSeries = async () => {
+    if (!newSeries.prefix.trim() || !newSeries.name.trim()) return;
+    try {
+      await api.post('/api/invoice/series', newSeries);
+      setNewSeries({ prefix: '', name: '', description: '' });
+      loadSeries();
+    } catch { /* toast handles it */ }
+  };
+  const setDefault = async (id) => {
+    try { await api.put(`/api/invoice/series/${id}/default`); loadSeries(); } catch { /* toast handles it */ }
+  };
+
+  // F4: Overdue
+  const loadOverdue = async () => {
+    try { const { data } = await api.get('/api/invoice/overdue'); setOverdue(data || []); } catch { /* toast handles it */ }
+  };
+  const markPaid = async (id) => {
+    try { await api.put(`/api/invoice/${id}/payment`); loadData(); loadOverdue(); } catch { /* toast handles it */ }
+  };
+
+  // F9: Generate offer PDF
+  const generateOffer = async () => {
+    try {
+      const { data } = await api.post('/api/invoice/offer-pdf', offerForm, { responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a'); a.href = url; a.download = `oferta_${offerForm.client_name}.pdf`; a.click(); URL.revokeObjectURL(url);
+    } catch { /* toast handles it */ }
+  };
+
   const addItem = () => setItems([...items, { description: '', quantity: 1, unit_price: 0 }]);
   const removeItem = (i) => setItems(items.filter((_, idx) => idx !== i));
   const updateItem = (i, field, value) => {
@@ -172,20 +212,23 @@ export default function InvoicePage() {
   return (
     <div className="space-y-4">
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-900 rounded-xl p-1">
+      <div className="flex gap-1 bg-gray-900 rounded-xl p-1 overflow-x-auto">
         {[
           { id: 'invoices', label: 'Facturi', icon: Receipt },
-          { id: 'clients', label: 'Clienți', icon: Users },
-          { id: 'create', label: editInvoice ? 'Editează Factură' : 'Factură Nouă', icon: Plus },
+          { id: 'clients', label: 'Clienti', icon: Users },
+          { id: 'create', label: editInvoice ? 'Editeaza' : 'Factura Noua', icon: Plus },
+          { id: 'overdue', label: `Scadente${overdue.length ? ` (${overdue.length})` : ''}`, icon: AlertTriangle },
+          { id: 'series', label: 'Serii', icon: List },
+          { id: 'offer', label: 'Oferta PDF', icon: FileText },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
-            <t.icon size={16} /> {t.label}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${tab === t.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
+            <t.icon size={14} /> {t.label}
           </button>
         ))}
         <button onClick={handleAiGenerate}
           className="ml-auto flex items-center gap-1 px-3 py-2 text-xs text-purple-400 hover:bg-purple-900/20 rounded-lg transition-colors">
-          <Bot size={14} /> Generează din calcul AI
+          <Bot size={14} /> AI
         </button>
       </div>
 
@@ -362,6 +405,158 @@ export default function InvoicePage() {
             </button>
             <button onClick={() => { setTab('invoices'); resetInvoiceForm(); }}
               className="px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl text-sm">Anulează</button>
+          </div>
+        </div>
+      )}
+
+      {/* OVERDUE INVOICES (F4) */}
+      {tab === 'overdue' && (
+        <div className="space-y-2">
+          {overdue.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <AlertTriangle size={48} className="mx-auto mb-3 opacity-30" />
+              <p>Nicio factura scadenta. Totul e la zi!</p>
+            </div>
+          ) : (
+            overdue.map(inv => (
+              <div key={inv.id} className="bg-gray-900 rounded-xl p-4 flex items-center gap-4 border border-red-900/30">
+                <AlertTriangle size={18} className="text-red-400 shrink-0" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{inv.invoice_number}</span>
+                    <span className="text-xs text-red-400">Scadenta: {inv.due_date}</span>
+                  </div>
+                  <div className="text-sm text-gray-400">{inv.client_name || 'Client necunoscut'}</div>
+                </div>
+                <div className="text-right">
+                  <div className="font-bold text-lg text-red-400">{inv.total?.toFixed(2)} RON</div>
+                  <div className="text-xs text-gray-500">{inv.days_overdue} zile intarziere</div>
+                </div>
+                <button onClick={() => markPaid(inv.id)}
+                  className="flex items-center gap-1 px-3 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm">
+                  <DollarSign size={14} /> Platita
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* SERIES MANAGEMENT (F3) */}
+      {tab === 'series' && (
+        <div className="space-y-4">
+          <div className="bg-gray-900 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-medium text-gray-300">Adauga serie noua</h3>
+            <div className="grid grid-cols-3 gap-3">
+              <input value={newSeries.prefix} onChange={e => setNewSeries(p => ({ ...p, prefix: e.target.value.toUpperCase() }))}
+                placeholder="Prefix (ex: RCC)" maxLength={10}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono" />
+              <input value={newSeries.name} onChange={e => setNewSeries(p => ({ ...p, name: e.target.value }))}
+                placeholder="Nume serie"
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+              <input value={newSeries.description} onChange={e => setNewSeries(p => ({ ...p, description: e.target.value }))}
+                placeholder="Descriere (optional)"
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <button onClick={createSeries} disabled={!newSeries.prefix.trim() || !newSeries.name.trim()}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm">
+              <Plus size={14} /> Adauga serie
+            </button>
+          </div>
+          <div className="space-y-2">
+            {series.map(s => (
+              <div key={s.id} className={`bg-gray-900 rounded-xl p-4 flex items-center gap-4 ${s.is_default ? 'border border-blue-500/30' : ''}`}>
+                <div className="w-16 text-center font-mono text-sm font-bold text-blue-400 bg-blue-900/20 rounded-lg py-1">{s.prefix}</div>
+                <div className="flex-1">
+                  <div className="font-medium">{s.name}</div>
+                  {s.description && <div className="text-xs text-gray-500">{s.description}</div>}
+                </div>
+                <div className="text-sm text-gray-400">Nr. urmator: {s.next_number}</div>
+                {s.is_default ? (
+                  <span className="text-xs px-2 py-1 bg-blue-900/30 text-blue-400 rounded-full">Implicita</span>
+                ) : (
+                  <button onClick={() => setDefault(s.id)}
+                    className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded-full text-gray-400">
+                    Seteaza implicita
+                  </button>
+                )}
+              </div>
+            ))}
+            {series.length === 0 && (
+              <p className="text-center py-8 text-gray-500">Nicio serie configurata.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* OFFER PDF (F9) */}
+      {tab === 'offer' && (
+        <div className="bg-gray-900 rounded-xl p-6 space-y-4">
+          <h3 className="text-sm font-medium text-gray-300">Genereaza Nota Oferta PDF — CIP Inspection SRL</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Nume client *</label>
+              <input value={offerForm.client_name} onChange={e => setOfferForm(p => ({ ...p, client_name: e.target.value }))}
+                placeholder="SC Exemplu SRL" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Adresa client</label>
+              <input value={offerForm.client_address} onChange={e => setOfferForm(p => ({ ...p, client_address: e.target.value }))}
+                placeholder="Strada, nr, oras" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+          {/* Offer items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium">Articole oferta</label>
+              <button onClick={() => setOfferForm(p => ({ ...p, items: [...p.items, { description: '', quantity: 1, unit_price: 0 }] }))}
+                className="text-xs text-blue-400 hover:text-blue-300">+ Adauga rand</button>
+            </div>
+            <div className="space-y-2">
+              {offerForm.items.map((item, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                  <input value={item.description}
+                    onChange={e => { const upd = [...offerForm.items]; upd[i] = { ...upd[i], description: e.target.value }; setOfferForm(p => ({ ...p, items: upd })); }}
+                    placeholder="Descriere serviciu..."
+                    className="col-span-6 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+                  <input type="number" value={item.quantity}
+                    onChange={e => { const upd = [...offerForm.items]; upd[i] = { ...upd[i], quantity: parseFloat(e.target.value) || 0 }; setOfferForm(p => ({ ...p, items: upd })); }}
+                    className="col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-center" min="1" />
+                  <input type="number" value={item.unit_price}
+                    onChange={e => { const upd = [...offerForm.items]; upd[i] = { ...upd[i], unit_price: parseFloat(e.target.value) || 0 }; setOfferForm(p => ({ ...p, items: upd })); }}
+                    className="col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-right" step="0.01" />
+                  <span className="col-span-1 text-sm text-right text-gray-400">{((item.quantity || 0) * (item.unit_price || 0)).toFixed(2)}</span>
+                  <button onClick={() => setOfferForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }))}
+                    className="col-span-1 text-red-400 hover:text-red-300 justify-self-center">
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Valabilitate (zile)</label>
+              <input type="number" value={offerForm.validity_days}
+                onChange={e => setOfferForm(p => ({ ...p, validity_days: parseInt(e.target.value) || 30 }))}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Note</label>
+              <input value={offerForm.notes} onChange={e => setOfferForm(p => ({ ...p, notes: e.target.value }))}
+                placeholder="Observatii..." className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+          <div className="flex justify-between items-center pt-2 border-t border-gray-800">
+            <div className="text-sm text-gray-400">
+              Total oferta: <span className="text-white font-bold">
+                {offerForm.items.reduce((s, i) => s + (i.quantity || 0) * (i.unit_price || 0), 0).toFixed(2)} RON
+              </span>
+            </div>
+            <button onClick={generateOffer} disabled={!offerForm.client_name.trim() || offerForm.items.every(i => !i.description)}
+              className="flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-xl text-sm font-medium">
+              <Download size={16} /> Descarca Oferta PDF
+            </button>
           </div>
         </div>
       )}

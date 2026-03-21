@@ -12,7 +12,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel
 
 from app.config import settings
 from app.core.activity_log import log_activity
@@ -235,6 +236,58 @@ async def reset_calibration():
     return {
         "status": "reset",
         "message": "Calibrarea a fost resetată la valorile implicite. Backup creat.",
+        "has_backup": BACKUP_FILE.exists(),
+    }
+
+
+class WeightsRequest(BaseModel):
+    base_rate: float
+    word_rate: float
+    similarity: float
+
+
+@router.post("/calibrate/weights")
+async def adjust_weights(weights: WeightsRequest):
+    """
+    F8: Ajustare manuala ponderi calibrare.
+    Accepta: {"base_rate": 0.3, "word_rate": 0.4, "similarity": 0.3}
+    Suma ponderilor trebuie sa fie 1.0 (toleranta ±0.01).
+    """
+    w = {"base_rate": weights.base_rate, "word_rate": weights.word_rate, "similarity": weights.similarity}
+
+    total = sum(w.values())
+    if abs(total - 1.0) > 0.01:
+        raise HTTPException(400, f"Suma ponderilor trebuie sa fie 1.0 (actual: {total:.3f})")
+
+    for k, v in w.items():
+        if v < SAFETY_MIN_WEIGHT:
+            raise HTTPException(400, f"Ponderea '{k}' ({v}) sub minimul de {SAFETY_MIN_WEIGHT}")
+
+    cal_file = settings.calibration_file
+
+    # Backup current
+    if cal_file.exists():
+        shutil.copy2(cal_file, BACKUP_FILE)
+
+    # Load or create calibration data
+    import datetime as dt_mod
+    data = _load_current_calibration() or {}
+    data["weights"] = {k: round(v, 3) for k, v in w.items()}
+    data["calibrated_at"] = dt_mod.datetime.now().isoformat()
+
+    with open(cal_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    await log_activity(
+        action="calibrate_weights",
+        summary=f"Ponderi ajustate manual: {data['weights']}",
+        details=data["weights"],
+    )
+
+    return {
+        "status": "saved",
+        "message": "Ponderile au fost actualizate cu succes.",
+        "weights": data["weights"],
         "has_backup": BACKUP_FILE.exists(),
     }
 

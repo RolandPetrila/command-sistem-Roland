@@ -9,8 +9,10 @@ import {
   ShieldAlert,
   ShieldCheck,
   ArrowRight,
+  Sliders,
+  Save,
 } from 'lucide-react';
-import {
+import api, {
   getCalibrationStatus,
   triggerCalibration,
   revertCalibration,
@@ -23,17 +25,67 @@ export default function CalibrationPanel({ onCalibrationChange }) {
   const [reverting, setReverting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState('info'); // info, success, error, warning
+  const [messageType, setMessageType] = useState('info');
   const [comparison, setComparison] = useState(null);
+  // F8: Interactive weight adjustment
+  const [showWeights, setShowWeights] = useState(false);
+  const [weights, setWeights] = useState({ base_rate: 30, word_rate: 40, similarity: 30 });
+  const [savingWeights, setSavingWeights] = useState(false);
 
   const fetchStatus = async () => {
     try {
       const data = await getCalibrationStatus();
       setStatus(data);
+      // Initialize weights from calibration data
+      if (data?.calibration?.weights) {
+        const w = data.calibration.weights;
+        setWeights({
+          base_rate: Math.round((w.base_rate || 0.3) * 100),
+          word_rate: Math.round((w.word_rate || 0.4) * 100),
+          similarity: Math.round((w.similarity || 0.3) * 100),
+        });
+      }
     } catch {
       setStatus(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleWeightChange = (key, val) => {
+    const newVal = Math.max(10, Math.min(80, val));
+    const remaining = 100 - newVal;
+    const otherKeys = Object.keys(weights).filter(k => k !== key);
+    const otherTotal = otherKeys.reduce((s, k) => s + weights[k], 0);
+    const newWeights = { ...weights, [key]: newVal };
+    if (otherTotal > 0) {
+      otherKeys.forEach(k => {
+        newWeights[k] = Math.max(10, Math.round(weights[k] / otherTotal * remaining));
+      });
+      // Fix rounding errors
+      const diff = 100 - Object.values(newWeights).reduce((s, v) => s + v, 0);
+      if (diff !== 0) newWeights[otherKeys[0]] += diff;
+    }
+    setWeights(newWeights);
+  };
+
+  const saveWeights = async () => {
+    setSavingWeights(true);
+    try {
+      const result = await api.post('/api/calibrate/weights', {
+        base_rate: weights.base_rate / 100,
+        word_rate: weights.word_rate / 100,
+        similarity: weights.similarity / 100,
+      });
+      setMessage(result.data.message || 'Ponderi salvate!');
+      setMessageType('success');
+      await fetchStatus();
+      if (onCalibrationChange) onCalibrationChange();
+    } catch (err) {
+      setMessage(err.response?.data?.detail || 'Eroare la salvare ponderi');
+      setMessageType('error');
+    } finally {
+      setSavingWeights(false);
     }
   };
 
@@ -217,6 +269,38 @@ export default function CalibrationPanel({ onCalibrationChange }) {
             ? 'Sistemul este calibrat'
             : 'Se folosesc valorile implicite (fără calibrare)'}
         </span>
+      </div>
+
+      {/* F8: Interactive weight sliders */}
+      <div className="mt-4">
+        <button onClick={() => setShowWeights(!showWeights)}
+          className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+          <Sliders size={14} /> Ajusteaza ponderi manual
+        </button>
+        {showWeights && (
+          <div className="mt-3 bg-slate-800/60 rounded-lg p-4 space-y-3">
+            {[
+              { key: 'base_rate', label: 'Tarif de baza', color: 'bg-blue-500' },
+              { key: 'word_rate', label: 'Tarif per cuvant', color: 'bg-green-500' },
+              { key: 'similarity', label: 'Similaritate KNN', color: 'bg-purple-500' },
+            ].map(({ key, label, color }) => (
+              <div key={key} className="flex items-center gap-3">
+                <span className="text-xs text-slate-400 w-32">{label}</span>
+                <input type="range" min={10} max={80} value={weights[key]}
+                  onChange={e => handleWeightChange(key, parseInt(e.target.value))}
+                  className="flex-1 accent-blue-500 h-1.5" />
+                <span className="text-xs font-mono text-slate-300 w-10 text-right">{weights[key]}%</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-700">
+              <span className="text-xs text-slate-500">Total: {weights.base_rate + weights.word_rate + weights.similarity}%</span>
+              <button onClick={saveWeights} disabled={savingWeights}
+                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-xs disabled:opacity-50">
+                {savingWeights ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Salveaza ponderi
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Comparison panel (after calibration) */}

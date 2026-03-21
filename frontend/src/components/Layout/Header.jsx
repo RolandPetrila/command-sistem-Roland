@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Wifi, WifiOff, Sun, Moon, Keyboard, AlertTriangle, X, RefreshCw } from 'lucide-react';
+import { Wifi, WifiOff, Sun, Moon, Keyboard, AlertTriangle, X, RefreshCw, Bell, Check, Trash2 } from 'lucide-react';
 import apiClient, { checkHealth } from '../../api/client';
 import { useTheme } from '../../hooks/useTheme';
 import { SHORTCUTS } from '../../hooks/useHotkeys';
@@ -161,6 +161,10 @@ export default function Header({ pageTitles, showShortcuts, onToggleShortcuts })
   const [errorCount, setErrorCount] = useState(0);
   const [showDiag, setShowDiag] = useState(false);
   const { theme, toggleTheme } = useTheme();
+  // F6: Notifications
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifs, setShowNotifs] = useState(false);
 
   const pageTitle = pageTitles[location.pathname] || 'Calculator Pret Traduceri';
 
@@ -178,12 +182,35 @@ export default function Header({ pageTitles, showShortcuts, onToggleShortcuts })
     };
 
     check();
-    const interval = setInterval(check, 30000);
+    loadNotifications();
+    const interval = setInterval(() => { check(); loadNotifications(); }, 30000);
     return () => {
       mounted = false;
       clearInterval(interval);
     };
   }, []);
+
+  const loadNotifications = async () => {
+    try {
+      const { data } = await apiClient.get('/api/automations/notifications?limit=20');
+      setNotifications(data.items || []);
+      setUnreadCount(data.unread_count || 0);
+    } catch { /* ignore */ }
+  };
+
+  const markRead = async (id) => {
+    try {
+      await apiClient.put(`/api/automations/notifications/${id}/read`);
+      loadNotifications();
+    } catch { /* toast handles it */ }
+  };
+
+  const markAllRead = async () => {
+    try {
+      await apiClient.put('/api/automations/notifications/read-all');
+      loadNotifications();
+    } catch { /* toast handles it */ }
+  };
 
   return (
     <>
@@ -207,6 +234,62 @@ export default function Header({ pageTitles, showShortcuts, onToggleShortcuts })
 
           {/* Network speed indicator */}
           <NetworkSpeedIndicator />
+
+          {/* F6: Notifications bell */}
+          <div className="relative">
+            <button onClick={() => setShowNotifs(v => !v)}
+              className={`relative p-2 rounded-lg transition-colors ${
+                unreadCount > 0
+                  ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+              title={`Notificari (${unreadCount} necitite)`}>
+              <Bell size={16} />
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center px-1 bg-blue-500 text-white text-[10px] font-bold rounded-full">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </button>
+            {showNotifs && (
+              <div className="absolute right-0 top-10 w-80 max-h-96 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                  <span className="text-sm font-medium">Notificari</span>
+                  {unreadCount > 0 && (
+                    <button onClick={markAllRead} className="text-xs text-blue-400 hover:text-blue-300">
+                      Marcheaza toate citite
+                    </button>
+                  )}
+                </div>
+                <div className="overflow-y-auto max-h-80">
+                  {notifications.length === 0 ? (
+                    <div className="p-4 text-center text-gray-500 text-sm">Nicio notificare</div>
+                  ) : (
+                    notifications.map(n => (
+                      <div key={n.id}
+                        className={`px-3 py-2 border-b border-gray-800 last:border-0 ${!n.is_read ? 'bg-blue-500/5' : ''}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">{n.title}</div>
+                            <div className="text-xs text-gray-400 mt-0.5">{n.message}</div>
+                            <div className="text-[10px] text-gray-500 mt-1">
+                              {n.source && <span className="mr-2">{n.source}</span>}
+                              {new Date(n.created_at).toLocaleString('ro-RO')}
+                            </div>
+                          </div>
+                          {!n.is_read && (
+                            <button onClick={() => markRead(n.id)} className="p-1 text-gray-500 hover:text-green-400" title="Marcheaza citita">
+                              <Check size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Diagnostics button */}
           <button onClick={() => setShowDiag(v => !v)}

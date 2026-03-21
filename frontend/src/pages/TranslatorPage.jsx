@@ -39,6 +39,9 @@ export default function TranslatorPage() {
   const [glossarySearch, setGlossarySearch] = useState('');
   const [newTerm, setNewTerm] = useState({ term_source: '', term_target: '', domain: 'general' });
   const [showAddTerm, setShowAddTerm] = useState(false);
+  // F10: Per-client glossary
+  const [glossaryClients, setGlossaryClients] = useState([]);
+  const [selectedClientId, setSelectedClientId] = useState('');
   // Usage
   const [usage, setUsage] = useState(null);
   // Detect
@@ -46,7 +49,12 @@ export default function TranslatorPage() {
 
   useEffect(() => { loadUsage(); }, []);
   useEffect(() => { if (tab === 'tm') { loadTmStats(); loadTm(); } }, [tab]);
-  useEffect(() => { if (tab === 'glossary') loadGlossary(); }, [tab]);
+  useEffect(() => {
+    if (tab === 'glossary') {
+      loadGlossary();
+      loadGlossaryClients();
+    }
+  }, [tab]);
 
   const loadUsage = async () => {
     try {
@@ -70,9 +78,17 @@ export default function TranslatorPage() {
     } catch { /* toast handles it */ }
   };
 
+  const loadGlossaryClients = async () => {
+    try {
+      const { data } = await api.get('/api/invoice/clients');
+      setGlossaryClients(data || []);
+    } catch { /* toast handles it */ }
+  };
+
   const loadGlossary = async () => {
     try {
-      const url = glossarySearch ? `/api/translator/glossary?search=${encodeURIComponent(glossarySearch)}` : '/api/translator/glossary';
+      let url = glossarySearch ? `/api/translator/glossary?search=${encodeURIComponent(glossarySearch)}` : '/api/translator/glossary';
+      if (selectedClientId) url += (url.includes('?') ? '&' : '?') + `client_id=${selectedClientId}`;
       const { data } = await api.get(url);
       setGlossaryTerms(Array.isArray(data) ? data : []);
     } catch { /* toast handles it */ }
@@ -362,12 +378,20 @@ export default function TranslatorPage() {
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input value={glossarySearch} onChange={e => setGlossarySearch(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && loadGlossary()}
-                placeholder="Caută termen..."
+                placeholder="Cauta termen..."
                 className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-sm focus:border-blue-500 focus:outline-none" />
             </div>
+            <select value={selectedClientId}
+              onChange={e => { setSelectedClientId(e.target.value); setTimeout(loadGlossary, 50); }}
+              className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm">
+              <option value="">Toti clientii</option>
+              {glossaryClients.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
             <button onClick={() => setShowAddTerm(!showAddTerm)}
               className="flex items-center gap-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm">
-              <Plus size={14} /> Adaugă termen
+              <Plus size={14} /> Adauga termen
             </button>
           </div>
           {showAddTerm && (

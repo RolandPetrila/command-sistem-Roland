@@ -59,6 +59,27 @@ class InspectionCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class AppointmentCreate(BaseModel):
+    plate_number: str
+    owner_name: Optional[str] = None
+    owner_phone: Optional[str] = None
+    scheduled_date: str
+    scheduled_time: str = "08:00"
+    duration_min: int = 30
+    notes: Optional[str] = None
+
+
+class AppointmentUpdate(BaseModel):
+    plate_number: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_phone: Optional[str] = None
+    scheduled_date: Optional[str] = None
+    scheduled_time: Optional[str] = None
+    duration_min: Optional[int] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class InspectionUpdate(BaseModel):
     plate_number: Optional[str] = None
     vin: Optional[str] = None
@@ -688,3 +709,101 @@ async def export_excel():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="itp_inspectii.xlsx"'},
     )
+
+
+# ────────── F5: Appointments / Calendar ──────────
+
+@router.get("/appointments")
+async def list_appointments(
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    status: str = Query(None),
+):
+    """List appointments with optional date range and status filter."""
+    conditions = []
+    params = []
+    if date_from:
+        conditions.append("scheduled_date >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("scheduled_date <= ?")
+        params.append(date_to)
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    async with get_db() as db:
+        cursor = await db.execute(
+            f"SELECT * FROM itp_appointments {where} ORDER BY scheduled_date ASC, scheduled_time ASC",
+            params,
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/appointments", status_code=201)
+async def create_appointment(data: AppointmentCreate):
+    """Create a new ITP appointment."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """INSERT INTO itp_appointments
+               (plate_number, owner_name, owner_phone, scheduled_date, scheduled_time, duration_min, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (data.plate_number.upper().strip(), data.owner_name, data.owner_phone,
+             data.scheduled_date, data.scheduled_time, data.duration_min, data.notes),
+        )
+        await db.commit()
+        appt_id = cursor.lastrowid
+    await log_activity(
+        action="itp.appointment_create",
+        summary=f"Programare ITP: {data.plate_number} pe {data.scheduled_date} la {data.scheduled_time}",
+        details={"id": appt_id, "plate": data.plate_number, "date": data.scheduled_date},
+    )
+    return {"id": appt_id, "message": "Programare creata cu succes."}
+
+
+@router.put("/appointments/{appt_id}")
+async def update_appointment(appt_id: int, data: AppointmentUpdate):
+    """Update an appointment."""
+    updates = data.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "Niciun camp de actualizat")
+    if "plate_number" in updates and updates["plate_number"]:
+        updates["plate_number"] = updates["plate_number"].upper().strip()
+    fields = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [appt_id]
+    async with get_db() as db:
+        cursor = await db.execute(
+            f"UPDATE itp_appointments SET {fields} WHERE id = ?", values
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Programarea nu a fost gasita")
+    return {"message": "Programare actualizata cu succes."}
+
+
+@router.delete("/appointments/{appt_id}")
+async def delete_appointment(appt_id: int):
+    """Delete an appointment."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM itp_appointments WHERE id = ?", (appt_id,)
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Programarea nu a fost gasita")
+    return {"message": "Programare stearsa cu succes."}
+
+
+@router.put("/appointments/{appt_id}/complete")
+async def complete_appointment(appt_id: int, inspection_id: int = None):
+    """Mark appointment as completed, optionally linking to an inspection."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "UPDATE itp_appointments SET status = 'completed', inspection_id = ? WHERE id = ?",
+            (inspection_id, appt_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Programarea nu a fost gasita")
+    return {"message": "Programare finalizata cu succes."}

@@ -663,3 +663,116 @@ async def delete_config(key: str):
         await db.commit()
     await log_activity(action="ai.config_delete", summary=f"Config AI șters: {key}")
     return {"status": "deleted", "key": key}
+
+
+# === F2: PROMPT TEMPLATES ===
+
+class PromptTemplateCreate(BaseModel):
+    name: str
+    description: str | None = None
+    prompt_text: str
+    variables: list[str] | None = None
+    category: str = "general"
+
+
+class PromptTemplateUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    prompt_text: str | None = None
+    variables: list[str] | None = None
+    category: str | None = None
+
+
+@router.get("/templates")
+async def list_templates(category: str = None):
+    """List prompt templates, optionally filtered by category."""
+    async with get_db() as db:
+        if category:
+            cursor = await db.execute(
+                "SELECT * FROM ai_prompt_templates WHERE category = ? ORDER BY usage_count DESC",
+                (category,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT * FROM ai_prompt_templates ORDER BY usage_count DESC"
+            )
+        rows = await cursor.fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["variables"] = json.loads(d["variables"]) if d.get("variables") else []
+        result.append(d)
+    return result
+
+
+@router.post("/templates", status_code=201)
+async def create_template(data: PromptTemplateCreate):
+    """Create a new prompt template."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """INSERT INTO ai_prompt_templates (name, description, prompt_text, variables, category)
+               VALUES (?, ?, ?, ?, ?)""",
+            (data.name, data.description, data.prompt_text,
+             json.dumps(data.variables or []), data.category),
+        )
+        await db.commit()
+        template_id = cursor.lastrowid
+    await log_activity(
+        action="ai.template_create",
+        summary=f"Template AI creat: {data.name}",
+        details={"id": template_id, "category": data.category},
+    )
+    return {"id": template_id, "message": f"Template '{data.name}' creat cu succes."}
+
+
+@router.put("/templates/{template_id}")
+async def update_template(template_id: int, data: PromptTemplateUpdate):
+    """Update a prompt template."""
+    updates = data.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "Niciun camp de actualizat")
+    if "variables" in updates:
+        updates["variables"] = json.dumps(updates["variables"] or [])
+    fields = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [template_id]
+    async with get_db() as db:
+        cursor = await db.execute(
+            f"UPDATE ai_prompt_templates SET {fields} WHERE id = ?", values
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Template negasit")
+    return {"message": "Template actualizat cu succes."}
+
+
+@router.delete("/templates/{template_id}")
+async def delete_template(template_id: int):
+    """Delete a prompt template."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM ai_prompt_templates WHERE id = ?", (template_id,)
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Template negasit")
+    return {"message": "Template sters cu succes."}
+
+
+@router.post("/templates/{template_id}/use")
+async def use_template(template_id: int):
+    """Increment usage count and return the template text."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT * FROM ai_prompt_templates WHERE id = ?", (template_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Template negasit")
+        await db.execute(
+            "UPDATE ai_prompt_templates SET usage_count = usage_count + 1 WHERE id = ?",
+            (template_id,),
+        )
+        await db.commit()
+    d = dict(row)
+    d["variables"] = json.loads(d["variables"]) if d.get("variables") else []
+    return d

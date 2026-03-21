@@ -27,6 +27,7 @@ async def get_glossary(
     search: str | None = None,
     source_lang: str | None = None,
     target_lang: str | None = None,
+    client_id: int | None = None,
     skip: int = 0,
     limit: int = 100,
 ) -> dict:
@@ -47,6 +48,9 @@ async def get_glossary(
     if target_lang:
         conditions.append("target_lang = ?")
         params.append(target_lang.lower())
+    if client_id is not None:
+        conditions.append("client_id = ?")
+        params.append(client_id)
     if search:
         conditions.append("(term_source LIKE ? OR term_target LIKE ? OR notes LIKE ?)")
         like_param = f"%{search}%"
@@ -96,17 +100,21 @@ async def add_term(
     target_lang: str = "ro",
     domain: str = "general",
     notes: str | None = None,
+    client_id: int | None = None,
 ) -> dict:
     """Add a term to the glossary. Returns the created term."""
     async with get_db() as db:
-        # Check for duplicate
-        cursor = await db.execute(
-            """
-            SELECT id FROM glossary_terms
-            WHERE term_source = ? AND source_lang = ? AND target_lang = ?
-            """,
-            (source.strip(), source_lang.lower(), target_lang.lower()),
-        )
+        # Check for duplicate (within same client scope)
+        if client_id is not None:
+            cursor = await db.execute(
+                "SELECT id FROM glossary_terms WHERE term_source = ? AND source_lang = ? AND target_lang = ? AND client_id = ?",
+                (source.strip(), source_lang.lower(), target_lang.lower(), client_id),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT id FROM glossary_terms WHERE term_source = ? AND source_lang = ? AND target_lang = ? AND client_id IS NULL",
+                (source.strip(), source_lang.lower(), target_lang.lower()),
+            )
         existing = await cursor.fetchone()
         if existing:
             raise ValueError(
@@ -115,16 +123,13 @@ async def add_term(
             )
 
         cursor = await db.execute(
-            """
-            INSERT INTO glossary_terms (term_source, term_target, source_lang, target_lang, domain, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (source.strip(), target.strip(), source_lang.lower(), target_lang.lower(), domain, notes),
+            """INSERT INTO glossary_terms (term_source, term_target, source_lang, target_lang, domain, notes, client_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (source.strip(), target.strip(), source_lang.lower(), target_lang.lower(), domain, notes, client_id),
         )
         await db.commit()
         term_id = cursor.lastrowid
 
-        # Return created term
         cursor = await db.execute(
             "SELECT * FROM glossary_terms WHERE id = ?", (term_id,)
         )
