@@ -252,17 +252,24 @@ async def _ensure_calc_table():
 
 
 async def _save_calc_entry(entry: dict):
-    """Salveaza o intrare in calc_history si pastreaza max 100."""
+    """Salveaza o intrare in calc_history cu smart cleanup.
+
+    Strategia: 1) sterge intrarile mai vechi de 30 zile, 2) pastreaza max 300 intrari.
+    """
     await _ensure_calc_table()
     async with get_db() as db:
         await db.execute(
             "INSERT INTO calc_history (expression, processed, result, formatted, timestamp) VALUES (?, ?, ?, ?, ?)",
             (entry["expression"], entry["processed"], entry["result"], entry["formatted"], entry["timestamp"]),
         )
-        # Pastreaza doar ultimele 100 intrari
+        # Smart cleanup: sterge intrarile mai vechi de 30 zile
+        await db.execute(
+            "DELETE FROM calc_history WHERE timestamp < datetime('now', '-30 days')"
+        )
+        # Apoi pastreaza max 300 intrari
         await db.execute("""
             DELETE FROM calc_history WHERE id NOT IN (
-                SELECT id FROM calc_history ORDER BY id DESC LIMIT 100
+                SELECT id FROM calc_history ORDER BY id DESC LIMIT 300
             )
         """)
         await db.commit()
@@ -625,53 +632,270 @@ async def get_password_history():
 
 
 # Feature #6: Memorable passphrase generator
-# 200+ common Romanian words (nouns + adjectives, easy to remember)
+# 2048+ common Romanian words (nouns + adjectives + verbs, easy to remember)
 _RO_WORDS = [
     # Natura
     "munte", "vale", "rau", "lac", "mare", "ocean", "padure", "camp", "deal",
     "soare", "luna", "stea", "noapte", "ziua", "cer", "nori", "ploaie", "zapada",
     "vant", "furtuna", "fulger", "tunet", "curcubeu", "rasarit", "apus",
+    "delta", "coasta", "duna", "mlastina", "tundra", "savana", "jungla",
+    "ghetar", "vulcan", "crater", "fiord", "laguna", "recif", "atol",
+    "platou", "abis", "prapastie", "cheile", "gorj", "bazin", "izvor",
+    "parau", "torent", "fluviu", "estuar", "golf", "stramtoare",
+    "arhipelag", "peninsula", "tarau", "lunca", "padurea",
     # Animale
     "lup", "urs", "vulpe", "cerb", "iepure", "bufnita", "vultur", "soim",
     "cal", "pisica", "caine", "leu", "tigru", "dragon", "corb", "porumbel",
-    "delfin", "balena", "rechin", "somon", "lupi", "caprioara",
+    "delfin", "balena", "rechin", "somon", "caprioara",
+    "zebra", "girafa", "elefant", "hipopotam", "crocodil", "anaconda",
+    "jaguar", "puma", "coiot", "bizon", "caribu", "elan", "raton",
+    "castor", "nutrie", "vidra", "jder", "hermelina", "dihor",
+    "arici", "cartita", "liliac", "viezure", "mistret",
+    "pelican", "flamingo", "papagal", "tucan", "colibri", "randunica",
+    "barza", "cocor", "lebada", "rata", "gasca", "curcan", "fazana",
+    "prepelita", "potarniche", "cucuvaie", "vrabie", "cinteza",
+    "somn", "crap", "stiuca", "biban", "pastrav", "morun", "nisetru",
+    "caracatita", "calmar", "meduza", "scoica",
+    "broasca", "salamandra", "soparla", "sarpe", "vipera", "piton",
+    "albina", "bondar", "fluture", "libelula", "greier", "lacusta",
     # Culori
     "rosu", "albastru", "verde", "galben", "alb", "negru", "portocaliu",
     "violet", "roz", "auriu", "argintiu", "maro", "gri",
+    "turcoaz", "indigo", "lavanda", "coral", "crem", "bej", "ocru",
+    "purpuriu", "carmin", "scarlet", "cobalt", "azur", "opal",
+    "sidef", "siena", "umbra", "smaragd",
     # Obiecte / Casa
     "casa", "masa", "scaun", "fereastra", "usa", "cheie", "lampa", "carte",
     "pix", "ceas", "oglinda", "cutie", "punte", "turn", "pod", "drum",
     "clopot", "lanterna", "busola", "ancora", "coroana", "scut", "sabie",
+    "arcada", "balcon", "terasa", "pivnita", "mansarda", "hol", "culoar",
+    "acoperis", "fundatie", "zid", "gard", "poarta", "coliba", "bordei",
+    "vaza", "ulcior", "cana", "farfurie", "lingura", "furculita",
+    "cutit", "oala", "tigaie", "ceainic", "ibric", "sita", "tocator",
+    "blender", "mixer", "cuptor", "frigider",
+    "sofa", "divan", "canapea", "fotoliu", "leagan", "hamac", "pat",
+    "patura", "perna", "cearceaf", "cuvertura", "perdea", "draperie",
+    "covor", "parchet", "gresie", "tapeta",
+    "tablou", "fotografie", "poster", "sculptura", "statueta",
+    "lumanare", "felinare", "aplica", "lustre", "abajur", "jaluzele",
     # Mancare
     "paine", "mere", "struguri", "cirese", "nuci", "miere", "lapte",
     "branza", "cascaval", "ciocolata", "cafea", "ceai", "vin", "bere",
     "lamaie", "portocala", "banana", "capsuni", "zmeura", "piersica",
+    "mamaliga", "sarmale", "ciorba", "borscht", "placinta", "cozonac",
+    "coliva", "drob", "friptura", "tocana", "ghiveci", "zacusca",
+    "mujdei", "pilaf", "risotto", "paste", "pizza", "sandvis",
+    "supa", "bulion", "mustar", "ketchup", "maioneza", "otet",
+    "ulei", "unt", "smantana", "iaurt", "chefir", "inghetata",
+    "tarta", "prajitura", "ecler", "savarina", "tort", "rulada",
+    "pepene", "dovleac", "morcov", "ceapa", "usturoi", "ardei",
+    "rosie", "castravete", "varza", "salata", "spanac", "leustean",
+    "patrunjel", "marar", "cimbru", "oregano", "busuioc", "menta",
+    "cartofi", "fasole", "linte", "mazare", "naut", "soia", "porumb",
     # Calitati / Adjective
-    "rapid", "lent", "mare", "mic", "frumos", "vesel", "trist", "cald",
+    "rapid", "lent", "frumos", "vesel", "trist", "cald",
     "rece", "dulce", "amar", "sarat", "puternic", "bland", "luminos",
     "intunecat", "tanar", "batran", "nou", "vechi", "simplu", "magic",
     "secret", "liber", "curajos", "destept", "harnic", "cuminte",
+    "agil", "robust", "elastic", "rigid", "flexibil", "solid", "fragil",
+    "dens", "gros", "subtire", "lung", "scurt", "lat", "ingust",
+    "rotund", "patrat", "oval", "curbat", "drept",
+    "neted", "aspru", "moale", "tare", "fierbinte", "inghetat",
+    "umed", "uscat", "proaspat", "matur", "crud",
+    "clar", "transparent", "opac", "stralucitor", "mat",
+    "zgomotos", "silentios", "melodios", "ritmat",
+    "parfumat", "inodor", "acid", "neutru",
+    "electric", "magnetic", "termic", "optic", "sonic",
+    "digital", "analog", "virtual", "real", "autentic",
+    "unic", "comun", "special", "general",
+    "privat", "public", "oficial", "formal", "informal",
+    "activ", "pasiv", "pozitiv", "negativ", "echilibrat",
+    "calm", "nervos", "relaxat", "tensionat", "fericit", "melancolic",
+    "entuziast", "plictisit", "curios", "indiferent", "atent", "distrat",
+    "generos", "darnic", "egoist", "altruist", "empatic",
+    "onest", "sincer", "loial", "devotat", "dedicat", "pasionat",
+    "inventiv", "creativ", "inovator", "original", "clasic", "modern",
+    "elegant", "sobru", "colorat", "viu", "palid", "stins",
     # Locuri
     "castel", "palat", "gradina", "piata", "sat", "oras", "tara",
     "insula", "pestera", "colina", "cascada", "plaja", "port", "gara",
     "biserica", "muzeu", "scoala", "parc", "stadion", "ferma",
-    # Actiuni / Verbe scurte ca substantive
+    "canton", "depou", "hangar", "siloz", "moara", "fabrica", "uzina",
+    "atelier", "laborator", "biblioteca", "arhiva", "tribunal", "primarie",
+    "spital", "clinica", "farmacie", "cabinet",
+    "bazar", "targ", "hala", "depozit", "magazie", "antrepozit",
+    "hotel", "motel", "pensiune", "hostel", "cabana", "refugiu",
+    "restaurant", "bistro", "cafenea", "bar", "pub",
+    "cinema", "teatru", "opera", "galerie", "expozitie",
+    "arena", "velodrom", "hipodrom", "patinoar", "bazin", "sala",
+    "campus", "facultate", "liceu", "gradinita", "cresa", "internat",
+    "cazarma", "fort", "buncar", "podul",
+    # Actiuni / Verbe
     "zbor", "salt", "dans", "cantec", "vis", "joc", "lupta", "pace",
     "timp", "foc", "apa", "pamant", "aer", "spirit", "suflet",
     "putere", "viteza", "gratie", "noroc", "destin",
+    "alearga", "inoata", "catara", "saluta", "zambeste", "plange",
+    "gandeste", "invata", "citeste", "scrie", "deseneaza", "picteaza",
+    "construieste", "repara", "demoleaza", "planteaza", "recolteaza",
+    "coace", "fierbe", "prajeste", "taie", "amesteca", "gusta",
+    "deschide", "inchide", "impinge", "trage", "ridica", "coboara",
+    "aprinde", "stinge", "umple", "goleste", "spala", "sterge",
+    "cauta", "gaseste", "pierde", "pastreaza", "arunca", "colecteaza",
+    "trimite", "primeste", "schimba", "cumpara", "vinde", "negociaza",
+    "calatoreste", "soseste", "pleaca", "intoarce", "rataceste",
+    "vorbeste", "asculta", "intreaba", "raspunde", "explica",
+    "ajuta", "protejeaza", "ataca", "apara", "ascunde",
+    "dezvaluie", "descopera", "cerceteaza", "analizeaza", "sintetizeaza",
+    "planifica", "organizeaza", "executa", "evalueaza", "corecteaza",
+    "incepe", "continua", "termina", "repeta", "reface", "opreste",
+    "urca", "cobora", "traverseaza", "inconjoara", "patrunde", "evita",
+    "observa", "masoara", "cantareste", "calculeaza", "estimeaza",
+    "colaboreaza", "coordoneaza", "conduce", "administreaza", "gestioneaza",
+    "creaza", "produce", "transforma", "combina", "separa", "filtreaza",
+    "accelereaza", "incetineste", "opreste", "porneste", "reseteza",
     # Meserii / Persoane
     "rege", "regina", "cavaler", "mag", "pirat", "capitan", "pilot",
     "maestru", "artist", "poet", "erou", "gardian", "calator", "vanator",
+    "doctor", "avocat", "judecator", "profesor", "inginer", "arhitect",
+    "chimist", "fizician", "biolog", "geograf", "astronom", "geolog",
+    "economist", "contabil", "bancher", "analist", "consultant", "auditor",
+    "programator", "designer", "animator", "fotograf", "regizor", "actor",
+    "muzician", "compozitor", "dirijor", "solist", "balerina", "dansator",
+    "scriitor", "jurnalist", "reporter", "editor", "traducator", "interpret",
+    "diplomat", "ambasador", "ministru", "senator", "deputat", "primar",
+    "general", "colonel", "locotenent", "sergent", "soldat", "pompier",
+    "politist", "detectiv", "agent", "inspector", "ofiter", "recrut",
+    "fermier", "crescator", "viticultor", "apicultor", "pescar",
+    "mecanic", "electrician", "instalator", "zugrav", "zidar", "dulgher",
+    "croitor", "cizmar", "coafor", "maseur",
+    "bucatar", "cofetar", "brutar", "sofer", "mecanic",
     # Obiecte mitice / Fantasy
     "cristal", "rubin", "safir", "smarald", "diamant", "otel", "fier",
     "bronz", "cupru", "argint", "aur", "topaz", "onix", "perla",
+    "ametist", "citrin", "granat", "jad", "malachit", "obsidian",
+    "cuart", "siliciu", "granit", "marmura", "calcar",
+    "bazalt", "andezit", "pumex", "sist", "gneis",
+    "talisman", "amulet", "medalion", "inel", "bratara", "colier",
+    "pandantiv", "tiara", "diadema", "sceptru",
+    "pergament", "codex", "sulul", "fiola", "alambic", "retorta",
     # Astronomie
     "cometa", "nebula", "galaxie", "planeta", "eclipsa", "meteor",
     "aurora", "cosmos", "orbital", "stelar", "lunar", "solar",
-    # Extra substantive comune
+    "asteroid", "satelit", "telescop", "observator", "sextant",
+    "constelatie", "zodiac", "ecliptica", "ecuator", "meridian",
+    "zenith", "nadir", "azimut", "altitudine", "longitudine", "latitudine",
+    "quasar", "pulsar", "supernova", "spectru", "fotosfera",
+    # Natura extinsa
     "floare", "copac", "frunza", "radacina", "ramura", "seminta",
     "piatra", "nisip", "stanca", "gheata", "abur", "ceata", "roua",
     "tunel", "bariera", "far", "barca", "vapor", "tren", "avion",
+    "trandafir", "lalea", "narcisa", "crin", "iris", "margareta",
+    "micsunea", "zambila", "orhidee", "magnolia", "azalea", "begonia",
+    "geranium", "lavanda",
+    "stejar", "fag", "carpen", "frasin", "ulm", "tei", "plop", "salcie",
+    "brad", "molid", "pin", "larice", "cedru", "chiparos", "tuia",
+    "nuc", "cires", "par", "mar", "prun", "cais", "piersic", "gutui",
+    "vita", "zmeur", "mur", "agris", "coacaz", "afin",
+    "bambus", "palmier", "cactus", "aloe", "feriga", "muchi", "licheni",
+    # Tehnologie
+    "retea", "server", "router", "switch", "cablu", "fibra", "antena",
+    "procesor", "memorie", "stocare", "baterie", "ecran", "tastatura",
+    "aplicatie", "program", "sistem", "baza", "algoritm", "functie",
+    "variabila", "constanta", "bucla", "conditie", "clasa", "obiect",
+    "modul", "pachet", "biblioteca", "cadru", "interfata", "protocol",
+    "criptare", "autentificare", "autorizare", "sesiune",
+    "cerere", "raspuns", "eroare", "exceptie", "jurnal", "backup",
+    "versiune", "ramura", "commit", "deploy", "testare",
+    "pixel", "rezolutie", "contrast", "saturatie", "luminozitate",
+    "codec", "format", "compresie", "bitrate", "latenta", "banda",
+    "sincronizare", "protocol", "socket", "endpoint", "serviciu",
+    # Transport
+    "masina", "camion", "autobuz", "tramvai", "metrou",
+    "elicopter", "submarin", "racheta",
+    "bicicleta", "motocicleta", "scuter", "trotineta", "quad",
+    "sanie", "telecabina", "funicular",
+    "autostrada", "sosea", "strada", "alee", "pasaj",
+    "viaduct", "estacada", "intersectie", "giratoriu",
+    # Sport
+    "fotbal", "baschet", "volei", "tenis", "badminton", "squash",
+    "inot", "atletism", "gimnastica", "lupte", "judo", "karate",
+    "box", "scrim", "tir",
+    "ciclism", "triathlon", "maraton", "sprint", "saritura", "aruncare",
+    "caiac", "canotaj", "surfing", "alpinism",
+    "schi", "snowboard", "patinaj", "curling", "hochei",
+    # Muzica
+    "melodie", "ritm", "armonie", "acordeon", "chitara", "vioara",
+    "pian", "toba", "trompeta", "saxofon", "flaut", "clarinet",
+    "harpa", "mandolina", "banjo", "ukulele", "orga", "sintetizator",
+    "simfonie", "sonata", "concert", "aria", "serenadă",
+    "nocturna", "etuda", "preludiu", "fuga", "oratoriu",
+    # Arte
+    "sculptura", "fotografie", "gravura", "litografie",
+    "acuarela", "ulei", "tempera", "pastel", "creion", "tus",
+    "mozaic", "fresca", "vitraliu", "tapiserie", "ceramica",
+    "instalatie", "performance",
+    # Stari / Emotii
+    "bucurie", "tristete", "furie", "frica", "surpriza", "dezgust",
+    "admiratie", "nostalgie", "melancolie", "euforie", "anxietate",
+    "liniste", "agitatie", "curaj", "mandrie", "rusine",
+    "empatie", "indiferenta", "dragoste", "ura", "invidie", "gelozie",
+    "recunostinta", "amaraciune", "speranta", "disperare", "incredere",
+    "suspiciune", "certitudine", "indoiala", "confuzie",
+    # Timp
+    "secunda", "minut", "saptamana", "deceniu", "secol", "mileniu",
+    "era", "epoca", "perioada", "etapa",
+    "dimineata", "amiaza", "seara", "miezul", "crepuscul",
+    "primavara", "vara", "toamna", "iarna", "solstitiu", "echinox",
+    # Corpul uman
+    "frunte", "obraz", "barbie", "gat", "umar", "brat",
+    "cot", "mana", "deget", "unghia", "piept", "spate",
+    "talie", "sold", "genunchi", "glezna", "picior", "talpa", "calcai",
+    "creier", "inima", "plamani", "ficat", "rinichi", "stomac",
+    "vena", "artera", "nerv", "muschi", "cartilaj", "tendon",
+    # Obiecte vestimentare
+    "camasa", "pantaloni", "rochie", "fusta", "bluza", "sacou",
+    "palton", "parca", "geaca", "vesta", "pulover", "tricou",
+    "pantofi", "ghete", "cizme", "adidasi", "sandale", "papuci",
+    "palarie", "sapca", "esarfa", "manusi", "centura", "bretele",
+    "cravata", "papion", "batic", "sal", "umbrela", "rucsac", "poseta",
+    # Stiinta
+    "atom", "molecula", "electron", "proton", "neutron",
+    "foton", "boson", "fermion", "lepton",
+    "celula", "nucleu", "cromozom", "gena", "proteina", "enzima",
+    "acid", "baza", "sare", "oxid", "compus", "element", "reactie",
+    "energie", "masa", "forta", "impuls",
+    "temperatura", "presiune", "volum", "densitate", "vascozitate",
+    "unda", "frecventa", "amplitudine", "lungime", "spectru",
+    "tensiune", "curent", "rezistenta", "condensator",
+    # Abstracte / Filosofie
+    "adevar", "minciuna", "dreptate", "nedreptate", "libertate", "robie",
+    "ordine", "haos", "armonie", "discordie", "unitate", "diversitate",
+    "progres", "regres", "evolutie", "revolutie", "reforma", "traditie",
+    "cultura", "civilizatie", "religie", "filosofie", "stiinta", "arta",
+    "natura", "societate", "individ", "colectiv", "sistem", "structura",
+    "functie", "relatie", "interactiune", "echilibru", "dinamica",
+    "cauza", "efect", "logica", "intuitie", "rationament", "deductie",
+    "inductie", "analogie", "metafora", "simbol", "semn", "limbaj",
+    "comunicare", "informatie", "cunoastere", "intelepciune", "ignoranta",
+    "experienta", "experiment", "observatie", "ipoteza", "teorie", "lege",
+    # Materiale
+    "lemn", "piatra", "metal", "plastic", "sticla", "cauciuc", "piele",
+    "textil", "hartie", "carton", "ceramica", "beton", "ciment", "mortar",
+    "vopsea", "lac", "ulei", "ceara", "rasina", "fibra", "compozit",
+    "aluminiu", "nichel", "cobalt", "titan", "wolfram", "platina",
+    # Gastronomie extinsa
+    "ciorba", "borscht", "supa", "creme", "bisque", "velouta",
+    "risotto", "paella", "ramen", "pho", "sushi", "tempura",
+    "wok", "grill", "rotiserie", "afumat", "marinat", "glazurat",
+    "caramelizat", "prajit", "fiert", "copt", "aburit", "crud",
+    "mousse", "parfait", "souffle", "fondant", "ganache", "praline",
+    # Geografice Romania
+    "carpati", "dunarea", "ardeal", "moldova", "dobrogea", "oltenia",
+    "muntenia", "banat", "maramures", "bucovina", "crisana",
+    "targoviste", "curtea", "sinaia", "brasov", "sibiu", "alba",
+    "constanta", "tulcea", "braila", "galati", "focsani", "buzau",
+    "ploiesti", "pitesti", "craiova", "drobeta", "resita", "deva",
+    "oradea", "cluj", "bistrita", "suceava", "iasi", "vaslui",
 ]
 
 
@@ -721,6 +945,81 @@ async def generate_passphrase(
 # 3. GENERATOR CODURI DE BARE
 # ---------------------------------------------------------------------------
 
+class BarcodeValidateRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=50, description="Codul de validat")
+    barcode_type: str = Field("ean13", description="Tipul: ean13")
+
+
+def _validate_ean13_checksum(code: str) -> dict:
+    """
+    Validate an EAN-13 checksum digit.
+    Returns {valid: bool, corrected: str, message: str}.
+    For 12-digit input, calculates and appends the correct check digit.
+    For 13-digit input, verifies the existing check digit.
+    """
+    digits_only = "".join(c for c in code if c.isdigit())
+
+    if len(digits_only) not in (12, 13):
+        return {
+            "valid": False,
+            "corrected": None,
+            "message": "EAN-13 necesita exact 12 sau 13 cifre",
+        }
+
+    # EAN-13 checksum: sum of odd-position digits + 3 * sum of even-position digits
+    # Positions are 1-based; check digit makes total % 10 == 0
+    base_digits = [int(d) for d in digits_only[:12]]
+    odd_sum = sum(base_digits[i] for i in range(0, 12, 2))
+    even_sum = sum(base_digits[i] for i in range(1, 12, 2))
+    total = odd_sum + 3 * even_sum
+    check_digit = (10 - (total % 10)) % 10
+    corrected = digits_only[:12] + str(check_digit)
+
+    if len(digits_only) == 12:
+        return {
+            "valid": True,
+            "corrected": corrected,
+            "message": f"Check digit calculat: {check_digit}",
+        }
+
+    # 13 digits: verify the last digit
+    existing_check = int(digits_only[12])
+    if existing_check == check_digit:
+        return {
+            "valid": True,
+            "corrected": corrected,
+            "message": "Checksum corect",
+        }
+    return {
+        "valid": False,
+        "corrected": corrected,
+        "message": f"Checksum incorect: cifra {existing_check} ar trebui sa fie {check_digit}",
+    }
+
+
+@router.post("/validate-barcode")
+async def validate_barcode(req: BarcodeValidateRequest):
+    """
+    Valideaza un cod de bare. Suporta EAN-13 checksum verification.
+    Returneaza daca codul e valid si versiunea corecta.
+    """
+    code = req.code.strip()
+    barcode_type = req.barcode_type.lower().strip()
+
+    if barcode_type in ("ean13", "ean-13"):
+        result = _validate_ean13_checksum(code)
+        return {
+            "code": code,
+            "type": "EAN-13",
+            **result,
+        }
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Validare nesuportata pentru tipul: {barcode_type}. Tipuri valide: ean13",
+    )
+
+
 class BarcodeRequest(BaseModel):
     data: str = Field(..., min_length=1, max_length=500, description="Textul/codul de encodat")
     barcode_type: str = Field("code128", description="Tipul: code128, ean13, code39, qr")
@@ -768,7 +1067,7 @@ async def generate_barcode(req: BarcodeRequest):
                        "Selecteaza Code128, EAN-13 sau Code39 pentru coduri de bare.",
             )
 
-        img = qrcode.make(req.data)
+        img = qrcode.make(req.data.encode("utf-8"))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
@@ -914,7 +1213,7 @@ async def barcode_preview_all(req: BarcodePreviewAllRequest):
     try:
         import qrcode
 
-        img = qrcode.make(data)
+        img = qrcode.make(data.encode("utf-8"))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)

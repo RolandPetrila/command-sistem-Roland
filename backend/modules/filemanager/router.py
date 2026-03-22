@@ -1,6 +1,6 @@
 """
 File Manager API — browse, preview, CRUD, upload, download, duplicate finder,
-fulltext search, tags, favorites, auto-organize, batch operations.
+fulltext search, tags, favorites, auto-organize, batch operations, trash.
 
 Endpoints:
   GET    /api/fm/browse               — list directory contents (with total_size, file_count, dir_count)
@@ -11,8 +11,9 @@ Endpoints:
   POST   /api/fm/mkdir                — create directory
   POST   /api/fm/rename               — rename file/directory
   POST   /api/fm/move                 — move file/directory
-  DELETE /api/fm/delete               — delete file/directory
+  DELETE /api/fm/delete               — soft-delete file/directory (move to .trash)
   POST   /api/fm/batch                — batch delete/move/tag operations
+  POST   /api/fm/batch-rename         — batch rename with prefix/suffix/replace
   POST   /api/fm/duplicates           — find duplicate files by hash
   GET    /api/fm/search/fulltext      — search file contents using FTS5 (recursive)
   POST   /api/fm/tags                 — add tag to file
@@ -22,14 +23,20 @@ Endpoints:
   POST   /api/fm/favorites            — toggle favorite on file
   GET    /api/fm/favorites            — list all favorited files
   POST   /api/fm/auto-organize        — auto-organize files by extension
+  GET    /api/fm/trash                — list trashed files
+  POST   /api/fm/trash/restore        — restore file from trash
+  POST   /api/fm/trash/empty          — permanently delete all trash
+  POST   /api/fm/trash/purge-old      — delete trash items older than 7 days
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import mimetypes
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,14 +75,21 @@ _ALLOWED_UPLOAD_EXTENSIONS = {
 # Max preview file size (1 MB)
 _MAX_PREVIEW_SIZE = 1 * 1024 * 1024
 
+# Trash directory (inside project root)
+_TRASH_DIR = _PROJECT_ROOT / ".trash"
+_TRASH_MANIFEST = _TRASH_DIR / "manifest.json"
+_TRASH_MAX_AGE_DAYS = 7
+
 
 def _resolve(rel_path: str) -> Path:
     """Resolve relative path safely within project root."""
     clean = rel_path.replace("\\", "/").strip("/")
-    target = (_PROJECT_ROOT / clean).resolve()
-
-    if target.is_symlink():
+    # Check for symlink BEFORE resolving — .resolve() follows symlinks and would
+    # return the target path, making is_symlink() always return False afterward.
+    unresolved = _PROJECT_ROOT / clean
+    if unresolved.is_symlink():
         raise HTTPException(403, "Acces interzis: symlink detectat")
+    target = unresolved.resolve()
 
     try:
         target.relative_to(_PROJECT_ROOT.resolve())
@@ -310,14 +324,37 @@ async def rename_item(req: RenameRequest):
         raise HTTPException(404, "Nu exista")
 
     new_path = target.parent / req.new_name
-    if new_path.exists():
+
+    # On Windows, two names that differ only in case refer to the same filesystem
+    # entry. Skip the collision check in that case and use a two-step rename to
+    # allow case-only renames (e.g. file.txt → File.txt).
+    case_only_rename = (
+        os.path.normcase(str(target)) == os.path.normcase(str(new_path))
+        and target.name != req.new_name
+    )
+
+    if not case_only_rename and new_path.exists():
         raise HTTPException(409, f"Exista deja: {req.new_name}")
 
     # Validate new path is still within project root
     _resolve(_rel(target.parent) + "/" + req.new_name)
 
-    target.rename(new_path)
+    if case_only_rename:
+        # Two-step rename to avoid Windows case-insensitive collision
+        tmp_path = target.parent / (target.name + ".__tmp__")
+        target.rename(tmp_path)
+        tmp_path.rename(new_path)
+    else:
+        target.rename(new_path)
     old_name = target.name
+
+    # Update FTS5 index: rename old path entry to new path
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE file_index SET file_path = ? WHERE file_path = ?",
+            (_rel(new_path), req.path),
+        )
+        await db.commit()
 
     await log_activity(action="filemanager.rename", summary=f"Rename: {old_name} -> {req.new_name}",
                        details={"old_path": req.path, "new_path": _rel(new_path), "old_name": old_name, "new_name": req.new_name})
@@ -348,6 +385,14 @@ async def move_item(req: MoveRequest):
 
     shutil.move(str(source), str(new_path))
 
+    # Update FTS5 index: old path entry moves to new location
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE file_index SET file_path = ? WHERE file_path = ?",
+            (_rel(new_path), req.path),
+        )
+        await db.commit()
+
     await log_activity(action="filemanager.move", summary=f"Move: {source.name} -> {req.destination}",
                        details={"old_path": req.path, "new_path": _rel(new_path), "name": source.name})
 
@@ -375,6 +420,39 @@ async def _cascade_delete_dir_entries(dir_path: str) -> None:
         await db.commit()
 
 
+def _load_trash_manifest() -> list[dict]:
+    """Load the trash manifest file."""
+    if not _TRASH_MANIFEST.exists():
+        return []
+    try:
+        return json.loads(_TRASH_MANIFEST.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_trash_manifest(entries: list[dict]) -> None:
+    """Save the trash manifest file."""
+    _TRASH_DIR.mkdir(exist_ok=True)
+    _TRASH_MANIFEST.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _move_to_trash(target: Path, rel_path: str) -> dict:
+    """Move a file/directory to .trash/ and return manifest entry."""
+    _TRASH_DIR.mkdir(exist_ok=True)
+    # Use timestamp to avoid name collisions in trash
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    trash_name = f"{ts}__{target.name}"
+    trash_dest = _TRASH_DIR / trash_name
+    shutil.move(str(target), str(trash_dest))
+    return {
+        "filename": target.name,
+        "trash_name": trash_name,
+        "original_path": rel_path,
+        "is_dir": target.is_dir() if target.exists() else trash_dest.is_dir(),
+        "deleted_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
 @router.delete("/delete")
 async def delete_item(path: str = Query(...)):
     target = _resolve(path)
@@ -387,10 +465,12 @@ async def delete_item(path: str = Query(...)):
 
     name = target.name
     is_dir = target.is_dir()
-    if is_dir:
-        shutil.rmtree(target)
-    else:
-        target.unlink()
+
+    # Soft delete: move to .trash/
+    entry = _move_to_trash(target, path)
+    manifest = _load_trash_manifest()
+    manifest.append(entry)
+    _save_trash_manifest(manifest)
 
     # Cascade: clean up orphaned DB entries (tags, favorites, FTS)
     try:
@@ -401,10 +481,10 @@ async def delete_item(path: str = Query(...)):
     except Exception as exc:
         logger.warning("Cascade delete DB cleanup failed for %s: %s", path, exc)
 
-    await log_activity(action="filemanager.delete", summary=f"Delete: {name}",
+    await log_activity(action="filemanager.delete", summary=f"Delete (trash): {name}",
                        details={"path": path, "name": name})
 
-    return {"deleted": path}
+    return {"deleted": path, "trash": True}
 
 
 # ---------- Batch Operations ----------
@@ -431,6 +511,7 @@ async def batch_operations(req: BatchRequest):
     errors = []
 
     if req.action == "delete":
+        manifest = _load_trash_manifest()
         for p in req.paths:
             try:
                 target = _resolve(p)
@@ -442,10 +523,9 @@ async def batch_operations(req: BatchRequest):
                     continue
                 name = target.name
                 is_dir = target.is_dir()
-                if is_dir:
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
+                # Soft delete: move to .trash/
+                trash_entry = _move_to_trash(target, p)
+                manifest.append(trash_entry)
                 # Cascade: clean up orphaned DB entries
                 try:
                     if is_dir:
@@ -457,6 +537,7 @@ async def batch_operations(req: BatchRequest):
                 success.append({"path": p, "name": name})
             except Exception as e:
                 errors.append({"path": p, "error": str(e)})
+        _save_trash_manifest(manifest)
 
     elif req.action == "move":
         dest_dir = _resolve(req.destination)
@@ -519,6 +600,243 @@ async def batch_operations(req: BatchRequest):
         "errors": errors,
         "total": len(req.paths),
     }
+
+
+# ---------- Batch Rename ----------
+
+class BatchRenameRequest(BaseModel):
+    files: list[str]
+    operation: Literal["prefix", "suffix", "replace"]
+    value: str = ""
+    replace_from: str = ""
+    replace_to: str = ""
+    path: str = ""
+
+
+@router.post("/batch-rename")
+async def batch_rename(req: BatchRenameRequest):
+    """Batch rename files with prefix, suffix, or find & replace."""
+    if not req.files:
+        raise HTTPException(400, "Lista de fisiere este goala")
+
+    if req.operation in ("prefix", "suffix") and not req.value:
+        raise HTTPException(400, "Valoarea este obligatorie pentru prefix/suffix")
+    if req.operation == "replace" and not req.replace_from:
+        raise HTTPException(400, "'replace_from' este obligatoriu pentru operatia replace")
+
+    renamed = []
+    errors = []
+
+    # Pre-compute all new names first to check for conflicts
+    planned: list[tuple[Path, str]] = []
+    for fname in req.files:
+        # Validate: no path separators in filename
+        if "/" in fname or "\\" in fname:
+            errors.append({"old_name": fname, "error": "Numele nu trebuie sa contina separatori de cale"})
+            continue
+
+        file_path = _resolve(f"{req.path}/{fname}" if req.path else fname)
+        if not file_path.exists():
+            errors.append({"old_name": fname, "error": "Fisierul nu exista"})
+            continue
+
+        stem = file_path.stem
+        ext = file_path.suffix
+
+        if req.operation == "prefix":
+            new_name = f"{req.value}{fname}"
+        elif req.operation == "suffix":
+            new_name = f"{stem}{req.value}{ext}"
+        elif req.operation == "replace":
+            new_name = fname.replace(req.replace_from, req.replace_to)
+        else:
+            new_name = fname
+
+        if new_name == fname:
+            errors.append({"old_name": fname, "error": "Nicio modificare"})
+            continue
+
+        # Validate new name doesn't have path separators
+        if "/" in new_name or "\\" in new_name:
+            errors.append({"old_name": fname, "error": "Noul nume nu poate contine separatori de cale"})
+            continue
+
+        planned.append((file_path, new_name))
+
+    # Check for conflicts among planned renames and existing files
+    new_names_set: set[str] = set()
+    for file_path, new_name in planned:
+        dest = file_path.parent / new_name
+        if new_name.lower() in new_names_set:
+            errors.append({"old_name": file_path.name, "error": f"Conflict: '{new_name}' apare de mai multe ori"})
+            continue
+        if dest.exists() and dest != file_path:
+            errors.append({"old_name": file_path.name, "error": f"Exista deja: {new_name}"})
+            continue
+        new_names_set.add(new_name.lower())
+
+    # Now perform the renames (only for entries not in errors)
+    error_names = {e["old_name"] for e in errors}
+    for file_path, new_name in planned:
+        if file_path.name in error_names:
+            continue
+        try:
+            dest = file_path.parent / new_name
+            file_path.rename(dest)
+            renamed.append({"old_name": file_path.name, "new_name": new_name})
+        except Exception as e:
+            errors.append({"old_name": file_path.name, "error": str(e)})
+
+    await log_activity(
+        action="filemanager.batch_rename",
+        summary=f"Batch rename ({req.operation}): {len(renamed)} redenumit, {len(errors)} erori",
+        details={
+            "operation": req.operation,
+            "total": len(req.files),
+            "renamed_count": len(renamed),
+            "error_count": len(errors),
+        },
+    )
+
+    return {"renamed": renamed, "errors": errors}
+
+
+# ---------- Trash ----------
+
+@router.get("/trash")
+async def list_trash():
+    """List files in trash with deletion dates and total size."""
+    manifest = _load_trash_manifest()
+    items = []
+    total_size = 0
+    for entry in manifest:
+        trash_path = _TRASH_DIR / entry["trash_name"]
+        if trash_path.exists():
+            size = trash_path.stat().st_size if trash_path.is_file() else sum(
+                f.stat().st_size for f in trash_path.rglob("*") if f.is_file()
+            )
+            total_size += size
+            items.append({
+                "filename": entry["filename"],
+                "trash_name": entry["trash_name"],
+                "original_path": entry["original_path"],
+                "is_dir": entry.get("is_dir", False),
+                "deleted_at": entry["deleted_at"],
+                "size": size,
+            })
+    # Purge old entries automatically
+    await _purge_old_trash_entries()
+    return {"items": items, "count": len(items), "total_size": total_size}
+
+
+class TrashRestoreRequest(BaseModel):
+    trash_name: str
+
+
+@router.post("/trash/restore")
+async def restore_from_trash(req: TrashRestoreRequest):
+    """Restore a file from trash to its original location."""
+    manifest = _load_trash_manifest()
+    entry = next((e for e in manifest if e["trash_name"] == req.trash_name), None)
+    if not entry:
+        raise HTTPException(404, "Fisierul nu a fost gasit in cos")
+
+    trash_path = _TRASH_DIR / entry["trash_name"]
+    if not trash_path.exists():
+        # Remove stale entry from manifest
+        manifest = [e for e in manifest if e["trash_name"] != req.trash_name]
+        _save_trash_manifest(manifest)
+        raise HTTPException(404, "Fisierul nu mai exista in cos")
+
+    # Restore to original location
+    original = _PROJECT_ROOT / entry["original_path"].replace("\\", "/").strip("/")
+    # Ensure parent directory exists
+    original.parent.mkdir(parents=True, exist_ok=True)
+    if original.exists():
+        raise HTTPException(409, f"Fisierul exista deja la locatia originala: {entry['original_path']}")
+
+    shutil.move(str(trash_path), str(original))
+
+    # Remove from manifest
+    manifest = [e for e in manifest if e["trash_name"] != req.trash_name]
+    _save_trash_manifest(manifest)
+
+    await log_activity(
+        action="filemanager.trash_restore",
+        summary=f"Restaurat din cos: {entry['filename']}",
+        details={"filename": entry["filename"], "original_path": entry["original_path"]},
+    )
+
+    return {"restored": entry["filename"], "path": entry["original_path"]}
+
+
+@router.post("/trash/empty")
+async def empty_trash():
+    """Permanently delete all files in trash."""
+    manifest = _load_trash_manifest()
+    deleted_count = 0
+    for entry in manifest:
+        trash_path = _TRASH_DIR / entry["trash_name"]
+        if trash_path.exists():
+            if trash_path.is_dir():
+                shutil.rmtree(trash_path)
+            else:
+                trash_path.unlink()
+            deleted_count += 1
+
+    _save_trash_manifest([])
+
+    await log_activity(
+        action="filemanager.trash_empty",
+        summary=f"Cos golit: {deleted_count} fisiere sterse permanent",
+        details={"count": deleted_count},
+    )
+
+    return {"deleted_count": deleted_count}
+
+
+async def _purge_old_trash_entries() -> int:
+    """Remove trash entries older than 7 days. Returns count purged."""
+    manifest = _load_trash_manifest()
+    now = datetime.now(tz=timezone.utc)
+    keep = []
+    purged = 0
+    for entry in manifest:
+        try:
+            deleted_at = datetime.fromisoformat(entry["deleted_at"])
+            age_days = (now - deleted_at).days
+        except (KeyError, ValueError):
+            age_days = _TRASH_MAX_AGE_DAYS + 1  # invalid entry -> purge
+
+        if age_days > _TRASH_MAX_AGE_DAYS:
+            trash_path = _TRASH_DIR / entry["trash_name"]
+            if trash_path.exists():
+                if trash_path.is_dir():
+                    shutil.rmtree(trash_path)
+                else:
+                    trash_path.unlink()
+            purged += 1
+        else:
+            keep.append(entry)
+
+    if purged > 0:
+        _save_trash_manifest(keep)
+    return purged
+
+
+@router.post("/trash/purge-old")
+async def purge_old_trash():
+    """Delete trash items older than 7 days."""
+    purged = await _purge_old_trash_entries()
+
+    if purged > 0:
+        await log_activity(
+            action="filemanager.trash_purge",
+            summary=f"Purge cos: {purged} fisiere vechi sterse",
+            details={"purged": purged, "max_age_days": _TRASH_MAX_AGE_DAYS},
+        )
+
+    return {"purged": purged, "max_age_days": _TRASH_MAX_AGE_DAYS}
 
 
 # ---------- Duplicate Finder ----------

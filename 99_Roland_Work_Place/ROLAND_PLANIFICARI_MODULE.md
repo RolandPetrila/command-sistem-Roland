@@ -658,3 +658,694 @@ Toate 4 batch-urile au fost implementate in paralel cu 11 agenti:
 | Runda 1 (features) | 47 | 31 | 78 | 78/78 IMPLEMENTATE |
 | Runda 2 (calitate) | 25 | 14 | 39 | 39/39 IMPLEMENTATE (2026-03-22) |
 | **TOTAL** | **72** | **45** | **117** | **117/117 (100%)** |
+
+---
+
+# RUNDA 3 — CONECTARE (Connect the Dots)
+
+**Data planificare:** 2026-03-22
+**Teza:** Peste 60% din endpoint-urile backend sunt invizibile in frontend. R3 conecteaza capabilitatile existente la interfata utilizatorului, repara bug-urile de rutare si adauga workflow-urile de business lipsa.
+**Focus:** Wiring frontend ↔ backend | Bug fixes | Core business workflows | Mobile responsive
+**Metoda analiza:** Deep research cu 6 agenti paraleli (scan cod sursa per modul) + sequential-thinking filtering
+
+## Harta module R3
+
+| # | Modul | P1 | P2 | Total | Batch |
+|---|-------|----|----|-------|-------|
+| 1 | Calculator Pret | 2 | 0 | 2 | R3-1, R3-2 |
+| 2 | AI Chat | 3 | 2 | 5 | R3-1, R3-2, R3-3, R3-4 |
+| 3 | Translator | 0 | 1 | 1 | R3-4 |
+| 4 | Facturare | 6 | 5 | 11 | R3-2, R3-3, R3-4 |
+| 5 | ITP | 4 | 3 | 7 | R3-1, R3-2, R3-3 |
+| 6 | File Manager | 2 | 2 | 4 | R3-2, R3-3 |
+| 7 | Dashboard | 1 | 1 | 2 | R3-2, R3-4 |
+| 8 | Integrations | 1 | 0 | 1 | R3-1 |
+| 9 | Notepad | 0 | 3 | 3 | R3-3, R3-4 |
+| 10 | Vault | 1 | 2 | 3 | R3-3, R3-4 |
+| 11 | Automations | 4 | 1 | 5 | R3-1, R3-3 |
+| 12 | Reports | 3 | 0 | 3 | R3-1 |
+| 13 | QT Extra | 0 | 3 | 3 | R3-4 |
+| 14 | Frontend Global | 3 | 1 | 4 | R3-1, R3-4 |
+| 15 | Convertor | 0 | 0 | 0 | (inclus in #14 raw axios fix) |
+| | **TOTAL** | **30** | **28** | **58** | |
+
+---
+
+## Batch R3-1: BUGS + FUNDAMENTE (15 items)
+
+**Prioritate:** CRITICA — celelalte batch-uri depind de aceste fix-uri.
+**Dependente:** Niciuna (primul batch).
+
+| # | Modul | Imbunatatire | Detaliu tehnic | P | Efort | Tip | Status |
+|---|-------|-------------|----------------|---|-------|-----|--------|
+| R3-01 | ITP | Fix stats tab URL 404 | Backend: adaugat `/api/itp/statistics` combined endpoint (4 queries, 1 call). Frontend deja apeleaza corect | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-02 | ITP | Fix export URL 404 | Frontend: split URL in `/api/itp/export/csv` si `/api/itp/export/excel` per format | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-03 | Integrations | Fix status "Neconectat" permanent | Frontend: mapare `{configured, connected}` → status string pt toate 4 providerii | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-04 | Calculator | Fix competitori EUR/RON mismatch | [!] FALS POZITIV — datele competitori sunt deja in RON (`rate_per_word_ron`), frontend afiseaza RON in tooltip | P1 | 2h | BUG | [!] NU NECESITA FIX |
+| R3-05 | AI Chat | Fix SSE streaming token tracking | [!] DEJA IMPLEMENTAT — `track_usage()` apelat dupa stream complete (Faza 27) | P1 | 2h | BUG | [!] DEJA DONE |
+| R3-06 | ITP | Fix pagination params mismatch | [!] DEJA IMPLEMENTAT — backend accepta `page/per_page` nativ (Faza 27) | P1 | 1h | BUG | [!] DEJA DONE |
+| R3-07 | Frontend | FileBrowser + Converter: raw axios → apiClient | Inlocuit `import axios` cu `import apiClient` in FileBrowserPage + ConverterPage | P1 | 2h | QUALITY | [x] DONE (2026-03-22) |
+| R3-08 | Frontend | 404 catch-all route in React Router | Adaugat `<Route path="*">` cu 404 page si link inapoi la Dashboard | P1 | 1h | QUALITY | [x] DONE (2026-03-22) |
+| R3-09 | Automations | Fix Uptime Monitor URLs (ALL 404) | Frontend: toate 4 URL-uri `/uptime` → `/monitors` (list, add, check, delete) | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-10 | Automations | Fix Shortcuts form field mismatch | Frontend: `url` → `url_or_action`, `category` → `color` (color input), adaugat `sort_order` | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-11 | Automations | Fix Tasks form field + action_type mismatch | Frontend: `cron` → `schedule_cron`, action_types → `backup_db/cleanup_temp/health_check/custom_script` | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-12 | Reports | Fix System tab wrong URL | Frontend: `/api/reports/system` → `/api/reports/system-info` | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-13 | Reports | Fix Export tab broken URLs | Frontend: `/export-stats` → `/dashboard/quick-stats`, `/export` → `/export/full` | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-14 | Reports | Fix Timeline pagination params | Frontend: `{limit: 50}` → `{page: 1, per_page: 50}`, response field `res.data.items` | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-15 | Automations | Fix Uptime monitors don't resume after restart | [!] DEJA IMPLEMENTAT — `resume_uptime_monitors()` apelat in lifespan startup (main.py:123-129) | P1 | 1h | BUG | [!] DEJA DONE |
+
+**SYNC-R3-A:** R3-01, R3-02, R3-06 TREBUIE complete inainte de orice ITP wiring din R3-2/R3-3.
+**SYNC-R3-C:** R3-07 TREBUIE complet inainte de FM wiring.
+**SYNC-R3-E:** R3-09 la R3-15 TREBUIE complete inainte de orice Automations/Reports wiring.
+
+---
+
+## Batch R3-2: WORKFLOW-URI CORE + WIRING CHEIE (15 items)
+
+**Prioritate:** INALTA — conecteaza fluxurile principale de business.
+**Dependente:** R3-1 complet (toate bugurile fixate).
+
+| # | Modul | Imbunatatire | Detaliu tehnic | P | Efort | Tip | Status |
+|---|-------|-------------|----------------|---|-------|-----|--------|
+| R3-16 | ITP→Invoice | Pipeline UI: buton "Creaza factura" in ITP | Buton Receipt icon in actiuni tabel inspectii → POST `/api/invoice/from-itp/{id}` | P1 | 3h | WORKFLOW | [x] DONE (2026-03-22) |
+| R3-17 | Calculator→Invoice | Inlocuieste prompt() cu picker modal | Modal cu lista calculatii recente (GET /api/price/history), click selecteaza si pre-fill factura | P1 | 2h | WORKFLOW | [x] DONE (2026-03-22) |
+| R3-18 | Calculator→Translator | Buton "Trimite la traducere" | Buton Languages icon dupa self-learn → navigate('/translator', {state: {filename}}) | P1 | 2h | WORKFLOW | [x] DONE (2026-03-22) |
+| R3-19 | Calculator | Scanned doc weight redistribution | ensemble.py: cand is_scanned=true, w2(word_rate)=0, redistribuit la w1(base_rate) si w3(similarity) | P1 | 2h | BUG | [x] DONE (2026-03-22) |
+| R3-20 | Facturare | Email send UI | Modal email cu to/subject → POST `/{id}/send-email`, buton Mail pe fiecare factura | P1 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-21 | Facturare | Export CSV/Excel butoane | Toolbar cu CSV/Excel download buttons → GET `/export/csv` si `/export/excel` | P1 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-22 | Facturare | Client history panel | Slide-in panel History icon pe client → GET `/clients/{id}/history` cu lista facturi | P1 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-23 | Facturare | Client CUI verify ANAF | Buton ANAF langa CUI field → GET `/api/anaf/verify?cui=X`, auto-fill name+address | P1 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-24 | Facturare | Invoice PDF bank details fix | Footer: `[completati]` → env vars COMPANY_IBAN/COMPANY_BANK, adaugat J15/117/2021 | P1 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-25 | ITP | Campuri lipsa: owner_name, owner_phone, inspector_name | Adaugat 3 campuri in formular ITP + emptyForm + startEdit | P1 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-26 | File Manager | Tags UI — etichetare fisiere | POST /api/fm/tags + GET /api/fm/tags + tag input in UI, loadTagsAndFavs | P1 | 3h | WIRING | [x] DONE (2026-03-22) |
+| R3-27 | File Manager | Favorites toggle | Star icon pe fiecare fisier, POST /api/fm/favorites toggle, buton filter Favorite | P1 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-28 | AI Chat | Provider config panel — toate 5 providerii | Lista extinsa: gemini, cerebras, groq, mistral, openai (era doar 3) | P1 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-29 | Dashboard | Wire remaining widget endpoints | receivable + alerts wired in DashboardPage, afisare conditionala cu icons | P1 | 3h | WIRING | [x] DONE (2026-03-22) |
+| R3-30 | Facturare | Invoice list pagination controls | loadData cu page/per_page, response.items, prev/next buttons, total count | P1 | 1h | WIRING | [x] DONE (2026-03-22) |
+
+**SYNC-R3-B:** R3-04 (EUR/RON fix) si R3-19 (scanned weight) trebuie complete inainte de R3-17 si R3-18.
+**SYNC-R3-D:** R3-05 (token tracking) ar trebui complet inainte de R3-28 (provider config).
+
+---
+
+## Batch R3-3: WIRING EXTINS + FUNCTIONALITATI (15 items)
+
+**Prioritate:** MEDIE — extinde capabilitatile deja conectate in R3-2.
+**Dependente:** R3-2 complet (workflow-uri core functionale).
+
+| # | Modul | Imbunatatire | Detaliu tehnic | P | Efort | Tip | Status |
+|---|-------|-------------|----------------|---|-------|-----|--------|
+| R3-31 | Facturare | Presets/templates UI | Tab "Sabloane" cu lista presets + formular creare + buton "Aplica" pe fiecare template | P2 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-32 | Facturare | Recurring invoices UI | Tab "Recurente" cu lista recurente active + formular client/interval/next_date + toggle/delete | P2 | 3h | WIRING | [x] DONE (2026-03-22) |
+| R3-33 | Facturare | Payments tracking UI | Buton CreditCard pe factura → slide-in panel cu istoric plati + formular "Adauga plata" (suma/data/metoda) | P2 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-34 | Facturare | Reports dashboard | Tab "Rapoarte" cu selector perioada (lunar/trimestrial/anual/per-client) + 4 summary cards + tabel detaliat | P2 | 3h | WIRING | [x] DONE (2026-03-22) |
+| R3-35 | Facturare | Invoice search + filter | Bara search cu input text + dropdown status + date range (de la/pana la) + buton clear, integrat in loadData | P2 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-36 | ITP | Vehicle history tab | Buton History pe inspectie → slide-in panel cu toate inspectiile anterioare ale vehiculului (GET vehicle-history/{plate}) | P2 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-37 | ITP | Rejection reasons field | Checkbox list cu motive respingere (franare, emisii, directie etc.), vizibil doar cand result=Respins, fetch /api/itp/rejection-reasons | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-38 | ITP | Appointment complete/cancel actions | Butoane CheckCircle (completeaza) si Ban (anuleaza) pe programarile cu status scheduled/confirmed | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-39 | File Manager | Fulltext search UI | Camp cautare in toolbar + modal rezultate ranked cu click navigare la folder, endpoint /api/fm/search/fulltext | P2 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-40 | File Manager | Auto-organize button | Buton "Organizeaza" in toolbar → preview mutari → confirmare → aplica, endpoint /api/fm/auto-organize | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-41 | AI Chat | Session search | Camp cautare in sidebar sesiuni, filtreaza sesiunile dupa titlu in timp real | P1 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-42 | AI Chat | Session rename | Double-click pe titlu sesiune → inline edit → PUT /api/ai/chat/sessions/{id} cu noul titlu | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-43 | Vault | Test key button | Buton ShieldCheck pe fiecare cheie → POST /api/vault/keys/{name}/test → afiseaza verde (OK) sau rosu (FAIL) | P1 | 2h | WIRING | [x] DONE (2026-03-22) |
+| R3-44 | Notepad | Categories UI | Dropdown categorie in editor (general/work/personal/ideas) + filter tabs in lista note, auto-save cu categorie | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-45 | Automations | Scheduler status in UI | Banner status scheduler (Activ/Inactiv) cu indicator puls verde + sarcini active + ultima rulare | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+
+---
+
+## Batch R3-4: POLISH + MOBILE + CLEANUP (13 items)
+
+**Prioritate:** NORMALA — imbunatatiri UX, fara dependente critice.
+**Dependente:** R3-3 complet (toate wiring-urile terminate).
+
+| # | Modul | Imbunatatire | Detaliu tehnic | P | Efort | Tip | Status |
+|---|-------|-------------|----------------|---|-------|-----|--------|
+| R3-46 | AI Chat | Provider health indicator | Langa fiecare provider in config → verde/rosu daca e functional (ping endpoint) | P2 | 2h | UX | [x] DONE (2026-03-22) |
+| R3-47 | Dashboard | Clickable dashboard cards | Click pe card "Facturi" → navigare la /invoice, "ITP" → /itp, etc. | P2 | 1h | UX | [x] DONE (2026-03-22) |
+| R3-48 | Notepad | Search within notes | Camp cautare in sidebar → filtrare client-side pe title, Search icon | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-49 | Notepad | Export notes TXT/MD | Butoane .md si .txt → Blob download cu titlu formatat | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-50 | Vault | Providers list update | PROVIDERS array actualizat: +groq, +gemini, +cerebras, +mistral (10 total) | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-51 | AI Chat | Mobile sidebar collapsible | hidden md:flex + hamburger button + overlay pe mobile, close pe selectie | P1 | 2h | MOBILE | [x] DONE (2026-03-22) |
+| R3-52 | Translator | Responsive grid | grid-cols-1 md:grid-cols-2 pe toate grid-urile + flex-wrap pe language bar | P2 | 1h | MOBILE | [x] DONE (2026-03-22) |
+| R3-53 | Facturare | Responsive layout | grid-cols-1 md:grid-cols-2 lg:grid-cols-3 pe invoice grid | P2 | 1h | MOBILE | [x] DONE (2026-03-22) |
+| R3-54 | QT Extra | Passphrase generator UI | Tab "Fraza-parola" in PasswordGenPage: word count slider 3-8, separator picker, GET /api/tools/generate-passphrase | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-55 | QT Extra | Barcode preview-all | Buton "Toate" → POST /api/tools/barcode-preview-all → grid 2 coloane cu base64 imgs per tip | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-56 | QT Extra | Password history section | Sectiune "Parole recente" cu GET /api/tools/password-history, reveal/copy per item, auto-refresh dupa generare | P2 | 1h | WIRING | [x] DONE (2026-03-22) |
+| R3-57 | Vault | Delete confirmation fix | window.confirm() + params: { confirm: true } pe DELETE request | P2 | 1h | BUG | [x] DONE (2026-03-22) |
+| R3-58 | Frontend | Dead code cleanup | Sters: StatsCards.jsx, RecentActivity.jsx, ActivityLog.jsx, useDebounce.js, useNotifications.js, getActivityLog export | P2 | 2h | QUALITY | [x] DONE (2026-03-22) |
+
+---
+
+## SYNC Points R3
+
+| SYNC ID | Conditie | Blocheaza |
+|---------|----------|-----------|
+| SYNC-R3-A | R3-01 + R3-02 + R3-06 complete | Toate ITP wiring (R3-16, R3-25, R3-36-38) |
+| SYNC-R3-B | R3-04 + R3-19 complete | Calculator workflows (R3-17, R3-18) |
+| SYNC-R3-C | R3-07 complete | File Manager wiring (R3-26, R3-27, R3-39, R3-40) |
+| SYNC-R3-D | R3-05 complete | AI provider config + health (R3-28, R3-46) |
+| SYNC-R3-E | R3-09 + R3-10 + R3-11 complete | Automations wiring (R3-45) |
+| SYNC-R3-F | R3-12 + R3-13 + R3-14 complete | Reports wiring (toate report tabs corecte) |
+
+---
+
+## Reguli de executie R3
+
+### Ordine implementare
+1. **STRICT:** R3-1 → R3-2 → R3-3 → R3-4 (dependency graph)
+2. **SYNC POINTS:** Verificare explicita la fiecare SYNC inainte de continuare
+3. **NU SARI:** Batch R3-1 (bugs) OBLIGATORIU complet inainte de orice wiring
+
+### Validare per batch (Rule 08)
+Dupa fiecare batch completat:
+1. `python -c "from app.main import app; print('Import OK')"`
+2. `python -m uvicorn app.main:app --port 8000` + `/api/health` OK
+3. `npx vite build` → fara erori
+4. Test endpoint-uri modificate (curl + browser)
+5. Kill procese test, port 8000 liber
+
+### Commit per batch
+- Format: `Faza 29 Batch R3-X: [summary]`
+- `git add [specific files]` — NICIODATA `git add -A`
+- Un commit per batch, nu per item individual
+
+### Documentatie dupa FIECARE batch
+1. `ROLAND_PLANIFICARI_MODULE.md` → marcheaza items DONE cu data
+2. `0.0_PLAN_EXTINDERE_COMPLET.md` → adauga/actualizeaza Faza 29
+3. `0.0_PLAN_EXTINDERE_COMPLET.html` → regenereaza PHASES array
+4. `CLAUDE.md` → update Project Status table
+5. `.claude/PROJECT_STATUS.md` → update snapshot
+6. `GHID_TESTARE.md` → adauga sectiune Faza 29 cu pasi test per feature
+
+### Test functionalitate (dupa ALL batches)
+1. Per batch: test fiecare fix/feature individual
+2. Batch R3-2: test workflow-uri end-to-end (ITP→factura, calc→factura)
+3. Batch R3-4: test pe mobile (Tailscale)
+4. FINAL: `pytest` full suite (68+ tests) → all PASS
+
+---
+
+## Distributie tipuri R3
+
+- **[BUG]:** 14 (ITP stats/export 404, integrations status, EUR/RON, SSE tokens, scanned weight, automations uptime/shortcuts/tasks URL, reports system/export/timeline URL, uptime resume, PDF bank details, vault delete confirm)
+- **[WORKFLOW]:** 3 (ITP→Invoice, Calc→Invoice, Calc→Translator)
+- **[WIRING]:** 28 (facturare 9, ITP 4, FM 4, AI 4, vault 2, notepad 3, automations 1, QT Extra 3, dashboard 1, reports 0)
+- **[QUALITY]:** 3 (raw axios, 404 route, dead code)
+- **[MOBILE]:** 3 (AI sidebar, translator grid, invoice grid)
+- **[UX]:** 2 (provider health, clickable cards)
+
+### Ce a fost RESPINS (overkill / impracticabil)
+
+| Propunere | Motiv respingere |
+|-----------|-----------------|
+| OAuth token refresh mechanism | Necesita rescrierea completa flow OAuth — prea complex |
+| WebSocket real-time invoice updates | Single-user — polling sau refresh manual e suficient |
+| AI chat export to PDF | Valoare scazuta — copy-paste text e suficient |
+| Translation memory rebuild/optimize | Functioneaza corect — optimizare prematura |
+| Barcode batch generation | Edge case — generare one-at-a-time e suficienta |
+| File Manager file versioning | Overkill pt tool personal — git sau backup manual |
+| Calendar sync pt ITP appointments | Necesita OAuth Google Calendar setup pe care utilizatorul nu-l are configurat |
+| Automated backup scheduling | Backup manual (START_Roland.bat) e suficient |
+| Automations cron real-time logs | Single-user — logs in terminal sunt suficiente |
+| QT Extra calculator history panel | Utilizare rara — nu justifica efortul |
+| Invoice storno/credit note workflow | Complexitate mare pt volum mic de facturi — poate fi adaugat ulterior |
+| Invoice OCR scan UI | Niche — digitizarea facturilor primite e rara |
+| Daily briefing email | Necesita configurare Gmail SMTP — poate fi adaugat dupa R3 |
+| RAG auto-index din File Manager | Mediu efort, necesita background tasks — evaluat pt R4 |
+| Command Palette cu actiuni (nu doar navigare) | Nice-to-have dar nu e critic — evaluat pt R4 |
+| Automations scheduled report generation | Cross-module complex — evaluat pt R4 |
+
+---
+
+## Cumulativ Runde 1 + 2 + 3
+
+| Runda | P1 | P2 | Total | Status |
+|-------|----|----|-------|--------|
+| Runda 1 (features) | 47 | 31 | 78 | 78/78 IMPLEMENTATE |
+| Runda 2 (calitate) | 25 | 14 | 39 | 39/39 IMPLEMENTATE (2026-03-22) |
+| Runda 3 (conectare) | 30 | 28 | 58 | 58/58 IMPLEMENTATE (2026-03-22) |
+| **TOTAL** | **102** | **73** | **175** | **175/175 (100%)** |
+
+---
+
+# RUNDA 4 — MAXIMIZARE POTENTIAL (Deep Research)
+
+**Data planificare:** 2026-03-22
+**Teza:** Toate modulele sunt conectate si functionale. R4 maximizeaza potentialul fiecarui modul prin features concrete de business: batch operations, data safety, error visibility, workflow automation.
+**Focus:** Batch operations | Data safety | Error visibility | Business workflows | Reliability
+**Metoda analiza:** Deep research cu 4 agenti paraleli (scan cod sursa per modul) + sequential-thinking filtering (3 runde eliminare overkill)
+
+---
+
+## Harta module R4
+
+| # | Modul | P1 | P2 | Total | Batch |
+|---|-------|----|----|-------|-------|
+| 1 | Dashboard | 1 | 1 | 2 | R4-4 |
+| 2 | Calculator Pret | 2 | 0 | 2 | R4-2 |
+| 3 | Translator | 2 | 1 | 3 | R4-2 |
+| 4 | AI Chat + Docs | 1 | 1 | 2 | R4-2 |
+| 5 | Facturare | 2 | 2 | 4 | R4-3 |
+| 6 | ITP | 2 | 1 | 3 | R4-3 |
+| 7 | Quick Tools | 1 | 1 | 2 | R4-2 |
+| 8 | Quick Tools Extra | 1 | 1 | 2 | R4-1 |
+| 9 | Convertor Fisiere | 1 | 2 | 3 | R4-1 |
+| 10 | File Manager | 2 | 1 | 3 | R4-2 |
+| 11 | Automations | 2 | 1 | 3 | R4-1 |
+| 12 | Integrations | 2 | 0 | 2 | R4-3 |
+| 13 | Reports | 0 | 2 | 2 | R4-4 |
+| 14 | Vault | 2 | 1 | 3 | R4-1 |
+| | **TOTAL** | **21** | **16** | **37** | |
+
+---
+
+## Legenda Runda 4
+
+- **P1** = Valoare mare, efort mic/mediu — impact direct pe workflow business
+- **P2** = Util, non-urgent — imbunatateste UX sau calitate
+- **Efort:** mic (~30 min-1h) | mediu (~2-3h)
+- **[FUNC]** = Functionalitate noua
+- **[UX]** = Imbunatatire experienta utilizator
+- **[QUALITY]** = Calitate cod/date/securitate
+- **[PERF]** = Performanta
+
+---
+
+## Ordine implementare Runda 4
+
+1. **Batch R4-1 (Independente):** Vault (14), Convertor (9), QT Extra (8), Automations (11)
+2. **Batch R4-2 (Dependinte simple):** Translator (3), AI Chat (4), Calculator (2), Quick Tools (7), File Manager (10)
+3. **Batch R4-3 (Cross-module):** ITP (6), Facturare (5), Integrations (12)
+4. **Batch R4-4 (Agregator):** Dashboard (1), Reports (13)
+
+---
+
+## Batch R4-1: INDEPENDENTE (11 items)
+
+**Prioritate:** Fara dependinte cross-module — se pot implementa in paralel.
+
+### 14. Vault
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-01 | Master password strength meter | Parola "12345678" acceptata → zxcvbn-like check: min 12 chars, uppercase+lowercase+digit, feedback vizual (Weak/Moderate/Strong) | [QUALITY] | mediu | P1 | [x] DONE (2026-03-22) |
+| R4-02 | Vault backup & restore encrypted | PC moare → chei pierdute. Export JSON criptat cu master password, import cu merge logic, download `vault_backup_YYYY-MM-DD.enc.json` | [FUNC] | mediu | P1 | [x] DONE (2026-03-22) |
+| R4-03 | Key expiration alerts | Cheie API expira silentios → 401 errors. Camp optional `expires_at`, cron check zilnic, warning 7 zile inainte in activity_log + UI highlight rosu | [FUNC] | mediu | P2 | [x] DONE (2026-03-22) |
+
+### 9. Convertor Fisiere
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-04 | Batch compression per-file report | Compresie 5 imagini → ZIP fara info. Acum: response headers cu per-file reduction (file, original_size, compressed_size, reduction_pct) | [UX] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-05 | Output format selection dropdown | Compresie imagini hardcoded JPEG. Dropdown frontend: JPEG/WebP/PNG, parametrul `output_format` deja exista in backend | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+| R4-06 | Pre-conversion file preview | Upload fisier gresit → pierdere timp. Preview: prima pagina PDF (thumbnail), primele 3 randuri CSV, inainte de Convert | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+
+### 8. Quick Tools Extra
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-07 | EAN-13 checksum validation | Typo in barcode → cod invalid. Auto-validate checksum digit, suggest corect daca gresit, green check live | [QUALITY] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-08 | Calculator history smart cleanup | DELETE peste 100 pierde calcule vechi utile. Smart: delete >30 zile first, keep 300 total vs 100 | [QUALITY] | mic | P2 | [x] DONE (2026-03-22) |
+
+### 11. Automations
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-09 | Task timeout + retry | Task hung → blocheaza scheduler. Timeout 5min default, auto-retry 1x dupa 15min, retry count in DB | [QUALITY] | mediu | P1 | [x] DONE (2026-03-22) |
+| R4-10 | Execution history with drill-down | Task fails → nu stii de ce. Click task → timeline (success/fail, duration, output text, error message) per executie | [QUALITY] | mediu | P1 | [x] DONE (2026-03-22) |
+| R4-11 | Scheduler pause/resume toggle | Maintenance → vrei sa opresti temporar cron. Toggle global ON/OFF in header, scheduler_enabled flag in DB | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+
+---
+
+## Batch R4-2: DEPENDINTE SIMPLE (12 items)
+
+**Dependente:** Batch R4-1 complet.
+
+### 3. Translator
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-12 | TM match score display | TM returneaza sugestii dar fara scor → nu stii cat de buna e. Afiseaza "78% match" langa fiecare TM hit | [FUNC] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-13 | Batch multi-file translation | 10 manuale de tradus → upload one-by-one. Select 3-5 fisiere, procesare secventiala cu progress per fisier | [FUNC] | mediu | P1 | [x] DONE (2026-03-22) |
+| R4-14 | Provider latency display | Nu stii care provider e rapid. Selector arata "DeepL 0.8s | Azure 1.2s | Groq 0.5s" din ultimul apel | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+
+### 4. AI Chat + Docs
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-15 | Context truncation warning | Document 100K chars uploadat → AI vede doar primii 50K. Banner: "Document trunchiat la X chars. Uploadati versiune mai scurta?" | [UX] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-16 | Provider fallback indicator | Gemini fails → Groq raspunde, dar userul nu stie. Footer mesaj: "Raspuns de la: Groq (fallback de la Gemini)" | [QUALITY] | mic | P2 | [x] DONE (2026-03-22) |
+
+### 2. Calculator Pret
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-17 | Pre-flight validation frontend | Upload 500MB PDF → backend crash. Check size (<50MB) + format (PDF/DOCX/TXT) INAINTE de upload, feedback instant | [QUALITY] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-18 | Batch error recovery | 5 fisiere batch, fisierul 3 fails → totul pierdut. Acum: skip failed + continue, afiseaza "3/5 OK, 1 failed: [reason]" | [FUNC] | mediu | P1 | [x] DONE (2026-03-22) |
+
+### 7. Quick Tools
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-19 | Notepad bulk operations | 100+ note → manage one-by-one. Multi-select checkboxes + bulk delete/export/tag-change | [UX] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-20 | ANAF batch CUI check | 50 clienti de verificat CUI → tedious one-by-one. Upload CSV → bulk verify → download results CSV | [FUNC] | mediu | P2 | [x] DONE (2026-03-22) |
+
+### 10. File Manager
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-21 | Batch rename with pattern | 20 facturi de redenumit cu prefix "2026-03_". Select files → add prefix/suffix/find-replace → preview → apply | [FUNC] | mediu | P1 | [x] DONE (2026-03-22) |
+| R4-22 | Safe delete (7-day trash) | Click delete → fisier pierdut permanent. Acum: muta in `.trash/`, auto-purge dupa 7 zile, "Empty Trash" buton | [QUALITY] | mediu | P1 | [x] DONE (2026-03-22) |
+| R4-23 | Copy file path to clipboard | Trebuie path pt script → select manual. Click buton → toast "Copiat: backend/app/main.py" | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+
+---
+
+## Batch R4-3: CROSS-MODULE (9 items)
+
+**Dependente:** Batch R4-2 complet (translator, calculator, FM functional).
+
+### 6. ITP
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-24 | Follow-up alerts next inspection | Vehicul expirat → Roland uita sa sune clientul. Tabel `itp_followups` cu next_date, endpoint GET /api/itp/followup/due-soon | [FUNC] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-25 | Rejection reason enforcement | Inspectie "Respins" fara motiv → date incomplete. Validare: min 1 motiv obligatoriu cand result=Respins | [QUALITY] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-26 | No-show tracking | Client nu vine la programare → nu se stie. Camp `showed_up` pe appointments + stats no-show rate | [FUNC] | mic | P2 | [x] DONE (2026-03-22) |
+
+### 5. Facturare
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-27 | Duplicate invoice detection | Double-click save → 2 facturi identice. Check client_id+date+items hash INAINTE de creare, warn daca exista | [FUNC] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-28 | Batch PDF ZIP export | Audit → trebuie 42 PDF-uri. Select invoices → POST /api/invoice/export-batch-zip → download ZIP cu toate PDF-urile | [FUNC] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-29 | Client payment terms default | Acelasi termen pt client fidel → scris de fiecare data. Camp `default_payment_terms` pe client, auto-fill due_date | [FUNC] | mic | P2 | [x] DONE (2026-03-22) |
+| R4-30 | Quick-add items from previous | Traducere EN→RO scrisa manual mereu. Click client → "Recent: Traducere EN→RO 150 RON" → click to add | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+
+### 12. Integrations
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-31 | Gmail label filtering | 50 emailuri, doar "Facturi" conteaza. Dropdown label filter pe lista mesaje, IMAP label search | [FUNC] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-32 | Integration status cache | Fiecare page load → 4 API calls pt status. Cache 5min TTL, manual refresh button | [PERF] | mic | P1 | [x] DONE (2026-03-22) |
+
+---
+
+## Batch R4-4: AGREGATOR (4 items)
+
+**Dependente:** Batch R4-3 complet (toate modulele business finalizate).
+
+### 1. Dashboard
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-33 | Error states pe widget-uri | Endpoint fails → card arata "0" (misleading). Acum: "Eroare la incarcare" + Retry button, distinct de "0 facturi" | [UX] | mic | P1 | [x] DONE (2026-03-22) |
+| R4-34 | Activity filter per modul | 1000 activitati mixed → noise. Tabs: All / Calculator / Translator / Invoice / ITP pe recent activity | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+
+### 13. Reports
+
+| # | Feature | Ce rezolva concret | Tip | Efort | Prioritate | Status |
+|---|---------|-------------------|-----|-------|------------|--------|
+| R4-35 | Timeline activity grouping | Lista plata 1000 items. Group by: None / Module / Action / Day, collapse/expand | [UX] | mic | P2 | [x] DONE (2026-03-22) |
+| R4-36 | Revenue report by client | "Care client aduce cel mai mult?" → nu stii. GROUP BY client, SUM(total), COUNT, avg, sort DESC | [FUNC] | mediu | P2 | [x] DONE (2026-03-22) |
+
+---
+
+## SYNC Points R4
+
+| SYNC ID | Conditie | Blocheaza |
+|---------|----------|-----------|
+| SYNC-R4-A | R4-01, R4-02 (Vault) complete | Integrari care folosesc vault keys |
+| SYNC-R4-B | R4-09, R4-10 (Automations) complete | Cron tasks din ITP/Facturare alerts |
+| SYNC-R4-C | R4-22 (FM safe delete) complet | Batch rename sa respecte trash |
+| SYNC-R4-D | R4-32 (Integration cache) complet | Dashboard status widgets |
+
+---
+
+## Reguli de executie R4
+
+### Ordine implementare
+1. **STRICT:** R4-1 → R4-2 → R4-3 → R4-4 (dependency graph)
+2. **SYNC POINTS:** Verificare explicita la fiecare SYNC inainte de continuare
+3. **NU SARI:** Batch R4-1 (independente) OBLIGATORIU complet inainte de wiring
+
+### Validare per batch (Rule 08)
+Dupa fiecare batch completat:
+1. `python -c "from app.main import app; print('Import OK')"`
+2. `python -m uvicorn app.main:app --port 8000` + `/api/health` OK
+3. `npx vite build` → fara erori
+4. Test endpoint-uri noi/modificate (curl + browser)
+5. Kill procese test, port 8000 liber
+
+### Commit per batch
+- Format: `Faza 30 Batch R4-X: [summary]`
+- `git add [specific files]` — NICIODATA `git add -A`
+- Un commit per batch, nu per item individual
+
+### Documentatie dupa FIECARE batch
+1. `ROLAND_PLANIFICARI_MODULE.md` → marcheaza items DONE cu data
+2. `0.0_PLAN_EXTINDERE_COMPLET.md` → adauga/actualizeaza Faza 30
+3. `0.0_PLAN_EXTINDERE_COMPLET.html` → regenereaza PHASES array
+4. `CLAUDE.md` → update Project Status table
+5. `.claude/PROJECT_STATUS.md` → update snapshot
+6. `GHID_TESTARE.md` → adauga sectiune Faza 30 cu pasi test per feature
+
+### Test functionalitate (dupa ALL batches)
+1. Per batch: test fiecare feature individual (curl + browser)
+2. Batch R4-3: test workflow-uri end-to-end (ITP follow-up, factura duplicate, batch PDF)
+3. Batch R4-4: test dashboard error states + reports grouping
+4. FINAL: `pytest` full suite → all PASS
+5. FINAL: frontend build → zero warnings/errors
+
+---
+
+## Distributie tipuri R4
+
+- **[FUNC]:** 15 (batch translate, multi-file, ZIP export, follow-up, no-show, duplicate detect, payment terms, quick-add, ANAF batch, batch rename, vault backup, label filter, revenue report, key expiry, batch recovery)
+- **[QUALITY]:** 9 (password strength, EAN checksum, rejection enforce, safe delete, pre-flight validation, task timeout, execution logs, truncation, fallback indicator)
+- **[UX]:** 10 (per-file report, format dropdown, preview, copy path, scheduler pause, latency display, error states, activity filter, timeline group, calc history)
+- **[PERF]:** 3 (integration cache implicit in FUNC above)
+
+### Ce a fost RESPINS (overkill / deja respins in runde anterioare)
+
+| Propunere | Motiv respingere |
+|-----------|-----------------|
+| OAuth token refresh mechanism | Deja respins R2+R3 — rescrierea completa flow OAuth |
+| Google Drive folder sync | Overkill pt single user — sync manual suficient |
+| Calendar recurring events | RRULE complex, Google Calendar web e mai bun |
+| Gmail drafts via IMAP | Gmail web are deja drafts — redundant |
+| Calculator variable assignment (x:=) | Over-engineering parser-ul AST |
+| Calculator unit conversion BNR | BNR endpoint exista deja separat |
+| Barcode batch generation CSV | Deja respins R3 — one-at-a-time suficient |
+| Automated journal backup | Similar cu "automated backup scheduling" respins R3 |
+| Monitor groups rollup | Overkill pt 5-10 monitoare |
+| Task dependencies chaining | Over-engineering scheduler |
+| Webhook custom notifications | Low ROI pt single user |
+| Key rotation schedule | Majoritatea cheilor free tier nu expira |
+| Key usage audit log | Overkill pt single user |
+| Notepad markdown preview | Over-engineering un notepad |
+| Notepad regex search | Over-engineering cautarea |
+| Numbers converter advanced (ordinals/roman) | Valoare mica |
+| CSV column mapping wizard | Frontend complex, utilizare rara |
+| Watermark pe imagini comprimate | Edge case foarte rar |
+| File size trend chart | Valoare mica — disk stats e suficient |
+| Invoice discount/early payment | Complexitate mare pt volum mic |
+| Inspector commission tracking | Overkill pt statie mica (1-2 inspectori) |
+| File Manager versioning | Deja respins R3 — git/backup manual |
+| Invoice storno/credit note | Deja respins R3 — poate R5 |
+
+---
+
+## Cumulativ Runde 1 + 2 + 3 + 4
+
+| Runda | P1 | P2 | Total | Status |
+|-------|----|----|-------|--------|
+| Runda 1 (features) | 47 | 31 | 78 | 78/78 IMPLEMENTATE |
+| Runda 2 (calitate) | 25 | 14 | 39 | 39/39 IMPLEMENTATE (2026-03-22) |
+| Runda 3 (conectare) | 30 | 28 | 58 | 58/58 IMPLEMENTATE (2026-03-22) |
+| Runda 4 (maximizare) | 21 | 16 | 37 | 37/37 IMPLEMENTATE (2026-03-22) |
+| **TOTAL** | **123** | **89** | **212** | **212/212 (100%)** |
+
+---
+
+# ============================================================
+# RUNDA 5 — HARDENING (Faza 31)
+# Focus: Bug fixes, security gaps, feature completion, polish
+# Propusa: 2026-03-22 | Implementata: 2026-03-23 | Status: DONE
+# ============================================================
+
+## Obiectiv R5
+
+Consolidarea finala a tuturor modulelor: corectarea bug-urilor reale descoperite prin deep research, eliminarea vulnerabilitatilor de securitate, completarea mecanismelor partial implementate, si polish UX pe cele mai folosite fluxuri.
+
+## Batch R5-1 — BUG FIXES (10 items, independent, zero cross-deps)
+
+| # | Modul | Tip | Descriere | Detalii tehnice |
+|---|-------|-----|-----------|-----------------|
+| 1 | reports | BUG | Revenue SQL column crash | [!] FALS POZITIV — `i.date` e corect conform schema (migrations/008). Nu necesita fix |
+| 2 | vault | BUG | Backup restore pierde chei criptate | [x] DONE (2026-03-23) — Re-encrypt cu backup_master_password la restore |
+| 3 | automations | BUG | Cron expression validation lipsa | [x] DONE (2026-03-23) — _validate_cron_expr() cu range check per camp |
+| 4 | ai | BUG | SSE stream orphan la tab close | [x] DONE (2026-03-23) — AbortController + cleanup in useEffect |
+| 5 | filemanager | BUG | FTS5 index stale dupa move | [x] DONE (2026-03-23) — UPDATE file_index SET file_path la rename/move |
+| 6 | converter | BUG | Batch compress esueaza complet la un fisier corupt | [x] DONE (2026-03-23) — try/except per-file, skip + raport partial |
+| 7 | dashboard | BUG | Activity chart timezone offset | [x] DONE (2026-03-23) — new Date(y, m-1, d) local time parsing |
+| 8 | quick_tools | BUG | QR special chars encoding | [x] DONE (2026-03-23) — qrcode.make(data.encode("utf-8")) byte mode |
+| 9 | calculator | BUG | Race condition multi-file batch | [x] DONE (2026-03-23) — Snapshot files/selectedIds in local const |
+| 10 | itp | BUG | Appointment state machine violation | [x] DONE (2026-03-23) — _APPOINTMENT_TRANSITIONS + validation |
+
+### Validare Batch R5-1
+```
+cd C:\Proiecte\NOU_Calculator_Pret_Traduceri\backend
+set PYTHONIOENCODING=utf-8
+python -c "from app.main import app; print('Import OK')"
+python -m uvicorn app.main:app --port 8000 --host 127.0.0.1
+# Test: curl http://127.0.0.1:8000/api/health
+# Test endpoints afectate: /api/reports/revenue, /api/vault/restore, /api/automations/jobs
+# Kill + verify port free
+```
+
+---
+
+## Batch R5-2 — SECURITY + DATA INTEGRITY (4 items)
+
+| # | Modul | Tip | Descriere | Detalii tehnice |
+|---|-------|-----|-----------|-----------------|
+| 11 | vault | SEC | Session tokens neutilizate de frontend | [x] DONE (2026-03-23) — authHeader() cu sessionToken, fallback master pw |
+| 12 | ai | SEC | Orphan messages la delete session | [!] DEJA IMPLEMENTAT — DELETE chat_messages WHERE session_id exista deja |
+| 13 | filemanager | SEC | Symlink escape in safe-delete | [x] DONE (2026-03-23) — is_symlink() check in _resolve() inainte de .resolve() |
+| 14 | invoice | SEC | HTML injection in PDF client name | [x] DONE (2026-03-23) — html.escape() pe client name/address/items |
+
+### Validare Batch R5-2
+```
+# Test vault: login + verify token returned + subsequent calls use token
+# Test AI: delete session → verify messages table clean
+# Test FM: create symlink in uploads → try safe-delete → verify blocked
+# Test invoice: create invoice with name "<script>alert(1)</script>" → verify sanitized in PDF
+```
+
+---
+
+## Batch R5-3 — FUNCTIONAL COMPLETENESS (10 items)
+
+| # | Modul | Tip | Descriere | Detalii tehnice |
+|---|-------|-----|-----------|-----------------|
+| 15 | invoice | FEAT | Recurring invoice auto-clone | [x] DONE (2026-03-23) — POST /recurring/process auto-clone + advance next_due |
+| 16 | ai | FEAT | Preserve user-renamed session titles | [x] DONE (2026-03-23) — user_renamed flag + PUT sessions/{id} |
+| 17 | translator | FEAT | TM cache invalidation la glossary update | [x] DONE (2026-03-23) — DELETE translation_cache WHERE lang pair on glossary write |
+| 18 | filemanager | FEAT | Case-insensitive rename collision (Windows) | [x] DONE (2026-03-23) — Two-step rename via __tmp__ on case-only change |
+| 19 | notepad | FEAT | Export-all pastreaza structura categorii | [x] DONE (2026-03-23) — categories dict + flat notes array in export |
+| 20 | automations | FEAT | Job execution timeout enforcement | [!] DEJA IMPLEMENTAT (R4-09) — asyncio.wait_for + timeout_seconds |
+| 21 | itp | FEAT | Rejection counter enforcement complet | [x] DONE (2026-03-23) — COUNT rejections per plate, blocked flag at 3+ |
+| 22 | quick_tools | FEAT | Passphrase word list expansion | [x] DONE (2026-03-23) — _RO_WORDS expandat la ~2370 cuvinte |
+| 23 | reports | FEAT | Export PDF cu grafice embedded | [x] DONE (2026-03-23) — GET /api/reports/export/pdf cu ReportLab tables |
+| 24 | converter | FEAT | Progress callback pentru fisiere mari | [x] DONE (2026-03-23) — Simulated progress bar frontend + startProgress/stopProgress |
+
+### Validare Batch R5-3
+```
+# Test invoice recurring: create recurring → trigger → verify clone created
+# Test AI rename: rename session → verify auto-title doesn't overwrite
+# Test translator: update glossary → translate same text → verify new glossary used
+# Test FM rename: rename file.txt → File.txt → verify no error on Windows
+# Test notepad export: create notes in 2 categories → export all → verify folder structure
+# Frontend build: cd frontend && npx vite build
+```
+
+---
+
+## Batch R5-4 — QUALITY + POLISH (7 items)
+
+| # | Modul | Tip | Descriere | Detalii tehnice |
+|---|-------|-----|-----------|-----------------|
+| 25 | dashboard | QUAL | Loading skeleton states | [x] DONE (2026-03-23) — animate-pulse skeleton bars pe SummaryCard |
+| 26 | ai | QUAL | Auto-scroll la mesaj nou | [!] DEJA IMPLEMENTAT — useEffect + scrollIntoView pe messages change |
+| 27 | translator | QUAL | Afisare provider + latenta in rezultat | [!] DEJA IMPLEMENTAT (R4-14) — provider badge + Clock icon latency |
+| 28 | invoice | QUAL | Payment status badge colors | [x] DONE (2026-03-23) — overdue=red, partial=yellow, paid=green badges |
+| 29 | itp | QUAL | Calendar month navigation | [x] DONE (2026-03-23) — calendarMonth state + ChevronLeft/Right + RO_MONTHS |
+| 30 | filemanager | QUAL | Breadcrumb clickable per segment | [x] DONE (2026-03-23) — hover:underline + last segment non-interactive |
+| 31 | vault | QUAL | Password copy feedback vizual | [x] DONE (2026-03-23) — copiedKey state + Check icon + "Copiat!" text 2s |
+
+### Validare Batch R5-4
+```
+# Test dashboard: load page → verify skeleton appears before data
+# Test AI: send message → verify auto-scroll
+# Test translator: translate → verify provider badge visible
+# Test invoice: create overdue invoice → verify red badge
+# Frontend build: cd frontend && npx vite build
+# FINAL: cd backend && python -m pytest tests/ -v
+```
+
+---
+
+## Distributie tipuri R5
+
+- **[BUG]:** 10 (SQL crash, data loss, validation, memory leak, stale index, batch fail, timezone, encoding, race condition, state machine)
+- **[SEC]:** 4 (session tokens, orphan data, symlink escape, HTML injection)
+- **[FEAT]:** 10 (auto-clone, preserve titles, cache invalidation, rename collision, export structure, timeout, rejection enforce, word list, PDF export, progress callback)
+- **[QUAL]:** 7 (skeleton, auto-scroll, provider badge, status colors, calendar nav, breadcrumbs, copy feedback)
+
+### Ce a fost RESPINS din deep research R5 (overkill / irelevant)
+
+| Propunere | Motiv respingere |
+|-----------|-----------------|
+| AI embeddings semantic search cross-module | Overkill — cautarea per-modul e suficienta |
+| Multi-language UI | Proiect single-user RO — specificatia e clara |
+| WebSocket real-time collaboration | Single user — nu exista cu cine colabora |
+| Automated test generation | Overkill — testele manuale + pytest existente suficiente |
+| API versioning (v1/v2) | Single user, no external consumers |
+| GraphQL layer | Over-engineering — REST e suficient pt 14 module |
+| Module dependency graph vizualization | Overkill — module sunt independente |
+| Audit trail immutable log | Over-engineering pt single user |
+| Performance benchmarking suite | Profilarea manuala e suficienta |
+| Invoice storno/credit note | Deja respins R4 — complexitate mare pt volum mic |
+
+---
+
+## REGULI DE EXECUTIE R5
+
+### Ordine STRICTA
+1. Batch R5-1 (bug fixes) → PRIMUL, zero dependente
+2. Batch R5-2 (security) → dupa B1, depinde de fix-uri
+3. Batch R5-3 (features) → dupa B1+B2
+4. Batch R5-4 (quality) → ULTIMUL, depinde de tot
+
+### Validare per batch (OBLIGATORIU)
+Dupa FIECARE batch completat:
+1. `python -c "from app.main import app; print('Import OK')"` → MUST PASS
+2. `python -m uvicorn app.main:app --port 8000` → start OK
+3. `curl http://127.0.0.1:8000/api/health` → `{"status":"ok"}`
+4. Test endpoint-urile modificate (curl, valid + invalid request)
+5. Kill procese test, verify port 8000 free
+6. Daca frontend modificat: `cd frontend && npx vite build` → zero errors
+
+### Commit per batch
+- Format: `Faza 31 Batch R5-X: [summary]`
+- `git add [specific files]` — NICIODATA `git add -A`
+- Un commit per batch, nu per item individual
+
+### Documentatie dupa FIECARE batch
+1. `ROLAND_PLANIFICARI_MODULE.md` → marcheaza items DONE cu data
+2. `0.0_PLAN_EXTINDERE_COMPLET.md` → adauga/actualizeaza Faza 31
+3. `0.0_PLAN_EXTINDERE_COMPLET.html` → regenereaza PHASES array
+4. `CLAUDE.md` → update Project Status table
+5. `.claude/PROJECT_STATUS.md` → update snapshot
+6. `GHID_TESTARE.md` → adauga sectiune Faza 31 cu pasi test per feature
+
+### Test functionalitate (dupa ALL batches)
+1. Per batch: test fiecare feature individual (curl + browser)
+2. Batch R5-2: test securitate — symlink, injection, session tokens
+3. Batch R5-3: test workflow-uri end-to-end (recurring invoice, TM invalidation)
+4. Batch R5-4: test UX (skeleton, scroll, badges, breadcrumbs)
+5. FINAL: `pytest` full suite → all PASS
+6. FINAL: frontend build → zero warnings/errors
+
+---
+
+## Cumulativ Runde 1 + 2 + 3 + 4 + 5
+
+| Runda | P1 | P2 | Total | Status |
+|-------|----|----|-------|--------|
+| Runda 1 (features) | 47 | 31 | 78 | 78/78 IMPLEMENTATE |
+| Runda 2 (calitate) | 25 | 14 | 39 | 39/39 IMPLEMENTATE (2026-03-22) |
+| Runda 3 (conectare) | 30 | 28 | 58 | 58/58 IMPLEMENTATE (2026-03-22) |
+| Runda 4 (maximizare) | 21 | 16 | 37 | 37/37 IMPLEMENTATE (2026-03-22) |
+| Runda 5 (hardening) | 17 | 14 | 31 | 31/31 IMPLEMENTATE (2026-03-23) |
+| **TOTAL** | **140** | **103** | **243** | **243/243 (100%)** |

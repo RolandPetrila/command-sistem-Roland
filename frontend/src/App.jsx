@@ -99,6 +99,13 @@ export default function App() {
                 <Route path="/reports" element={<ReportsPage />} />
                 <Route path="/number-converter" element={<NumberConverterPage />} />
                 <Route path="/company-check" element={<CompanyCheckPage />} />
+                <Route path="*" element={
+                  <div className="flex flex-col items-center justify-center h-64 text-center">
+                    <h2 className="text-2xl font-bold text-white mb-2">404</h2>
+                    <p className="text-slate-400 mb-4">Pagina nu a fost gasita</p>
+                    <a href="/" className="text-primary-400 hover:text-primary-300 underline">Inapoi la Dashboard</a>
+                  </div>
+                } />
               </Routes>
             </Suspense>
           </ErrorBoundary>

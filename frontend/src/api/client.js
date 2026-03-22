@@ -201,14 +201,6 @@ export async function validatePrice(uploadId, price) {
   return response.data;
 }
 
-// Get activity log
-export async function getActivityLog(limit = 50, action = null) {
-  const params = { limit };
-  if (action) params.action = action;
-  const response = await apiClient.get('/api/activity-log', { params });
-  return response.data;
-}
-
 // Check backend connectivity
 export async function checkHealth() {
   try {

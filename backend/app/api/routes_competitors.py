@@ -24,48 +24,49 @@ _MARKET_DATA_FILE = (
     / "market_data.json"
 )
 
-# Date de piață implicite (backup dacă fișierul nu există)
+# Date de piață implicite — prețuri în RON, bazate pe Competitori.md (2026-03-17)
+# Sursa: research Playwright MCP pe 12 site-uri românești
 DEFAULT_COMPETITOR_DATA = {
     "competitors": [
         {
-            "name": "Agenție Traduceri A",
-            "rate_per_word_eur": 0.08,
-            "rate_per_page_eur": 20.0,
-            "min_order_eur": 30.0,
+            "name": "Activ Traduceri",
+            "rate_per_word_ron": 0.10,
+            "rate_per_page_ron": 32.0,
+            "min_order_ron": 50.0,
         },
         {
-            "name": "Agenție Traduceri B",
-            "rate_per_word_eur": 0.07,
-            "rate_per_page_eur": 18.0,
-            "min_order_eur": 25.0,
+            "name": "TopLevel Traduceri",
+            "rate_per_word_ron": 0.09,
+            "rate_per_page_ron": 30.0,
+            "min_order_ron": 50.0,
         },
         {
-            "name": "Agenție Traduceri C",
-            "rate_per_word_eur": 0.10,
-            "rate_per_page_eur": 25.0,
-            "min_order_eur": 35.0,
+            "name": "NB Traduceri",
+            "rate_per_word_ron": 0.08,
+            "rate_per_page_ron": 27.0,
+            "min_order_ron": 40.0,
         },
         {
-            "name": "Agenție Traduceri D",
-            "rate_per_word_eur": 0.09,
-            "rate_per_page_eur": 22.0,
-            "min_order_eur": 30.0,
+            "name": "Tradutex",
+            "rate_per_word_ron": 0.13,
+            "rate_per_page_ron": 45.0,
+            "min_order_ron": 60.0,
         },
         {
-            "name": "Agenție Traduceri E",
-            "rate_per_word_eur": 0.06,
-            "rate_per_page_eur": 15.0,
-            "min_order_eur": 20.0,
+            "name": "AQualityTranslation",
+            "rate_per_word_ron": 0.06,
+            "rate_per_page_ron": 22.0,
+            "min_order_ron": 30.0,
         },
     ],
-    "last_updated": "2025-01-01",
-    "source": "date estimative piață românească",
+    "last_updated": "2026-03-17",
+    "source": "research Competitori.md — 12 site-uri românești",
 }
 
 
 @router.get("/competitors/compare")
 async def compare_with_competitors(
-    market_price: float = Query(..., gt=0, description="Prețul de piață calculat (EUR)"),
+    market_price: float = Query(..., gt=0, description="Prețul de piață calculat (RON)"),
     invoice_percent: float = Query(75.0, gt=0, le=100, description="Procentul de facturare"),
     word_count: int | None = Query(None, ge=0, description="Număr cuvinte (opțional)"),
     page_count: int | None = Query(None, ge=0, description="Număr pagini (opțional)"),
@@ -106,8 +107,8 @@ async def compare_with_competitors(
             competitor_details.append({
                 "name": comp.get("name", "Necunoscut"),
                 "estimated_price": comp_price,
-                "rate_per_word": comp.get("rate_per_word_eur"),
-                "rate_per_page": comp.get("rate_per_page_eur"),
+                "rate_per_word": comp.get("rate_per_word_ron") or comp.get("rate_per_word_eur"),
+                "rate_per_page": comp.get("rate_per_page_ron") or comp.get("rate_per_page_eur"),
             })
 
     if not competitor_prices:
@@ -140,7 +141,7 @@ async def compare_with_competitors(
         "our_price": our_price,
         "market_price": market_price,
         "invoice_percent": invoice_percent,
-        "currency": "EUR",
+        "currency": "RON",
         "competitor_avg": competitor_avg,
         "competitor_range": {
             "min": competitor_min,
@@ -189,20 +190,20 @@ def _estimate_competitor_price(
     Folosește word_count sau page_count dacă sunt disponibile,
     altfel estimează proporțional cu prețul de piață.
     """
-    # Dacă avem word_count și competitor are tarif per cuvânt
+    # Dacă avem word_count și competitor are tarif per cuvânt (RON, fallback EUR)
     if word_count and word_count > 0:
-        rate = competitor.get("rate_per_word_eur")
+        rate = competitor.get("rate_per_word_ron") or competitor.get("rate_per_word_eur")
         if rate:
             price = word_count * rate
-            min_order = competitor.get("min_order_eur", 0)
+            min_order = competitor.get("min_order_ron") or competitor.get("min_order_eur", 0)
             return round(max(price, min_order), 2)
 
-    # Dacă avem page_count și competitor are tarif per pagină
+    # Dacă avem page_count și competitor are tarif per pagină (RON, fallback EUR)
     if page_count and page_count > 0:
-        rate = competitor.get("rate_per_page_eur")
+        rate = competitor.get("rate_per_page_ron") or competitor.get("rate_per_page_eur")
         if rate:
             price = page_count * rate
-            min_order = competitor.get("min_order_eur", 0)
+            min_order = competitor.get("min_order_ron") or competitor.get("min_order_eur", 0)
             return round(max(price, min_order), 2)
 
     # Fallback: estimare pe baza prețului de piață

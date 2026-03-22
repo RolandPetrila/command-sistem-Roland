@@ -3,7 +3,7 @@ import {
   Puzzle, Mail, HardDrive, CalendarDays, Github,
   CheckCircle, XCircle, AlertTriangle, RefreshCw, Send,
   Download, Upload, Plus, Search, Loader2, ExternalLink,
-  FileText, Inbox, Clock
+  FileText, Inbox, Clock, Filter, RotateCcw
 } from 'lucide-react';
 import apiClient from '../api/client';
 
@@ -14,43 +14,80 @@ const TABS = [
   { id: 'github', label: 'GitHub', icon: Github },
 ];
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, cachedAt }) {
   const config = {
     connected: { icon: CheckCircle, color: 'text-green-400 bg-green-400/10', label: 'Conectat' },
     error: { icon: AlertTriangle, color: 'text-yellow-400 bg-yellow-400/10', label: 'Eroare' },
     disconnected: { icon: XCircle, color: 'text-red-400 bg-red-400/10', label: 'Neconectat' },
   };
   const c = config[status] || config.disconnected;
+
+  // Calculate "X min ago" from cached_at unix timestamp
+  let cacheLabel = '';
+  if (cachedAt) {
+    const ago = Math.floor((Date.now() / 1000 - cachedAt) / 60);
+    cacheLabel = ago < 1 ? 'acum' : `${ago} min in urma`;
+  }
+
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${c.color}`}>
-      <c.icon className="w-3.5 h-3.5" />
-      {c.label}
-    </span>
+    <div className="flex flex-col items-end gap-1">
+      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${c.color}`}>
+        <c.icon className="w-3.5 h-3.5" />
+        {c.label}
+      </span>
+      {cacheLabel && (
+        <span className="text-[10px] text-slate-500">Verificat: {cacheLabel}</span>
+      )}
+    </div>
   );
 }
 
 // ===== GMAIL =====
 function GmailTab() {
   const [status, setStatus] = useState('disconnected');
+  const [cachedAt, setCachedAt] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [emailForm, setEmailForm] = useState({ to: '', subject: '', body: '' });
   const [sendResult, setSendResult] = useState('');
+  const [labels, setLabels] = useState([]);
+  const [selectedLabel, setSelectedLabel] = useState('INBOX');
+  const [labelsLoading, setLabelsLoading] = useState(false);
+
+  const loadMessages = useCallback(async (label) => {
+    setLoading(true);
+    try {
+      const res = await apiClient.get('/api/integrations/gmail/messages', { params: { limit: 10, label } });
+      setMessages(res.data.messages || res.data || []);
+    } catch { setMessages([]); }
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await apiClient.get('/api/integrations/gmail/status');
-        setStatus(res.data.status || 'disconnected');
+        const d = res.data;
+        setStatus(d.status || (d.connected ? 'connected' : d.configured ? 'error' : 'disconnected'));
+        if (d.cached_at) setCachedAt(d.cached_at);
       } catch { setStatus('disconnected'); }
+      // Load labels
+      setLabelsLoading(true);
       try {
-        const res = await apiClient.get('/api/integrations/gmail/messages', { params: { limit: 10 } });
-        setMessages(res.data.messages || res.data || []);
-      } catch { setMessages([]); }
-      setLoading(false);
+        const res = await apiClient.get('/api/integrations/gmail/labels');
+        setLabels(res.data.labels || []);
+      } catch { setLabels([]); }
+      setLabelsLoading(false);
+      // Load messages for default label
+      await loadMessages('INBOX');
     })();
-  }, []);
+  }, [loadMessages]);
+
+  const handleLabelChange = (newLabel) => {
+    setSelectedLabel(newLabel);
+    loadMessages(newLabel);
+  };
 
   const sendEmail = async () => {
     if (!emailForm.to || !emailForm.subject) return;
@@ -76,14 +113,33 @@ function GmailTab() {
           </h3>
           <p className="text-xs text-slate-500 mt-1">Integrare cu contul Gmail</p>
         </div>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} cachedAt={cachedAt} />
       </div>
 
-      {/* Recent messages */}
+      {/* Label filter + Recent messages */}
       <div className="bg-slate-800/40 rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-          <Inbox className="w-4 h-4 text-slate-400" /> Mesaje Recente
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Inbox className="w-4 h-4 text-slate-400" /> Mesaje Recente
+          </h3>
+          <div className="flex items-center gap-2">
+            <Filter className="w-3.5 h-3.5 text-slate-500" />
+            <select
+              value={selectedLabel}
+              onChange={e => handleLabelChange(e.target.value)}
+              disabled={labelsLoading}
+              className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white text-xs focus:border-primary-500 focus:outline-none min-w-[120px]"
+            >
+              {labels.length === 0 ? (
+                <option value="INBOX">INBOX</option>
+              ) : (
+                labels.map((lbl, i) => (
+                  <option key={i} value={lbl.name}>{lbl.name}</option>
+                ))
+              )}
+            </select>
+          </div>
+        </div>
         {loading ? (
           <div className="flex items-center justify-center py-6"><Loader2 className="w-5 h-5 text-primary-400 animate-spin" /></div>
         ) : messages.length === 0 ? (
@@ -133,6 +189,7 @@ function GmailTab() {
 // ===== GOOGLE DRIVE =====
 function DriveTab() {
   const [status, setStatus] = useState('disconnected');
+  const [cachedAt, setCachedAt] = useState(null);
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -142,7 +199,9 @@ function DriveTab() {
     setLoading(true);
     try {
       const res = await apiClient.get('/api/integrations/drive/status');
-      setStatus(res.data.status || 'disconnected');
+      const dd = res.data;
+      setStatus(dd.status || (dd.connected ? 'connected' : dd.configured ? 'error' : 'disconnected'));
+      if (dd.cached_at) setCachedAt(dd.cached_at);
     } catch { setStatus('disconnected'); }
     try {
       const res = await apiClient.get('/api/integrations/drive/files', { params: { search, limit: 20 } });
@@ -188,7 +247,7 @@ function DriveTab() {
           </h3>
           <p className="text-xs text-slate-500 mt-1">Acces la fisierele din Drive</p>
         </div>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} cachedAt={cachedAt} />
       </div>
 
       {/* Search + Upload */}
@@ -238,6 +297,7 @@ function DriveTab() {
 // ===== CALENDAR =====
 function CalendarTab() {
   const [status, setStatus] = useState('disconnected');
+  const [cachedAt, setCachedAt] = useState(null);
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -248,7 +308,9 @@ function CalendarTab() {
     (async () => {
       try {
         const res = await apiClient.get('/api/integrations/calendar/status');
-        setStatus(res.data.status || 'disconnected');
+        const dc = res.data;
+        setStatus(dc.status || (dc.connected ? 'connected' : dc.configured ? 'error' : 'disconnected'));
+        if (dc.cached_at) setCachedAt(dc.cached_at);
       } catch { setStatus('disconnected'); }
       try {
         const res = await apiClient.get('/api/integrations/calendar/events', { params: { limit: 10 } });
@@ -283,7 +345,7 @@ function CalendarTab() {
           </h3>
           <p className="text-xs text-slate-500 mt-1">Evenimente si programari</p>
         </div>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} cachedAt={cachedAt} />
       </div>
 
       {/* Upcoming events */}
@@ -348,6 +410,7 @@ function CalendarTab() {
 // ===== GITHUB =====
 function GithubTab() {
   const [status, setStatus] = useState('disconnected');
+  const [cachedAt, setCachedAt] = useState(null);
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedRepo, setSelectedRepo] = useState(null);
@@ -361,7 +424,9 @@ function GithubTab() {
     (async () => {
       try {
         const res = await apiClient.get('/api/integrations/github/status');
-        setStatus(res.data.status || 'disconnected');
+        const dg = res.data;
+        setStatus(dg.status || (dg.connected ? 'connected' : dg.configured ? 'error' : 'disconnected'));
+        if (dg.cached_at) setCachedAt(dg.cached_at);
       } catch { setStatus('disconnected'); }
       try {
         const res = await apiClient.get('/api/integrations/github/repos');
@@ -406,7 +471,7 @@ function GithubTab() {
           </h3>
           <p className="text-xs text-slate-500 mt-1">Repositoare si issues</p>
         </div>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} cachedAt={cachedAt} />
       </div>
 
       {/* Repos */}
@@ -489,13 +554,26 @@ function GithubTab() {
 // ===== MAIN PAGE =====
 export default function IntegrationsPage() {
   const [activeTab, setActiveTab] = useState('gmail');
+  const [refreshing, setRefreshing] = useState(false);
+  // Key to force remount of tab components after refresh
+  const [tabKey, setTabKey] = useState(0);
+
+  const handleRefreshStatus = async () => {
+    setRefreshing(true);
+    try {
+      await apiClient.post('/api/integrations/status/refresh');
+      // Force remount so each tab re-fetches status
+      setTabKey(k => k + 1);
+    } catch { /* toast handles it */ }
+    setRefreshing(false);
+  };
 
   const renderTab = () => {
     switch (activeTab) {
-      case 'gmail': return <GmailTab />;
-      case 'drive': return <DriveTab />;
-      case 'calendar': return <CalendarTab />;
-      case 'github': return <GithubTab />;
+      case 'gmail': return <GmailTab key={tabKey} />;
+      case 'drive': return <DriveTab key={tabKey} />;
+      case 'calendar': return <CalendarTab key={tabKey} />;
+      case 'github': return <GithubTab key={tabKey} />;
       default: return null;
     }
   };
@@ -503,10 +581,21 @@ export default function IntegrationsPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="card p-6">
-        <h2 className="text-lg font-semibold text-white mb-5 flex items-center gap-2">
-          <Puzzle className="w-5 h-5 text-primary-400" />
-          Integratii Externe
-        </h2>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Puzzle className="w-5 h-5 text-primary-400" />
+            Integratii Externe
+          </h2>
+          <button
+            onClick={handleRefreshStatus}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors disabled:opacity-50"
+            title="Goleste cache si reverifica statusul tuturor integrarilor"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Se verifica...' : 'Refresh Status'}
+          </button>
+        </div>
 
         {/* Tabs */}
         <div className="flex gap-1 bg-slate-800/60 rounded-lg p-1 mb-6 overflow-x-auto">

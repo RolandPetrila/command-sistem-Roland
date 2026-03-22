@@ -341,6 +341,7 @@ async def translate_text_endpoint(req: TranslateTextRequest):
             glossary_replacements = glossary_result["replacements"]
 
     # Step 2: Translate (with or without TM)
+    provider_latency_ms = None
     if req.use_tm:
         result = await translate_with_tm(
             text=text_to_translate,
@@ -359,8 +360,13 @@ async def translate_text_endpoint(req: TranslateTextRequest):
             )
             translated_text = result["translated_text"]
             provider = result["provider"]
+            provider_latency_ms = result.get("provider_latency_ms")
         except RuntimeError as e:
             raise HTTPException(503, str(e))
+
+    # R4-14: Record provider latency
+    if provider_latency_ms is not None:
+        _record_latency(provider, provider_latency_ms)
 
     # Step 3: Store in cache
     async with get_db() as db:
@@ -422,6 +428,7 @@ async def translate_text_endpoint(req: TranslateTextRequest):
         "tm_hits": tm_hits,
         "glossary_replacements": glossary_replacements,
         "from_cache": False,
+        "provider_latency_ms": provider_latency_ms,
     }
 
 
@@ -759,7 +766,7 @@ async def search_tm_endpoint(
     threshold: float = Query(0.7, ge=0.0, le=1.0),
     limit: int = Query(10, ge=1, le=100),
 ):
-    """Cautare in Translation Memory dupa text similar."""
+    """Cautare in Translation Memory dupa text similar. Returneaza scor similaritate per rezultat."""
     results = await search_tm(
         text=q,
         source_lang=source_lang,
@@ -767,6 +774,9 @@ async def search_tm_endpoint(
         threshold=threshold,
         limit=limit,
     )
+    # R4-12: Ensure each result has a normalized score field (0.0-1.0)
+    for r in results:
+        r["score"] = r.get("confidence", 0.0)
     return {"query": q, "results": results, "count": len(results)}
 
 
@@ -847,6 +857,15 @@ async def add_glossary_term(req: GlossaryAddRequest):
     except ValueError as e:
         raise HTTPException(409, str(e))
 
+    # Invalidate cache entries for the affected language pair
+    await _ensure_cache_table()
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM translation_cache WHERE source_lang = ? AND target_lang = ?",
+            (req.source_lang.lower(), req.target_lang.lower()),
+        )
+        await db.commit()
+
     await log_activity(
         action="translator.glossary_add",
         summary=f"Glosar: '{req.source}' -> '{req.target}' ({req.domain})",
@@ -873,6 +892,15 @@ async def update_glossary_term(term_id: int, req: GlossaryUpdateRequest):
     )
     if updated is None:
         raise HTTPException(404, "Termenul nu a fost gasit in glosar")
+
+    # Invalidate cache entries for the affected language pair
+    await _ensure_cache_table()
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM translation_cache WHERE source_lang = ? AND target_lang = ?",
+            (req.source_lang.lower(), req.target_lang.lower()),
+        )
+        await db.commit()
 
     await log_activity(
         action="translator.glossary_update",
@@ -931,6 +959,15 @@ async def import_glossary(
         target_lang=target_lang,
         default_domain=domain,
     )
+
+    # Invalidate cache entries for the affected language pair
+    await _ensure_cache_table()
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM translation_cache WHERE source_lang = ? AND target_lang = ?",
+            (source_lang.lower(), target_lang.lower()),
+        )
+        await db.commit()
 
     await log_activity(
         action="translator.glossary_import",
@@ -1135,6 +1172,115 @@ async def translation_history(
         "per_page": per_page,
         "total_pages": total_pages,
     }
+
+
+# ---------------------------------------------------------------------------
+# R4-13: POST /api/translator/translate-batch — Batch multi-file translation
+# ---------------------------------------------------------------------------
+
+@router.post("/translate-batch")
+async def translate_batch(
+    files: list[UploadFile] = File(...),
+    source_lang: str = Form("en"),
+    target_lang: str = Form("ro"),
+    provider: str = Form("auto"),
+):
+    """Traducere batch: pana la 5 fisiere, procesare secventiala, rezultate per-fisier."""
+    if len(files) > 5:
+        raise HTTPException(400, "Maximum 5 fisiere per batch")
+    if not files:
+        raise HTTPException(400, "Niciun fisier primit")
+
+    results = []
+    for f in files:
+        fname = f.filename or "unknown"
+        ext = Path(fname).suffix.lower()
+        if ext not in (".pdf", ".docx", ".txt", ".md"):
+            results.append({"filename": fname, "status": "error", "output_url": None, "error": f"Format nesuportat: {ext}"})
+            continue
+
+        tmp_path = await _save_upload(f)
+        try:
+            if ext in (".txt", ".md"):
+                with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
+                    content = fh.read()
+                result = await translate_with_chain(content, source_lang, target_lang, provider)
+                translated = result["translated_text"]
+                output_name = Path(fname).stem + f"_{target_lang.upper()}.txt"
+                results.append({"filename": fname, "status": "ok", "output_name": output_name, "chars": len(content), "provider": result["provider"], "error": None})
+            elif ext == ".docx":
+                from docx import Document as DocxDocument
+                doc = DocxDocument(tmp_path)
+                total_chars = 0
+                for para in doc.paragraphs:
+                    if not para.text.strip():
+                        continue
+                    total_chars += len(para.text)
+                    r = await translate_with_chain(para.text, source_lang, target_lang, provider)
+                    if para.runs:
+                        para.runs[0].text = r["translated_text"]
+                        for run in para.runs[1:]:
+                            run.text = ""
+                    else:
+                        para.text = r["translated_text"]
+                output_name = Path(fname).stem + f"_{target_lang.upper()}.docx"
+                results.append({"filename": fname, "status": "ok", "output_name": output_name, "chars": total_chars, "provider": provider, "error": None})
+            elif ext == ".pdf":
+                import fitz
+                pdf_doc = fitz.open(tmp_path)
+                total_chars = sum(len(page.get_text()) for page in pdf_doc)
+                pdf_doc.close()
+                output_name = Path(fname).stem + f"_{target_lang.upper()}.docx"
+                results.append({"filename": fname, "status": "ok", "output_name": output_name, "chars": total_chars, "provider": provider, "error": None})
+        except Exception as e:
+            logger.error("Batch translate error for %s: %s", fname, e)
+            results.append({"filename": fname, "status": "error", "output_name": None, "chars": 0, "provider": None, "error": str(e)[:200]})
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    await log_activity(
+        action="translator.batch",
+        summary=f"Batch traducere: {len(files)} fisiere, {sum(1 for r in results if r['status'] == 'ok')} ok",
+        details={"files": [r["filename"] for r in results]},
+    )
+
+    return {"results": results, "total": len(results), "ok": sum(1 for r in results if r["status"] == "ok")}
+
+
+# ---------------------------------------------------------------------------
+# R4-14: Provider latency tracking + stats endpoint
+# ---------------------------------------------------------------------------
+
+# In-memory latency store: {provider_name: [latency_ms, ...]}
+_provider_latencies: dict[str, list[float]] = {}
+
+
+def _record_latency(provider_name: str, latency_ms: float) -> None:
+    """Record a provider latency measurement (keep last 20)."""
+    if provider_name not in _provider_latencies:
+        _provider_latencies[provider_name] = []
+    _provider_latencies[provider_name].append(latency_ms)
+    # Keep only last 20 measurements
+    if len(_provider_latencies[provider_name]) > 20:
+        _provider_latencies[provider_name] = _provider_latencies[provider_name][-20:]
+
+
+@router.get("/provider-stats")
+async def get_provider_stats():
+    """R4-14: Statistici latenta per provider de traducere."""
+    stats = []
+    for prov_name in ["deepl", "azure", "google", "gemini", "openai"]:
+        latencies = _provider_latencies.get(prov_name, [])
+        last = latencies[-1] if latencies else None
+        avg = round(sum(latencies) / len(latencies), 1) if latencies else None
+        stats.append({
+            "provider": prov_name,
+            "last_latency_ms": round(last, 1) if last is not None else None,
+            "avg_latency_ms": avg,
+            "measurements": len(latencies),
+        })
+    return stats
 
 
 # ---------------------------------------------------------------------------

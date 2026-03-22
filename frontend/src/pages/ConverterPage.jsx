@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import axios from 'axios';
+import apiClient from '../api/client';
 import {
   FileText,
   Scissors,
@@ -18,9 +18,10 @@ import {
   AlertCircle,
   Trash2,
   ArrowRight,
+  Eye,
 } from 'lucide-react';
 
-const API = `${window.location.origin}/api/converter`;
+// apiClient already uses window.location.origin as base
 
 const CONVERSIONS = [
   {
@@ -177,7 +178,15 @@ export default function ConverterPage() {
   const [status, setStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
-  const [options, setOptions] = useState({ quality: 80, width: 800, height: 0, pages: 'all' });
+  const [options, setOptions] = useState({ quality: 80, width: 800, height: 0, pages: 'all', outputFormat: 'jpeg' });
+  const [compressionReport, setCompressionReport] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const progressTimer = useRef(null);
+
+  // Cleanup timer on unmount
+  useEffect(() => () => { if (progressTimer.current) clearInterval(progressTimer.current); }, []);
 
   const handleSelect = (conv) => {
     if (selected?.id === conv.id) {
@@ -188,6 +197,8 @@ export default function ConverterPage() {
       setStatus('idle');
       setResult(null);
       setError('');
+      setCompressionReport(null);
+      setPreview(null);
     }
   };
 
@@ -202,6 +213,8 @@ export default function ConverterPage() {
       setStatus('idle');
       setResult(null);
       setError('');
+      setCompressionReport(null);
+      setPreview(null);
     },
     [selected]
   );
@@ -210,11 +223,81 @@ export default function ConverterPage() {
     setFiles((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // R4-06: Fetch preview when a single file is selected (PDF, CSV, image)
+  useEffect(() => {
+    if (!selected || files.length === 0) {
+      setPreview(null);
+      return;
+    }
+    // Only preview single-file conversions or first file of multi
+    const file = files[0];
+    const name = (file.name || '').toLowerCase();
+    const canPreview =
+      name.endsWith('.pdf') ||
+      name.endsWith('.csv') ||
+      /\.(png|jpe?g|webp|bmp|gif|tiff)$/.test(name);
+    if (!canPreview) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    apiClient
+      .post('/api/converter/preview', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 15000,
+      })
+      .then((res) => {
+        if (!cancelled) setPreview(res.data);
+      })
+      .catch(() => {
+        if (!cancelled) setPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [files, selected]);
+
+  // Simulated progress: advances quickly to ~85%, then slows, waits for real completion
+  const startProgress = () => {
+    setProgress(0);
+    let current = 0;
+    progressTimer.current = setInterval(() => {
+      setProgress((prev) => {
+        // Fast ramp to 40%, then slow to 85%, then stall
+        if (prev < 40) return prev + 4;
+        if (prev < 75) return prev + 1.5;
+        if (prev < 85) return prev + 0.4;
+        return prev; // hold at 85% until real completion
+      });
+    }, 200);
+  };
+
+  const stopProgress = (success = true) => {
+    if (progressTimer.current) {
+      clearInterval(progressTimer.current);
+      progressTimer.current = null;
+    }
+    if (success) {
+      setProgress(100);
+      setTimeout(() => setProgress(0), 1200);
+    } else {
+      setProgress(0);
+    }
+  };
+
   const handleConvert = async () => {
     if (!files.length || !selected) return;
     setStatus('converting');
     setError('');
     setResult(null);
+    setCompressionReport(null);
+    startProgress();
 
     const formData = new FormData();
     if (selected.multi) {
@@ -225,6 +308,7 @@ export default function ConverterPage() {
 
     if (selected.options?.includes('quality')) {
       formData.append('quality', options.quality);
+      formData.append('output_format', options.outputFormat);
     }
     if (selected.options?.includes('dimensions')) {
       formData.append('width', options.width);
@@ -236,7 +320,7 @@ export default function ConverterPage() {
     }
 
     try {
-      const resp = await axios.post(`${API}/${selected.id}`, formData, {
+      const resp = await apiClient.post(`/api/converter/${selected.id}`, formData, {
         responseType: 'blob',
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000,
@@ -247,7 +331,19 @@ export default function ConverterPage() {
       const filename = match ? match[1] : `converted_${Date.now()}`;
 
       setResult({ blob: resp.data, filename, size: resp.data.size });
+      stopProgress(true);
       setStatus('done');
+
+      // R4-04: Parse per-file compression report from header
+      const reportHeader = resp.headers['x-compression-report'];
+      if (reportHeader) {
+        try {
+          const decoded = decodeURIComponent(reportHeader);
+          setCompressionReport(JSON.parse(decoded));
+        } catch {
+          // ignore parse errors
+        }
+      }
     } catch (err) {
       let msg = 'Eroare la conversie';
       if (err.response?.data) {
@@ -259,6 +355,7 @@ export default function ConverterPage() {
           // ignore parse errors
         }
       }
+      stopProgress(false);
       setError(msg);
       setStatus('error');
     }
@@ -381,21 +478,99 @@ export default function ConverterPage() {
             </div>
           )}
 
+          {/* R4-06: File preview panel */}
+          {files.length > 0 && (previewLoading || preview) && (
+            <div className="border border-slate-700 rounded-lg p-3 bg-slate-800/30">
+              <div className="flex items-center gap-2 mb-2 text-sm text-slate-400">
+                <Eye size={14} />
+                <span>Previzualizare</span>
+              </div>
+              {previewLoading && (
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <Loader2 size={12} className="animate-spin" />
+                  Se incarca...
+                </div>
+              )}
+              {!previewLoading && preview?.type === 'image' && (
+                <div className="flex justify-center">
+                  <img
+                    src={preview.data}
+                    alt="Preview"
+                    className="max-h-48 rounded border border-slate-700"
+                  />
+                </div>
+              )}
+              {!previewLoading && preview?.type === 'table' && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr>
+                        {preview.headers.map((h, i) => (
+                          <th key={i} className="text-left px-2 py-1 text-slate-400 border-b border-slate-700">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.rows.map((row, ri) => (
+                        <tr key={ri}>
+                          {preview.headers.map((h, ci) => (
+                            <td key={ci} className="px-2 py-1 text-slate-300 border-b border-slate-800">
+                              {row[h] ?? ''}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {preview.rows.length >= 3 && (
+                    <p className="text-[10px] text-slate-500 mt-1 text-right">
+                      Primele 3 randuri din fisier
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Options */}
           {selected.options?.includes('quality') && (
-            <div className="flex items-center gap-4">
-              <label className="text-sm text-slate-400 whitespace-nowrap">Calitate:</label>
-              <input
-                type="range"
-                min={10}
-                max={100}
-                value={options.quality}
-                onChange={(e) => setOptions((o) => ({ ...o, quality: +e.target.value }))}
-                className="flex-1 accent-primary-500"
-              />
-              <span className="text-sm font-medium text-slate-200 w-10 text-right">
-                {options.quality}%
-              </span>
+            <div className="space-y-3">
+              <div className="flex items-center gap-4">
+                <label className="text-sm text-slate-400 whitespace-nowrap">Calitate:</label>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  value={options.quality}
+                  onChange={(e) => setOptions((o) => ({ ...o, quality: +e.target.value }))}
+                  className="flex-1 accent-primary-500"
+                />
+                <span className="text-sm font-medium text-slate-200 w-10 text-right">
+                  {options.quality}%
+                </span>
+              </div>
+              {/* R4-05: Output format selection */}
+              <div className="flex items-center gap-4">
+                <label className="text-sm text-slate-400 whitespace-nowrap">Format output:</label>
+                <select
+                  value={options.outputFormat}
+                  onChange={(e) => setOptions((o) => ({ ...o, outputFormat: e.target.value }))}
+                  className="input-field w-auto px-3 py-1.5 text-sm"
+                >
+                  <option value="jpeg">JPEG</option>
+                  <option value="webp">WebP</option>
+                  <option value="png">PNG</option>
+                </select>
+                <span className="text-xs text-slate-500">
+                  {options.outputFormat === 'webp'
+                    ? 'Cel mai mic — recomandat web'
+                    : options.outputFormat === 'png'
+                    ? 'Fara pierderi — fisiere mari'
+                    : 'Universal — compatibil peste tot'}
+                </span>
+              </div>
             </div>
           )}
 
@@ -464,11 +639,87 @@ export default function ConverterPage() {
             )}
           </div>
 
+          {/* Progress bar — visible during and just after conversion */}
+          {(status === 'converting' || progress > 0) && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>
+                  {status === 'converting'
+                    ? progress < 85
+                      ? 'Se proceseaza...'
+                      : 'Finalizare...'
+                    : 'Gata!'}
+                </span>
+                <span>{Math.round(Math.min(progress, 100))}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-200"
+                  style={{
+                    width: `${Math.min(progress, 100)}%`,
+                    background: progress >= 100
+                      ? 'rgb(52 211 153)' /* emerald-400 */
+                      : 'rgb(99 102 241)', /* indigo-500 */
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Status */}
           {status === 'done' && (
             <div className="flex items-center gap-2 text-emerald-400 text-sm">
               <CheckCircle size={16} />
               Conversie finalizata cu succes!
+            </div>
+          )}
+
+          {/* R4-04: Per-file compression report */}
+          {compressionReport && compressionReport.length > 0 && (
+            <div className="border border-slate-700 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-800/60">
+                    <th className="text-left px-3 py-2 text-slate-400 font-medium">Fisier</th>
+                    <th className="text-right px-3 py-2 text-slate-400 font-medium">Original</th>
+                    <th className="text-right px-3 py-2 text-slate-400 font-medium">Comprimat</th>
+                    <th className="text-right px-3 py-2 text-slate-400 font-medium">Reducere</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compressionReport.map((r, i) => (
+                    <tr key={i} className="border-t border-slate-800">
+                      <td className="px-3 py-1.5 text-slate-300 truncate max-w-[200px]">{r.filename}</td>
+                      <td className="px-3 py-1.5 text-slate-400 text-right">{formatSize(r.original_size)}</td>
+                      <td className="px-3 py-1.5 text-slate-400 text-right">{formatSize(r.compressed_size)}</td>
+                      <td className={`px-3 py-1.5 text-right font-medium ${
+                        r.reduction_percent > 0 ? 'text-emerald-400' : 'text-amber-400'
+                      }`}>
+                        {r.reduction_percent > 0 ? '-' : '+'}{Math.abs(r.reduction_percent)}%
+                      </td>
+                    </tr>
+                  ))}
+                  {compressionReport.length > 1 && (
+                    <tr className="border-t border-slate-700 bg-slate-800/30">
+                      <td className="px-3 py-1.5 text-slate-300 font-medium">Total</td>
+                      <td className="px-3 py-1.5 text-slate-300 text-right font-medium">
+                        {formatSize(compressionReport.reduce((s, r) => s + r.original_size, 0))}
+                      </td>
+                      <td className="px-3 py-1.5 text-slate-300 text-right font-medium">
+                        {formatSize(compressionReport.reduce((s, r) => s + r.compressed_size, 0))}
+                      </td>
+                      <td className="px-3 py-1.5 text-emerald-400 text-right font-medium">
+                        {(() => {
+                          const orig = compressionReport.reduce((s, r) => s + r.original_size, 0);
+                          const comp = compressionReport.reduce((s, r) => s + r.compressed_size, 0);
+                          const pct = orig > 0 ? ((1 - comp / orig) * 100).toFixed(1) : 0;
+                          return `${pct > 0 ? '-' : '+'}${Math.abs(pct)}%`;
+                        })()}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           )}
 

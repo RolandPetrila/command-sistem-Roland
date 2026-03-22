@@ -120,6 +120,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("Nu s-a putut porni cron scheduler: %s", exc)
 
+    # Resume enabled uptime monitors after restart
+    try:
+        from modules.automations.router import resume_uptime_monitors
+        await resume_uptime_monitors()
+        logger.info("Uptime monitors resumed.")
+    except Exception as exc:
+        logger.warning("Nu s-au putut relua uptime monitors: %s", exc)
+
     logger.info("Server pornit. Uploads: %s", settings.uploads_dir)
     yield
     # --- Shutdown ---
@@ -160,6 +168,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-Original-Size",
+        "X-Compressed-Size",
+        "X-Reduction-Percent",
+        "X-Compression-Report",
+    ],
 )
 
 # --- GZip compression (Z2.9 — reduce response sizes 60-80%) ---

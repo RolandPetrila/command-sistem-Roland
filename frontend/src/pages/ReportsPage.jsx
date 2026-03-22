@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   FileBarChart, HardDrive, Database, Clock, Activity, BookOpen,
   Bookmark, Download, Plus, Trash2, Edit3, Save, X, Search,
   Loader2, RefreshCw, ExternalLink, Cpu, FolderOpen, Tag,
-  SmilePlus
+  SmilePlus, ChevronDown, ChevronRight, DollarSign, Users,
+  Calendar
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -13,6 +14,7 @@ import apiClient from '../api/client';
 const TABS = [
   { id: 'system', label: 'Sistem', icon: HardDrive },
   { id: 'timeline', label: 'Timeline', icon: Activity },
+  { id: 'revenue', label: 'Venituri per client', icon: DollarSign },
   { id: 'journal', label: 'Jurnal', icon: BookOpen },
   { id: 'bookmarks', label: 'Semne de carte', icon: Bookmark },
   { id: 'export', label: 'Export', icon: Download },
@@ -28,7 +30,7 @@ function SystemTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get('/api/reports/system');
+      const res = await apiClient.get('/api/reports/system-info');
       setInfo(res.data);
     } catch {
       try {
@@ -127,21 +129,30 @@ function SystemTab() {
 }
 
 // ===== TIMELINE =====
+const GROUP_OPTIONS = [
+  { id: 'none', label: 'Fara grupare' },
+  { id: 'module', label: 'Modul' },
+  { id: 'action', label: 'Actiune' },
+  { id: 'day', label: 'Zi' },
+];
+
 function TimelineTab() {
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [chartData, setChartData] = useState([]);
+  const [groupBy, setGroupBy] = useState('none');
+  const [expanded, setExpanded] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { limit: 50 };
+      const params = { page: 1, per_page: 50 };
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
       const res = await apiClient.get('/api/reports/timeline', { params });
-      const items = res.data.activities || res.data || [];
+      const items = res.data.items || res.data.entries || res.data.activities || res.data || [];
       setActivities(items);
 
       // Build chart data
@@ -160,10 +171,53 @@ function TimelineTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  // R4-35: Group activities
+  const grouped = useMemo(() => {
+    if (groupBy === 'none') return null;
+    const groups = {};
+    activities.forEach(a => {
+      let key;
+      if (groupBy === 'module') {
+        key = (a.action || '').split('.')[0] || 'altele';
+      } else if (groupBy === 'action') {
+        key = a.action || 'necunoscut';
+      } else {
+        // day
+        key = (a.timestamp || a.created_at || '').split('T')[0] || (a.timestamp || a.created_at || '').split(' ')[0] || 'necunoscut';
+      }
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(a);
+    });
+    return Object.entries(groups).sort((a, b) => {
+      if (groupBy === 'day') return b[0].localeCompare(a[0]);
+      return b[1].length - a[1].length;
+    });
+  }, [activities, groupBy]);
+
+  const toggleGroup = (key) => {
+    setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const renderActivityItem = (a, i) => (
+    <div key={a.id || i} className="flex gap-4 relative">
+      <div className="w-10 flex items-start justify-center pt-3 z-10">
+        <div className="w-2.5 h-2.5 rounded-full bg-primary-500 ring-4 ring-slate-900" />
+      </div>
+      <div className="flex-1 bg-slate-800/40 rounded-lg p-3 mb-1">
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-white">{a.action || a.description || a.message || 'Activitate'}</p>
+          <span className="text-[10px] text-slate-500 whitespace-nowrap ml-2">{a.timestamp || a.created_at || ''}</span>
+        </div>
+        {a.details && <p className="text-xs text-slate-400 mt-1">{typeof a.details === 'string' ? a.details : JSON.stringify(a.details)}</p>}
+        {a.page && <span className="text-[10px] text-slate-600 mt-0.5 block">{a.page}</span>}
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex gap-3 items-end">
+      <div className="flex gap-3 items-end flex-wrap">
         <div>
           <label className="text-xs text-slate-400 mb-1 block">De la</label>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
@@ -173,6 +227,15 @@ function TimelineTab() {
           <label className="text-xs text-slate-400 mb-1 block">Pana la</label>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
             className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Grupeaza dupa</label>
+          <select value={groupBy} onChange={e => { setGroupBy(e.target.value); setExpanded({}); }}
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none">
+            {GROUP_OPTIONS.map(opt => (
+              <option key={opt.id} value={opt.id}>{opt.label}</option>
+            ))}
+          </select>
         </div>
         <button onClick={load} className="btn-secondary px-3 py-2 text-sm flex items-center gap-1">
           <RefreshCw className="w-3.5 h-3.5" /> Filtreaza
@@ -203,24 +266,31 @@ function TimelineTab() {
           <Activity className="w-10 h-10 text-slate-600 mx-auto mb-2" />
           <p className="text-sm text-slate-500">Nicio activitate inregistrata</p>
         </div>
-      ) : (
-        <div className="space-y-1 relative">
-          <div className="absolute left-5 top-0 bottom-0 w-px bg-slate-700" />
-          {activities.map((a, i) => (
-            <div key={a.id || i} className="flex gap-4 relative">
-              <div className="w-10 flex items-start justify-center pt-3 z-10">
-                <div className="w-2.5 h-2.5 rounded-full bg-primary-500 ring-4 ring-slate-900" />
-              </div>
-              <div className="flex-1 bg-slate-800/40 rounded-lg p-3 mb-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-white">{a.action || a.description || a.message || 'Activitate'}</p>
-                  <span className="text-[10px] text-slate-500 whitespace-nowrap ml-2">{a.timestamp || a.created_at || ''}</span>
+      ) : grouped ? (
+        /* Grouped view (R4-35) */
+        <div className="space-y-2">
+          {grouped.map(([key, items]) => (
+            <div key={key} className="bg-slate-800/30 rounded-lg overflow-hidden">
+              <button onClick={() => toggleGroup(key)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-800/50 transition-colors">
+                {expanded[key] ? <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />}
+                <span className="text-sm font-medium text-white">{key}</span>
+                <span className="text-xs bg-primary-600/20 text-primary-300 px-2 py-0.5 rounded-full">{items.length}</span>
+              </button>
+              {expanded[key] && (
+                <div className="px-4 pb-3 space-y-1 relative">
+                  <div className="absolute left-9 top-0 bottom-3 w-px bg-slate-700" />
+                  {items.map((a, i) => renderActivityItem(a, i))}
                 </div>
-                {a.details && <p className="text-xs text-slate-400 mt-1">{typeof a.details === 'string' ? a.details : JSON.stringify(a.details)}</p>}
-                {a.page && <span className="text-[10px] text-slate-600 mt-0.5 block">{a.page}</span>}
-              </div>
+              )}
             </div>
           ))}
+        </div>
+      ) : (
+        /* Flat list (default) */
+        <div className="space-y-1 relative">
+          <div className="absolute left-5 top-0 bottom-0 w-px bg-slate-700" />
+          {activities.map((a, i) => renderActivityItem(a, i))}
         </div>
       )}
     </div>
@@ -496,7 +566,7 @@ function ExportTab() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiClient.get('/api/reports/export-stats');
+        const res = await apiClient.get('/api/reports/dashboard/quick-stats');
         setStats(res.data);
       } catch { setStats(null); }
       setLoading(false);
@@ -506,11 +576,25 @@ function ExportTab() {
   const exportAll = async () => {
     setExporting(true);
     try {
-      const res = await apiClient.get('/api/reports/export', { responseType: 'blob' });
+      const res = await apiClient.get('/api/reports/export/full', { responseType: 'blob' });
       const url = URL.createObjectURL(new Blob([res.data], { type: 'application/json' }));
       const link = document.createElement('a');
       link.href = url;
       link.download = `command_center_export_${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch { /* toast handles it */ }
+    setExporting(false);
+  };
+
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      const res = await apiClient.get('/api/reports/export/pdf', { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `raport_sistem_${new Date().toISOString().split('T')[0]}.pdf`;
       link.click();
       URL.revokeObjectURL(url);
     } catch { /* toast handles it */ }
@@ -538,17 +622,118 @@ function ExportTab() {
         </div>
       )}
 
-      {/* Export button */}
-      <div className="bg-slate-800/40 rounded-lg p-6 text-center">
-        <Download className="w-12 h-12 text-primary-400 mx-auto mb-3 opacity-60" />
-        <h3 className="text-sm font-semibold text-white mb-2">Export Complet Date</h3>
-        <p className="text-xs text-slate-400 mb-4">Descarca toate datele (jurnal, semne de carte, setari, istoric) intr-un fisier JSON</p>
-        <button onClick={exportAll} disabled={exporting}
-          className="btn-primary flex items-center gap-2 px-6 py-2.5 text-sm mx-auto disabled:opacity-50">
-          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-          {exporting ? 'Se exporta...' : 'Descarca Export JSON'}
+      {/* Export buttons */}
+      <div className="grid sm:grid-cols-2 gap-4">
+        <div className="bg-slate-800/40 rounded-lg p-6 text-center">
+          <Download className="w-10 h-10 text-primary-400 mx-auto mb-3 opacity-60" />
+          <h3 className="text-sm font-semibold text-white mb-2">Export Date (JSON)</h3>
+          <p className="text-xs text-slate-400 mb-4">Descarca toate datele (jurnal, semne de carte, setari, istoric)</p>
+          <button onClick={exportAll} disabled={exporting}
+            className="btn-primary flex items-center gap-2 px-5 py-2 text-sm mx-auto disabled:opacity-50">
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {exporting ? 'Se exporta...' : 'Descarca JSON'}
+          </button>
+        </div>
+        <div className="bg-slate-800/40 rounded-lg p-6 text-center">
+          <FileBarChart className="w-10 h-10 text-red-400 mx-auto mb-3 opacity-60" />
+          <h3 className="text-sm font-semibold text-white mb-2">Raport Sistem (PDF)</h3>
+          <p className="text-xs text-slate-400 mb-4">Disk, fisiere, facturi, activitate zilnica si venituri lunare</p>
+          <button onClick={exportPdf} disabled={exporting}
+            className="btn-secondary flex items-center gap-2 px-5 py-2 text-sm mx-auto disabled:opacity-50">
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileBarChart className="w-4 h-4" />}
+            {exporting ? 'Se genereaza...' : 'Descarca PDF'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== VENITURI PER CLIENT (R4-36) =====
+function RevenueByClientTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = {};
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      const res = await apiClient.get('/api/reports/revenue-by-client', { params });
+      setData(res.data);
+    } catch { setData(null); }
+    setLoading(false);
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-3 items-end flex-wrap">
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">De la</label>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Pana la</label>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" />
+        </div>
+        <button onClick={load} className="btn-secondary px-3 py-2 text-sm flex items-center gap-1">
+          <RefreshCw className="w-3.5 h-3.5" /> Filtreaza
         </button>
       </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
+      ) : !data || !data.clients || data.clients.length === 0 ? (
+        <div className="text-center py-12">
+          <Users className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+          <p className="text-sm text-slate-500">Nicio factura gasita in aceasta perioada</p>
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700">
+                  <th className="text-left py-3 px-3 text-xs text-slate-400 font-semibold uppercase">Client</th>
+                  <th className="text-right py-3 px-3 text-xs text-slate-400 font-semibold uppercase">Facturi</th>
+                  <th className="text-right py-3 px-3 text-xs text-slate-400 font-semibold uppercase">Total (RON)</th>
+                  <th className="text-right py-3 px-3 text-xs text-slate-400 font-semibold uppercase">Media (RON)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.clients.map((c, i) => (
+                  <tr key={c.client_id || i} className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-slate-500 shrink-0" />
+                        <span className="text-white font-medium">{c.client_name || 'Fara client'}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 text-right text-slate-300">{c.invoice_count}</td>
+                    <td className="py-3 px-3 text-right text-emerald-400 font-semibold">{c.total_revenue?.toFixed(2)}</td>
+                    <td className="py-3 px-3 text-right text-slate-300">{c.avg_invoice?.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* Period total */}
+          <div className="bg-slate-800/40 rounded-lg p-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-emerald-400" />
+              <span className="text-sm font-semibold text-white">Total Perioada</span>
+            </div>
+            <span className="text-lg font-bold text-emerald-400">{data.period_total?.toFixed(2)} RON</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -561,6 +746,7 @@ export default function ReportsPage() {
     switch (activeTab) {
       case 'system': return <SystemTab />;
       case 'timeline': return <TimelineTab />;
+      case 'revenue': return <RevenueByClientTab />;
       case 'journal': return <JournalTab />;
       case 'bookmarks': return <BookmarksTab />;
       case 'export': return <ExportTab />;

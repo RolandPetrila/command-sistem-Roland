@@ -6,12 +6,13 @@ Endpoints:
   POST /api/converter/docx-to-pdf      — DOCX → PDF
   POST /api/converter/merge-pdfs       — multiple PDFs → single PDF
   POST /api/converter/split-pdf        — PDF → ZIP of individual pages
-  POST /api/converter/compress-images  — reduce image file size
+  POST /api/converter/compress-images  — reduce image file size (+ per-file report)
   POST /api/converter/resize-images    — resize image dimensions
   POST /api/converter/csv-to-json      — CSV → JSON
   POST /api/converter/excel-to-json    — XLSX → JSON
   POST /api/converter/create-zip       — multiple files → ZIP
   POST /api/converter/extract-text     — PDF/image → text (OCR)
+  POST /api/converter/preview          — file preview (PDF thumbnail / CSV first rows / image thumb)
 """
 
 from __future__ import annotations
@@ -580,33 +581,48 @@ async def compress_images(
         results = []
         report = []
         for name, data in items:
-            original_size = len(data)
-            img = Image.open(io.BytesIO(data))
-            # WebP supports RGBA, JPEG does not
-            if fmt == "jpeg" and img.mode in ("RGBA", "P", "LA"):
-                img = img.convert("RGB")
-            elif fmt == "png" and img.mode not in ("RGBA", "RGB", "L", "P"):
-                img = img.convert("RGB")
-            out = io.BytesIO()
-            save_kwargs = {"format": fmt.upper(), "optimize": True}
-            if fmt in ("jpeg", "webp"):
-                save_kwargs["quality"] = q
-            img.save(out, **save_kwargs)
-            compressed_data = out.getvalue()
-            compressed_size = len(compressed_data)
-            reduction = (
-                round((1 - compressed_size / original_size) * 100, 1)
-                if original_size > 0
-                else 0.0
-            )
-            out_name = f"{Path(name).stem}_compressed{ext}"
-            results.append((out_name, compressed_data))
-            report.append({
-                "filename": name,
-                "original_size": original_size,
-                "compressed_size": compressed_size,
-                "reduction_percent": reduction,
-            })
+            try:
+                original_size = len(data)
+                img = Image.open(io.BytesIO(data))
+                # WebP supports RGBA, JPEG does not
+                if fmt == "jpeg" and img.mode in ("RGBA", "P", "LA"):
+                    img = img.convert("RGB")
+                elif fmt == "png" and img.mode not in ("RGBA", "RGB", "L", "P"):
+                    img = img.convert("RGB")
+                out = io.BytesIO()
+                save_kwargs = {"format": fmt.upper(), "optimize": True}
+                if fmt in ("jpeg", "webp"):
+                    save_kwargs["quality"] = q
+                img.save(out, **save_kwargs)
+                compressed_data = out.getvalue()
+                compressed_size = len(compressed_data)
+                reduction = (
+                    round((1 - compressed_size / original_size) * 100, 1)
+                    if original_size > 0
+                    else 0.0
+                )
+                out_name = f"{Path(name).stem}_compressed{ext}"
+                results.append((out_name, compressed_data))
+                report.append({
+                    "filename": name,
+                    "original_size": original_size,
+                    "compressed_size": compressed_size,
+                    "reduction_percent": reduction,
+                    "error": None,
+                })
+            except Exception as file_err:
+                report.append({
+                    "filename": name,
+                    "original_size": len(data),
+                    "compressed_size": 0,
+                    "reduction_percent": 0.0,
+                    "error": str(file_err),
+                })
+
+        if not results:
+            # All files failed — raise so the caller returns a 400 with the report
+            failed_names = ", ".join(r["filename"] for r in report)
+            raise ValueError(f"Nicio imagine nu a putut fi compresata: {failed_names}")
 
         if len(results) == 1:
             return results[0][1], results[0][0], report
@@ -668,6 +684,11 @@ async def compress_images(
     response.headers["X-Original-Size"] = str(total_original)
     response.headers["X-Compressed-Size"] = str(total_compressed)
     response.headers["X-Reduction-Percent"] = str(total_reduction)
+    # Per-file report as JSON header for frontend batch display
+    import urllib.parse
+    response.headers["X-Compression-Report"] = urllib.parse.quote(
+        json.dumps(report, ensure_ascii=True), safe=""
+    )
     return response
 
 
@@ -951,3 +972,87 @@ def _ocr_pdf(data: bytes) -> str:
             pages.append(f"--- Pagina {i + 1} ---\n{text.strip()}")
     doc.close()
     return "\n\n".join(pages) if pages else "(Nu s-a gasit text)"
+
+
+# ---------- File Preview (R4-06) ----------
+
+@router.post("/preview")
+async def file_preview(file: UploadFile = File(...)):
+    """Return a lightweight preview for a file before conversion.
+
+    - PDF: first-page thumbnail as base64 JPEG
+    - CSV: first 3 rows as JSON array
+    - Images: small thumbnail as base64 JPEG
+    """
+    content = await file.read()
+    _check_file_size(content, file.filename)
+    fn = (file.filename or "").lower()
+    ct = (file.content_type or "").lower()
+
+    if _is_pdf(fn, ct):
+        return await _preview_pdf(content)
+    elif _is_csv(fn, ct):
+        return _preview_csv(content)
+    elif _is_image(fn, ct):
+        return await _preview_image(content)
+    else:
+        raise HTTPException(400, "Previzualizare indisponibila pentru acest tip de fisier")
+
+
+async def _preview_pdf(data: bytes) -> dict:
+    import base64
+
+    def _render(d: bytes) -> str:
+        import fitz
+
+        doc = fitz.open(stream=d, filetype="pdf")
+        if len(doc) == 0:
+            doc.close()
+            return ""
+        page = doc[0]
+        pix = page.get_pixmap(dpi=96)
+        img_bytes = pix.tobytes("jpeg")
+        doc.close()
+        return base64.b64encode(img_bytes).decode()
+
+    try:
+        b64 = await asyncio.to_thread(_render, data)
+    except Exception as e:
+        raise HTTPException(500, f"Previzualizare PDF esuata: {e}")
+
+    return {"type": "image", "data": f"data:image/jpeg;base64,{b64}", "pages": 0}
+
+
+async def _preview_image(data: bytes) -> dict:
+    import base64
+
+    def _thumb(d: bytes) -> tuple[str, tuple[int, int]]:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(d))
+        original_size = img.size
+        img.thumbnail((200, 200))
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=70)
+        return base64.b64encode(buf.getvalue()).decode(), original_size
+
+    try:
+        b64, (w, h) = await asyncio.to_thread(_thumb, data)
+    except Exception as e:
+        raise HTTPException(500, f"Previzualizare imagine esuata: {e}")
+
+    return {"type": "image", "data": f"data:image/jpeg;base64,{b64}", "width": w, "height": h}
+
+
+def _preview_csv(data: bytes) -> dict:
+    text = data.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    rows = []
+    for i, row in enumerate(reader):
+        if i >= 3:
+            break
+        rows.append(dict(row))
+    headers = reader.fieldnames or []
+    return {"type": "table", "headers": headers, "rows": rows}

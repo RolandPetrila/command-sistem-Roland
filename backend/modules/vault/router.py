@@ -1,15 +1,19 @@
 """
-API endpoints pentru API Key Vault — stocare criptată chei API.
+API endpoints pentru API Key Vault — stocare criptata chei API.
 
 Endpoints:
-  POST   /api/vault/setup            — setează master password (prima dată)
-  POST   /api/vault/unlock           — verifică master password, returnează session token
-  GET    /api/vault/keys             — lista chei (nume, provider, dată) — fără valori
-  POST   /api/vault/keys             — adaugă cheie nouă
-  GET    /api/vault/keys/:name       — decriptează și returnează valoarea
-  POST   /api/vault/keys/:name/test  — testează validitatea cheii la provider
-  DELETE /api/vault/keys/:name       — șterge o cheie (necesită confirm=true)
-  GET    /api/vault/status           — verifică dacă vault-ul e configurat
+  POST   /api/vault/setup            — seteaza master password (prima data, min 12 chars)
+  POST   /api/vault/unlock           — verifica master password, returneaza session token
+  POST   /api/vault/check-strength   — verifica puterea parolei (weak/moderate/strong)
+  GET    /api/vault/keys             — lista chei (nume, provider, data, expires_at) — fara valori
+  GET    /api/vault/keys/expiring    — chei care expira in urmatoarele 7 zile
+  POST   /api/vault/keys             — adauga cheie noua (cu expires_at optional)
+  GET    /api/vault/keys/:name       — decripteaza si returneaza valoarea
+  POST   /api/vault/keys/:name/test  — testeaza validitatea cheii la provider
+  DELETE /api/vault/keys/:name       — sterge o cheie (necesita confirm=true)
+  GET    /api/vault/status           — verifica daca vault-ul e configurat
+  GET    /api/vault/backup           — export chei criptate (necesita master password)
+  POST   /api/vault/restore          — import chei din backup JSON (skip duplicate)
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -47,6 +52,24 @@ def _hash_password(password: str, salt: bytes) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000).hex()
 
 
+def _password_strength(password: str) -> dict:
+    """Evaluate password strength. Returns score (weak/moderate/strong) and missing requirements."""
+    checks = {
+        "min_length": len(password) >= 12,
+        "has_upper": bool(re.search(r"[A-Z]", password)),
+        "has_lower": bool(re.search(r"[a-z]", password)),
+        "has_digit": bool(re.search(r"\d", password)),
+    }
+    passed = sum(checks.values())
+    if passed == 4:
+        score = "strong"
+    elif passed >= 2 and len(password) >= 8:
+        score = "moderate"
+    else:
+        score = "weak"
+    return {"score": score, "checks": checks}
+
+
 # --- Models ---
 
 class SetupRequest(BaseModel):
@@ -57,6 +80,7 @@ class AddKeyRequest(BaseModel):
     name: str
     value: str
     provider: str = "generic"
+    expires_at: Optional[str] = None  # ISO date string e.g. "2026-06-01"
 
 
 # S9.9 — Key format validation patterns per provider
@@ -236,16 +260,26 @@ async def vault_status():
 
 @router.post("/setup")
 async def vault_setup(req: SetupRequest):
-    """Setează master password (doar prima dată). Minim 8 caractere."""
-    if len(req.master_password) < 8:
-        raise HTTPException(400, "Parola trebuie să aibă minim 8 caractere")
+    """Setează master password (doar prima dată). Minim 12 caractere, upper+lower+digit."""
+    strength = _password_strength(req.master_password)
+    if strength["score"] == "weak":
+        missing = []
+        if not strength["checks"]["min_length"]:
+            missing.append("minim 12 caractere")
+        if not strength["checks"]["has_upper"]:
+            missing.append("cel putin o litera mare")
+        if not strength["checks"]["has_lower"]:
+            missing.append("cel putin o litera mica")
+        if not strength["checks"]["has_digit"]:
+            missing.append("cel putin o cifra")
+        raise HTTPException(400, f"Parola prea slaba. Lipseste: {', '.join(missing)}")
 
     async with get_db() as db:
         cursor = await db.execute(
             "SELECT value FROM vault_config WHERE key = 'master_hash'"
         )
         if await cursor.fetchone():
-            raise HTTPException(409, "Master password deja setat. Folosește /unlock.")
+            raise HTTPException(409, "Master password deja setat. Foloseste /unlock.")
 
         salt = os.urandom(16)
         pw_hash = _hash_password(req.master_password, salt)
@@ -264,7 +298,7 @@ async def vault_setup(req: SetupRequest):
         action="vault_setup",
         summary="Vault configurat cu master password",
     )
-    return {"status": "configured"}
+    return {"status": "configured", "strength": strength}
 
 
 @router.post("/unlock")
@@ -318,12 +352,33 @@ async def _verify_password(master_password: str) -> bytes:
     return salt
 
 
+@router.post("/check-strength")
+async def check_password_strength(req: SetupRequest):
+    """Returnează scorul de putere al parolei (weak/moderate/strong) + cerințe."""
+    return _password_strength(req.master_password)
+
+
 @router.get("/keys")
 async def list_keys():
     """Lista cheilor stocate (fără valori decriptate)."""
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT name, provider, created_at, updated_at FROM vault_keys ORDER BY name"
+            "SELECT name, provider, created_at, updated_at, expires_at FROM vault_keys ORDER BY name"
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+@router.get("/keys/expiring")
+async def expiring_keys():
+    """Returnează cheile care expiră în următoarele 7 zile."""
+    threshold = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT name, provider, expires_at FROM vault_keys "
+            "WHERE expires_at IS NOT NULL AND expires_at <= ? AND expires_at >= ? "
+            "ORDER BY expires_at",
+            (threshold, today),
         )
         return [dict(row) for row in await cursor.fetchall()]
 
@@ -345,17 +400,17 @@ async def add_key(
     async with get_db() as db:
         try:
             await db.execute(
-                "INSERT INTO vault_keys (name, provider, encrypted_value, salt) "
-                "VALUES (?, ?, ?, ?)",
-                (req.name, req.provider, encrypted, salt.hex()),
+                "INSERT INTO vault_keys (name, provider, encrypted_value, salt, expires_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (req.name, req.provider, encrypted, salt.hex(), req.expires_at),
             )
             await db.commit()
         except Exception:
             # Dacă numele există deja, update
             await db.execute(
                 "UPDATE vault_keys SET encrypted_value = ?, provider = ?, "
-                "salt = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
-                (encrypted, req.provider, salt.hex(), req.name),
+                "salt = ?, updated_at = CURRENT_TIMESTAMP, expires_at = ? WHERE name = ?",
+                (encrypted, req.provider, salt.hex(), req.expires_at, req.name),
             )
             await db.commit()
 
@@ -434,6 +489,143 @@ async def delete_key(
         details={"name": name},
     )
     return {"status": "deleted", "name": name}
+
+
+@router.get("/backup")
+async def vault_backup(
+    x_master_password: Optional[str] = Header(default=None),
+    x_vault_session: Optional[str] = Header(default=None),
+):
+    """Exportă toate cheile din vault (valori criptate cu Fernet). Necesită master password."""
+    master_pw = _resolve_master_password(x_master_password, x_vault_session)
+    salt = await _verify_password(master_pw)
+
+    fernet_key = _derive_key(master_pw, salt)
+    fernet = Fernet(fernet_key)
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT name, provider, encrypted_value, expires_at, created_at FROM vault_keys ORDER BY name"
+        )
+        rows = await cursor.fetchall()
+
+    keys_export = []
+    for row in rows:
+        keys_export.append({
+            "name": row["name"],
+            "provider": row["provider"],
+            "encrypted_value": row["encrypted_value"],
+            "expires_at": row["expires_at"],
+            "created_at": row["created_at"],
+        })
+
+    await log_activity(
+        action="vault_backup",
+        summary=f"Vault backup exportat ({len(keys_export)} chei)",
+    )
+    return {
+        "version": 1,
+        "exported_at": datetime.utcnow().isoformat(),
+        "key_count": len(keys_export),
+        "master_salt": salt.hex(),
+        "keys": keys_export,
+    }
+
+
+class RestoreRequest(BaseModel):
+    backup: dict
+    backup_master_password: Optional[str] = None  # required when backup used a different password
+
+
+@router.post("/restore")
+async def vault_restore(
+    req: RestoreRequest,
+    x_master_password: Optional[str] = Header(default=None),
+    x_vault_session: Optional[str] = Header(default=None),
+):
+    """Restaurează chei din backup JSON. Sare peste duplicatele existente.
+
+    Dacă backup-ul a fost creat cu o parolă diferită de cea curentă,
+    furnizează backup_master_password pentru re-criptare automată.
+    """
+    master_pw = _resolve_master_password(x_master_password, x_vault_session)
+    current_salt = await _verify_password(master_pw)
+
+    backup = req.backup
+    if "keys" not in backup or not isinstance(backup["keys"], list):
+        raise HTTPException(400, "Format backup invalid — lipseste 'keys'")
+
+    # Determine if re-encryption is needed
+    backup_pw = req.backup_master_password
+    need_reencrypt = backup_pw is not None and backup_pw != master_pw
+
+    if need_reencrypt:
+        # Derive Fernet keys for both passwords
+        # The backup salt is stored per-key in the backup's vault_keys row,
+        # but the backup endpoint doesn't export it. We use the current DB salt
+        # as a fallback; for cross-password restore we require backup_master_password
+        # and the backup must include the salt field (or we derive from backup's config).
+        # Since the backup format stores salt per-key in the DB but the export omits it,
+        # we must use the backup's master salt if available in the backup metadata,
+        # otherwise fall back to current salt (same-instance backup scenario).
+        backup_salt_hex = backup.get("master_salt")
+        if backup_salt_hex:
+            backup_salt = bytes.fromhex(backup_salt_hex)
+        else:
+            backup_salt = current_salt
+        backup_fernet = Fernet(_derive_key(backup_pw, backup_salt))
+        current_fernet = Fernet(_derive_key(master_pw, current_salt))
+
+    imported = 0
+    skipped = 0
+    errors = 0
+
+    async with get_db() as db:
+        for entry in backup["keys"]:
+            name = entry.get("name")
+            if not name or "encrypted_value" not in entry:
+                skipped += 1
+                continue
+
+            cursor = await db.execute(
+                "SELECT id FROM vault_keys WHERE name = ?", (name,)
+            )
+            if await cursor.fetchone():
+                skipped += 1
+                continue
+
+            encrypted = entry["encrypted_value"]
+
+            if need_reencrypt:
+                try:
+                    plaintext = backup_fernet.decrypt(encrypted.encode())
+                    encrypted = current_fernet.encrypt(plaintext).decode()
+                except InvalidToken:
+                    _logger.warning("Vault restore: nu s-a putut decripta cheia '%s' — sarind", name)
+                    errors += 1
+                    skipped += 1
+                    continue
+
+            await db.execute(
+                "INSERT INTO vault_keys (name, provider, encrypted_value, salt, expires_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    name,
+                    entry.get("provider", "generic"),
+                    encrypted,
+                    current_salt.hex(),
+                    entry.get("expires_at"),
+                ),
+            )
+            imported += 1
+        await db.commit()
+
+    await log_activity(
+        action="vault_restore",
+        summary=f"Vault restore: {imported} importate, {skipped} sarite",
+        details={"imported": imported, "skipped": skipped, "errors": errors},
+    )
+    return {"status": "restored", "imported": imported, "skipped": skipped, "errors": errors}
 
 
 @router.post("/keys/{name}/test")

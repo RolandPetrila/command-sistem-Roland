@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { KeyRound, Copy, Check, RefreshCw, Eye, EyeOff, Shield } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { KeyRound, Copy, Check, RefreshCw, Eye, EyeOff, Shield, BookOpen, Clock, Trash2 } from 'lucide-react';
 import apiClient from '../api/client';
 
 const STRENGTH_COLORS = {
@@ -17,6 +17,8 @@ export default function PasswordGenPage() {
   const [showPassword, setShowPassword] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // R3-54: Tab mode — password vs passphrase
+  const [mode, setMode] = useState('password'); // 'password' | 'passphrase'
 
   // Generator settings
   const [length, setLength] = useState(20);
@@ -26,10 +28,37 @@ export default function PasswordGenPage() {
   const [symbols, setSymbols] = useState(true);
   const [excludeAmbiguous, setExcludeAmbiguous] = useState(false);
 
+  // R3-54: Passphrase settings
+  const [ppWords, setPpWords] = useState(4);
+  const [ppSeparator, setPpSeparator] = useState('-');
+  const [ppResult, setPpResult] = useState(null);
+  const [ppLoading, setPpLoading] = useState(false);
+
+  // R3-56: Password history
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [revealedIdx, setRevealedIdx] = useState(null);
+  const [copiedIdx, setCopiedIdx] = useState(null);
+
   // Check strength for custom password
   const [customPassword, setCustomPassword] = useState('');
   const [customStrength, setCustomStrength] = useState(null);
   const [checkingStrength, setCheckingStrength] = useState(false);
+
+  // R3-56: Load password history (defined early for use in generate callbacks)
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const { data } = await apiClient.get('/api/tools/password-history');
+      setHistory(data.history || []);
+    } catch {
+      // toast handles it
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const generate = useCallback(async () => {
     setLoading(true);
@@ -46,6 +75,7 @@ export default function PasswordGenPage() {
       });
       setPassword(res.data.password);
       setStrength(res.data.strength);
+      loadHistory();
     } catch (err) {
       setError(err.response?.data?.detail || 'Eroare la generare');
       setPassword('');
@@ -53,7 +83,7 @@ export default function PasswordGenPage() {
     } finally {
       setLoading(false);
     }
-  }, [length, uppercase, lowercase, digits, symbols, excludeAmbiguous]);
+  }, [length, uppercase, lowercase, digits, symbols, excludeAmbiguous, loadHistory]);
 
   const copyToClipboard = useCallback(async () => {
     if (!password) return;
@@ -89,6 +119,44 @@ export default function PasswordGenPage() {
     }
   }, [customPassword]);
 
+  // R3-54: Generate passphrase
+  const generatePassphrase = useCallback(async () => {
+    setPpLoading(true);
+    setError('');
+    setCopied(false);
+    try {
+      const { data } = await apiClient.get('/api/tools/generate-passphrase', {
+        params: { words: ppWords, separator: ppSeparator },
+      });
+      setPpResult(data);
+      setPassword(data.passphrase);
+      setStrength(data.strength);
+      loadHistory();
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Eroare la generare fraza');
+    } finally {
+      setPpLoading(false);
+    }
+  }, [ppWords, ppSeparator, loadHistory]);
+
+  // R3-56: Copy from history
+  const copyHistoryItem = async (pw, idx) => {
+    try {
+      await navigator.clipboard.writeText(pw);
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 2000);
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = pw;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 2000);
+    }
+  };
+
   const strengthInfo = strength ? STRENGTH_COLORS[strength.score] || STRENGTH_COLORS[0] : null;
   const customStrengthInfo = customStrength ? STRENGTH_COLORS[customStrength.score] || STRENGTH_COLORS[0] : null;
 
@@ -97,11 +165,24 @@ export default function PasswordGenPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      {/* R3-54: Mode tabs */}
+      <div className="flex gap-1 bg-slate-800/60 rounded-lg p-1">
+        {[
+          { id: 'password', label: 'Parola', icon: KeyRound },
+          { id: 'passphrase', label: 'Fraza-parola', icon: BookOpen },
+        ].map(({ id, label, icon: Icon }) => (
+          <button key={id} onClick={() => { setMode(id); setError(''); }}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-sm font-medium transition-colors ${mode === id ? 'bg-primary-600/30 text-primary-300' : 'text-slate-400 hover:text-slate-200'}`}>
+            <Icon className="w-4 h-4" /> {label}
+          </button>
+        ))}
+      </div>
+
       {/* Generator Card */}
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-white mb-5 flex items-center gap-2">
-          <KeyRound className="w-5 h-5 text-primary-400" />
-          Generator Parole
+          {mode === 'password' ? <KeyRound className="w-5 h-5 text-primary-400" /> : <BookOpen className="w-5 h-5 text-primary-400" />}
+          {mode === 'password' ? 'Generator Parole' : 'Generator Fraze-Parola'}
         </h2>
 
         {/* Password display */}
@@ -169,86 +250,128 @@ export default function PasswordGenPage() {
           <p className="text-red-400 text-sm mb-4">{error}</p>
         )}
 
-        {/* Settings */}
-        <div className="space-y-4 mb-5">
-          {/* Length slider */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm text-slate-300">Lungime</label>
-              <span className="text-sm font-mono text-primary-400 bg-slate-800 px-2 py-0.5 rounded">
-                {length}
-              </span>
-            </div>
-            <input
-              type="range"
-              min={8}
-              max={128}
-              value={length}
-              onChange={(e) => setLength(Number(e.target.value))}
-              className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer
-                [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
-                [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-500
-                [&::-webkit-slider-thumb]:hover:bg-primary-400 [&::-webkit-slider-thumb]:transition-colors"
-            />
-            <div className="flex justify-between text-[10px] text-slate-600 mt-1">
-              <span>8</span>
-              <span>32</span>
-              <span>64</span>
-              <span>128</span>
-            </div>
-          </div>
-
-          {/* Toggles */}
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: 'Litere mari (A-Z)', value: uppercase, setter: setUppercase },
-              { label: 'Litere mici (a-z)', value: lowercase, setter: setLowercase },
-              { label: 'Cifre (0-9)', value: digits, setter: setDigits },
-              { label: 'Simboluri (!@#$)', value: symbols, setter: setSymbols },
-            ].map(({ label, value, setter }) => (
-              <label key={label} className="flex items-center justify-between bg-slate-800/50 rounded-lg p-3 cursor-pointer">
-                <span className="text-sm text-slate-300">{label}</span>
-                <div
-                  className={toggleClass(value)}
-                  onClick={() => setter(!value)}
-                >
-                  <div
-                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
-                      value ? 'translate-x-5' : ''
-                    }`}
-                  />
-                </div>
-              </label>
-            ))}
-          </div>
-
-          {/* Exclude ambiguous */}
-          <label className="flex items-center justify-between bg-slate-800/50 rounded-lg p-3 cursor-pointer">
+        {/* Settings — password mode */}
+        {mode === 'password' && (
+          <div className="space-y-4 mb-5">
+            {/* Length slider */}
             <div>
-              <span className="text-sm text-slate-300">Exclude ambigue</span>
-              <p className="text-[10px] text-slate-500 mt-0.5">Elimina: 0, O, 1, l, I, |</p>
-            </div>
-            <div
-              className={toggleClass(excludeAmbiguous)}
-              onClick={() => setExcludeAmbiguous(!excludeAmbiguous)}
-            >
-              <div
-                className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
-                  excludeAmbiguous ? 'translate-x-5' : ''
-                }`}
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-slate-300">Lungime</label>
+                <span className="text-sm font-mono text-primary-400 bg-slate-800 px-2 py-0.5 rounded">
+                  {length}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={8}
+                max={128}
+                value={length}
+                onChange={(e) => setLength(Number(e.target.value))}
+                className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer
+                  [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+                  [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-500
+                  [&::-webkit-slider-thumb]:hover:bg-primary-400 [&::-webkit-slider-thumb]:transition-colors"
               />
+              <div className="flex justify-between text-[10px] text-slate-600 mt-1">
+                <span>8</span>
+                <span>32</span>
+                <span>64</span>
+                <span>128</span>
+              </div>
             </div>
-          </label>
-        </div>
+
+            {/* Toggles */}
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: 'Litere mari (A-Z)', value: uppercase, setter: setUppercase },
+                { label: 'Litere mici (a-z)', value: lowercase, setter: setLowercase },
+                { label: 'Cifre (0-9)', value: digits, setter: setDigits },
+                { label: 'Simboluri (!@#$)', value: symbols, setter: setSymbols },
+              ].map(({ label, value, setter }) => (
+                <label key={label} className="flex items-center justify-between bg-slate-800/50 rounded-lg p-3 cursor-pointer">
+                  <span className="text-sm text-slate-300">{label}</span>
+                  <div
+                    className={toggleClass(value)}
+                    onClick={() => setter(!value)}
+                  >
+                    <div
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                        value ? 'translate-x-5' : ''
+                      }`}
+                    />
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* Exclude ambiguous */}
+            <label className="flex items-center justify-between bg-slate-800/50 rounded-lg p-3 cursor-pointer">
+              <div>
+                <span className="text-sm text-slate-300">Exclude ambigue</span>
+                <p className="text-[10px] text-slate-500 mt-0.5">Elimina: 0, O, 1, l, I, |</p>
+              </div>
+              <div
+                className={toggleClass(excludeAmbiguous)}
+                onClick={() => setExcludeAmbiguous(!excludeAmbiguous)}
+              >
+                <div
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                    excludeAmbiguous ? 'translate-x-5' : ''
+                  }`}
+                />
+              </div>
+            </label>
+          </div>
+        )}
+
+        {/* R3-54: Settings — passphrase mode */}
+        {mode === 'passphrase' && (
+          <div className="space-y-4 mb-5">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-slate-300">Numar cuvinte</label>
+                <span className="text-sm font-mono text-primary-400 bg-slate-800 px-2 py-0.5 rounded">
+                  {ppWords}
+                </span>
+              </div>
+              <input
+                type="range" min={3} max={8} value={ppWords}
+                onChange={(e) => setPpWords(Number(e.target.value))}
+                className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer
+                  [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+                  [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-500
+                  [&::-webkit-slider-thumb]:hover:bg-primary-400 [&::-webkit-slider-thumb]:transition-colors"
+              />
+              <div className="flex justify-between text-[10px] text-slate-600 mt-1">
+                <span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-sm text-slate-300 mb-2 block">Separator</label>
+              <div className="flex gap-2">
+                {['-', '.', '_', ' ', '+'].map(sep => (
+                  <button key={sep} onClick={() => setPpSeparator(sep)}
+                    className={`px-4 py-2 rounded-lg text-sm font-mono transition-colors border ${ppSeparator === sep ? 'border-primary-500 bg-primary-600/20 text-white' : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:text-slate-200'}`}>
+                    {sep === ' ' ? '␣' : sep}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="bg-slate-800/50 rounded-lg p-3 text-xs text-slate-500">
+              Fraza-parola = cuvinte romanesti + numar. Usor de memorat, greu de spart.
+              Exemplu: <span className="text-primary-400 font-mono">castel-verde-munte-42</span>
+            </div>
+          </div>
+        )}
 
         {/* Generate button */}
         <button
-          onClick={generate}
-          disabled={loading}
+          onClick={mode === 'password' ? generate : generatePassphrase}
+          disabled={loading || ppLoading}
           className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-sm font-semibold"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Se genereaza...' : 'Genereaza Parola'}
+          <RefreshCw className={`w-4 h-4 ${(loading || ppLoading) ? 'animate-spin' : ''}`} />
+          {(loading || ppLoading) ? 'Se genereaza...' : mode === 'password' ? 'Genereaza Parola' : 'Genereaza Fraza-Parola'}
         </button>
       </div>
 
@@ -313,6 +436,53 @@ export default function PasswordGenPage() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* R3-56: Password history */}
+      <div className="card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-md font-semibold text-white flex items-center gap-2">
+            <Clock className="w-4 h-4 text-slate-400" />
+            Parole recente (sesiune)
+          </h3>
+          <button onClick={loadHistory} disabled={historyLoading}
+            className="text-xs text-slate-400 hover:text-primary-400 transition-colors">
+            <RefreshCw className={`w-3.5 h-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+
+        {history.length === 0 ? (
+          <p className="text-sm text-slate-500 text-center py-4">
+            Nicio parola generata in aceasta sesiune
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {history.map((item, idx) => (
+              <div key={idx} className="flex items-center gap-3 bg-slate-800/50 rounded-lg p-3">
+                <div className="flex-1 min-w-0">
+                  <p className={`font-mono text-sm truncate ${revealedIdx === idx ? 'text-white' : 'text-slate-500'}`}>
+                    {revealedIdx === idx ? item.password : '\u2022'.repeat(Math.min(item.length || 16, 24))}
+                  </p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-slate-600">{item.strength_label}</span>
+                    <span className="text-[10px] text-slate-600">{item.length} char</span>
+                    <span className="text-[10px] text-slate-600">{item.timestamp}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => setRevealedIdx(revealedIdx === idx ? null : idx)}
+                    className="p-1.5 text-slate-400 hover:text-primary-400 transition-colors" title="Arata/Ascunde">
+                    {revealedIdx === idx ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                  <button onClick={() => copyHistoryItem(item.password, idx)}
+                    className="p-1.5 text-slate-400 hover:text-primary-400 transition-colors" title="Copiaza">
+                    {copiedIdx === idx ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

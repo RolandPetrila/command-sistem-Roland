@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Languages, Upload, FileText, BookOpen, Repeat, Download, Loader2, Search, Plus, Trash2, X, ChevronDown, ArrowRightLeft } from 'lucide-react';
+import { Languages, Upload, FileText, BookOpen, Repeat, Download, Loader2, Search, Plus, Trash2, X, ChevronDown, ArrowRightLeft, Clock } from 'lucide-react';
 import api from '../api/client';
 
 const LANGS = [
@@ -46,8 +46,16 @@ export default function TranslatorPage() {
   const [usage, setUsage] = useState(null);
   // Detect
   const [detectedLang, setDetectedLang] = useState(null);
+  // R4-13: Batch file translation
+  const [batchFiles, setBatchFiles] = useState([]);
+  const [batchTranslating, setBatchTranslating] = useState(false);
+  const [batchResults, setBatchResults] = useState(null);
+  const batchRef = useRef(null);
+  // R4-14: Provider latency stats
+  const [providerStats, setProviderStats] = useState([]);
+  const [providerLatency, setProviderLatency] = useState(null);
 
-  useEffect(() => { loadUsage(); }, []);
+  useEffect(() => { loadUsage(); loadProviderStats(); }, []);
   useEffect(() => { if (tab === 'tm') { loadTmStats(); loadTm(); } }, [tab]);
   useEffect(() => {
     if (tab === 'glossary') {
@@ -60,6 +68,14 @@ export default function TranslatorPage() {
     try {
       const { data } = await api.get('/api/translator/usage');
       setUsage(data);
+    } catch { /* toast handles it */ }
+  };
+
+  // R4-14: Load provider latency stats
+  const loadProviderStats = async () => {
+    try {
+      const { data } = await api.get('/api/translator/provider-stats');
+      setProviderStats(data || []);
     } catch { /* toast handles it */ }
   };
 
@@ -109,6 +125,9 @@ export default function TranslatorPage() {
       setCharCount(data.chars_count || 0);
       setTmHits(data.tm_hits || 0);
       if (data.detected_lang) setDetectedLang(data.detected_lang);
+      // R4-14: Capture provider latency
+      setProviderLatency(data.provider_latency_ms || null);
+      if (data.provider_latency_ms) loadProviderStats();
     } catch (err) {
       setTargetText(`⚠️ Eroare: ${err.response?.data?.detail || err.message}`);
     } finally {
@@ -192,6 +211,28 @@ export default function TranslatorPage() {
     } catch { /* toast handles it */ }
   };
 
+  // R4-13: Batch multi-file translation
+  const handleBatchTranslate = async () => {
+    if (!batchFiles.length || batchTranslating) return;
+    setBatchTranslating(true);
+    setBatchResults(null);
+    try {
+      const formData = new FormData();
+      batchFiles.forEach(f => formData.append('files', f));
+      formData.append('source_lang', sourceLang);
+      formData.append('target_lang', targetLang);
+      const { data } = await api.post('/api/translator/translate-batch', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 300000,
+      });
+      setBatchResults(data);
+    } catch (err) {
+      setBatchResults({ error: err.response?.data?.detail || err.message });
+    } finally {
+      setBatchTranslating(false);
+    }
+  };
+
   const tabs = [
     { id: 'text', label: 'Text', icon: Languages },
     { id: 'file', label: 'Fișier', icon: FileText },
@@ -221,7 +262,7 @@ export default function TranslatorPage() {
       </div>
 
       {/* Language selector bar */}
-      <div className="flex items-center gap-3 bg-gray-900 rounded-xl p-3">
+      <div className="flex flex-wrap items-center gap-3 bg-gray-900 rounded-xl p-3">
         <select value={sourceLang} onChange={e => setSourceLang(e.target.value)}
           className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm">
           {LANGS.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
@@ -246,12 +287,18 @@ export default function TranslatorPage() {
             <input type="checkbox" checked={useGlossary} onChange={e => setUseGlossary(e.target.checked)} className="accent-blue-500" />
             Glosar
           </label>
+          {/* R4-14: Provider latency badges */}
+          {providerStats.filter(s => s.avg_latency_ms != null).map(s => (
+            <span key={s.provider} className="text-gray-600" title={`Avg: ${s.avg_latency_ms}ms`}>
+              {s.provider} ({(s.avg_latency_ms / 1000).toFixed(1)}s)
+            </span>
+          ))}
         </div>
       </div>
 
       {/* TEXT TAB */}
       {tab === 'text' && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <textarea value={sourceText} onChange={e => setSourceText(e.target.value)}
               placeholder="Scrie sau lipește textul de tradus..."
@@ -286,6 +333,7 @@ export default function TranslatorPage() {
             <div className="flex justify-between text-xs text-gray-500">
               <span>
                 {provider && <span className="text-blue-400">{provider}</span>}
+                {providerLatency != null && <span className="ml-2 text-gray-400"><Clock size={10} className="inline mr-0.5" />{(providerLatency / 1000).toFixed(1)}s</span>}
                 {charCount > 0 && <span className="ml-2">{charCount} chars</span>}
                 {tmHits > 0 && <span className="ml-2 text-yellow-400">TM: {tmHits} potriviri</span>}
               </span>
@@ -330,6 +378,58 @@ export default function TranslatorPage() {
           {fileResult?.error && (
             <p className="text-red-400 text-sm">⚠️ {fileResult.error}</p>
           )}
+
+          {/* R4-13: Batch multi-file upload */}
+          <div className="border-t border-gray-700 pt-4 mt-4">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-sm font-medium text-gray-300">Traducere batch (max 5 fisiere)</span>
+              <button onClick={() => batchRef.current?.click()}
+                className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs">
+                <Plus size={12} /> Adauga fisiere
+              </button>
+              <input type="file" ref={batchRef} multiple onChange={e => {
+                const selected = Array.from(e.target.files || []).slice(0, 5);
+                setBatchFiles(selected);
+                setBatchResults(null);
+              }} className="hidden" accept=".pdf,.docx,.txt,.md" />
+            </div>
+            {batchFiles.length > 0 && (
+              <div className="space-y-2">
+                {batchFiles.map((bf, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm text-gray-300">
+                    <FileText size={14} className="text-blue-400" />
+                    <span>{bf.name}</span>
+                    <span className="text-xs text-gray-600">({(bf.size / 1024).toFixed(0)} KB)</span>
+                  </div>
+                ))}
+                <div className="flex gap-2 mt-2">
+                  <button onClick={handleBatchTranslate} disabled={batchTranslating}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors">
+                    {batchTranslating ? <Loader2 size={14} className="animate-spin" /> : <Languages size={14} />}
+                    Traduce {batchFiles.length} fisiere
+                  </button>
+                  <button onClick={() => { setBatchFiles([]); setBatchResults(null); }}
+                    className="px-3 py-2 text-gray-400 hover:text-red-400 text-sm">Sterge lista</button>
+                </div>
+              </div>
+            )}
+            {batchResults && !batchResults.error && (
+              <div className="mt-3 space-y-1">
+                <div className="text-xs text-gray-400 mb-2">{batchResults.ok}/{batchResults.total} fisiere traduse cu succes</div>
+                {batchResults.results?.map((r, i) => (
+                  <div key={i} className={`flex items-center gap-2 text-sm p-2 rounded-lg ${r.status === 'ok' ? 'bg-green-900/20' : 'bg-red-900/20'}`}>
+                    <span className={r.status === 'ok' ? 'text-green-400' : 'text-red-400'}>{r.status === 'ok' ? '✓' : '✗'}</span>
+                    <span className="flex-1">{r.filename}</span>
+                    {r.status === 'ok' && <span className="text-xs text-gray-500">{r.chars} chars | {r.provider}</span>}
+                    {r.error && <span className="text-xs text-red-400">{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {batchResults?.error && (
+              <p className="text-red-400 text-sm mt-2">⚠️ {batchResults.error}</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -359,12 +459,22 @@ export default function TranslatorPage() {
             <button onClick={loadTm} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm">Caută</button>
           </div>
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {tmEntries.map((entry, i) => (
-              <div key={entry.id || i} className="bg-gray-900 rounded-lg p-3 grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-xs text-gray-500 block mb-1">{entry.source_lang?.toUpperCase()}</span>{entry.source_segment}</div>
-                <div><span className="text-xs text-gray-500 block mb-1">{entry.target_lang?.toUpperCase()}</span>{entry.target_segment}</div>
-              </div>
-            ))}
+            {tmEntries.map((entry, i) => {
+              const score = entry.score ?? entry.confidence;
+              const scorePct = score != null ? Math.round(score * 100) : null;
+              const scoreColor = scorePct != null
+                ? (scorePct > 80 ? 'text-green-400' : scorePct >= 50 ? 'text-yellow-400' : 'text-gray-500')
+                : '';
+              return (
+                <div key={entry.id || i} className="bg-gray-900 rounded-lg p-3 grid grid-cols-2 gap-3 text-sm relative">
+                  <div><span className="text-xs text-gray-500 block mb-1">{entry.source_lang?.toUpperCase()}</span>{entry.source_segment}</div>
+                  <div><span className="text-xs text-gray-500 block mb-1">{entry.target_lang?.toUpperCase()}</span>{entry.target_segment}</div>
+                  {scorePct != null && (
+                    <span className={`absolute top-2 right-3 text-xs font-medium ${scoreColor}`}>{scorePct}% match</span>
+                  )}
+                </div>
+              );
+            })}
             {tmEntries.length === 0 && <p className="text-sm text-gray-500 text-center py-4">Nicio intrare în TM. Traduce texte pentru a popula automat.</p>}
           </div>
         </div>

@@ -3,7 +3,7 @@ import {
   Zap, Clock, Link2, Activity, Send, HeartPulse,
   Plus, Trash2, Play, Pause, Edit3, Save, X, RefreshCw,
   ExternalLink, HardDrive, Database, Cpu, CheckCircle, XCircle,
-  Loader2, ChevronDown, ChevronUp
+  Loader2, ChevronDown, ChevronUp, History, Power, Timer, RotateCcw
 } from 'lucide-react';
 import apiClient from '../api/client';
 
@@ -20,13 +20,25 @@ function ScheduledTasks() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', cron: '*/5 * * * *', action_type: 'http', action_config: '{}', enabled: true });
+  const [form, setForm] = useState({ name: '', schedule_cron: '*/5 * * * *', action_type: 'backup_db', action_config: '{}', enabled: true, timeout_seconds: 300, max_retries: 1 });
+  // R3-45: Scheduler status
+  const [schedulerStatus, setSchedulerStatus] = useState(null);
+  // R4-10: Execution history slide-in
+  const [historyTaskId, setHistoryTaskId] = useState(null);
+  const [historyRuns, setHistoryRuns] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  // R4-11: Scheduler toggling
+  const [toggling, setToggling] = useState(false);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get('/api/automations/tasks');
-      setTasks(res.data.tasks || res.data || []);
+      const [tasksRes, statusRes] = await Promise.allSettled([
+        apiClient.get('/api/automations/tasks'),
+        apiClient.get('/api/automations/scheduler/status'),
+      ]);
+      if (tasksRes.status === 'fulfilled') setTasks(tasksRes.value.data.tasks || tasksRes.value.data || []);
+      if (statusRes.status === 'fulfilled') setSchedulerStatus(statusRes.value.data);
     } catch {
       setTasks([]);
     }
@@ -43,9 +55,30 @@ function ScheduledTasks() {
         await apiClient.post('/api/automations/tasks', form);
       }
       setEditing(null);
-      setForm({ name: '', cron: '*/5 * * * *', action_type: 'http', action_config: '{}', enabled: true });
+      setForm({ name: '', schedule_cron: '*/5 * * * *', action_type: 'backup_db', action_config: '{}', enabled: true, timeout_seconds: 300, max_retries: 1 });
       loadTasks();
     } catch { /* toast handles it */ }
+  };
+
+  // R4-10: Load execution history for a task
+  const loadHistory = async (taskId) => {
+    setHistoryTaskId(taskId);
+    setHistoryLoading(true);
+    try {
+      const res = await apiClient.get(`/api/automations/tasks/${taskId}/history`);
+      setHistoryRuns(res.data.runs || []);
+    } catch { setHistoryRuns([]); }
+    setHistoryLoading(false);
+  };
+
+  // R4-11: Toggle scheduler pause/resume
+  const toggleScheduler = async () => {
+    setToggling(true);
+    try {
+      await apiClient.post('/api/automations/scheduler/toggle');
+      loadTasks();
+    } catch { /* toast handles it */ }
+    setToggling(false);
   };
 
   const deleteTask = async (id) => {
@@ -67,19 +100,51 @@ function ScheduledTasks() {
     setEditing(task.id);
     setForm({
       name: task.name || '',
-      cron: task.cron || '*/5 * * * *',
-      action_type: task.action_type || 'http',
+      schedule_cron: task.schedule_cron || task.cron || '*/5 * * * *',
+      action_type: task.action_type || 'backup_db',
       action_config: typeof task.action_config === 'string' ? task.action_config : JSON.stringify(task.action_config || {}),
       enabled: task.enabled !== false,
+      timeout_seconds: task.timeout_seconds || 300,
+      max_retries: task.max_retries ?? 1,
     });
   };
 
   return (
     <div className="space-y-4">
+      {/* R3-45 + R4-11: Scheduler status banner with toggle */}
+      {schedulerStatus && (
+        <div className={`flex items-center gap-3 p-3 rounded-lg text-sm ${schedulerStatus.running ? 'bg-emerald-900/20 border border-emerald-800/30' : schedulerStatus.paused ? 'bg-amber-900/20 border border-amber-800/30' : 'bg-slate-800/40 border border-slate-700'}`}>
+          <span className={`w-2.5 h-2.5 rounded-full ${schedulerStatus.running ? 'bg-emerald-400 animate-pulse' : schedulerStatus.paused ? 'bg-amber-400' : 'bg-slate-500'}`} />
+          <span className={schedulerStatus.running ? 'text-emerald-300' : schedulerStatus.paused ? 'text-amber-300' : 'text-slate-400'}>
+            Scheduler: {schedulerStatus.running ? 'Activ' : schedulerStatus.paused ? 'In pauza' : 'Inactiv'}
+          </span>
+          {schedulerStatus.active_tasks != null && (
+            <span className="text-xs text-slate-500">{schedulerStatus.active_tasks} sarcini active</span>
+          )}
+          {schedulerStatus.last_check && (
+            <span className="text-xs text-slate-500">Verificat: {new Date(schedulerStatus.last_check).toLocaleTimeString('ro-RO')}</span>
+          )}
+          {/* R4-11: Toggle button */}
+          <button
+            onClick={toggleScheduler}
+            disabled={toggling}
+            className={`ml-auto flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+              schedulerStatus.running
+                ? 'bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 border border-amber-700/30'
+                : 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-700/30'
+            }`}
+            title={schedulerStatus.running ? 'Pune in pauza' : 'Porneste scheduler-ul'}
+          >
+            {toggling ? <Loader2 className="w-3 h-3 animate-spin" /> :
+              schedulerStatus.running ? <Pause className="w-3 h-3" /> : <Power className="w-3 h-3" />}
+            {schedulerStatus.running ? 'Pauza' : 'Porneste'}
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-400">Gestioneaza sarcini automate cu expresii cron</p>
         <button
-          onClick={() => { setEditing('new'); setForm({ name: '', cron: '*/5 * * * *', action_type: 'http', action_config: '{}', enabled: true }); }}
+          onClick={() => { setEditing('new'); setForm({ name: '', schedule_cron: '*/5 * * * *', action_type: 'backup_db', action_config: '{}', enabled: true, timeout_seconds: 300, max_retries: 1 }); }}
           className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm"
         >
           <Plus className="w-4 h-4" /> Adauga Sarcina
@@ -97,17 +162,17 @@ function ScheduledTasks() {
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Expresie Cron</label>
-              <input value={form.cron} onChange={e => setForm({ ...form, cron: e.target.value })}
+              <input value={form.schedule_cron} onChange={e => setForm({ ...form, schedule_cron: e.target.value })}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm font-mono focus:border-primary-500 focus:outline-none" placeholder="*/5 * * * *" />
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Tip Actiune</label>
               <select value={form.action_type} onChange={e => setForm({ ...form, action_type: e.target.value })}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none">
-                <option value="http">HTTP Request</option>
-                <option value="backup">Backup</option>
-                <option value="cleanup">Curatare</option>
-                <option value="custom">Custom</option>
+                <option value="backup_db">Backup DB</option>
+                <option value="cleanup_temp">Curatare Temp</option>
+                <option value="health_check">Health Check</option>
+                <option value="custom_script">Script Custom</option>
               </select>
             </div>
             <div className="flex items-end gap-2">
@@ -116,6 +181,18 @@ function ScheduledTasks() {
                   className="rounded border-slate-600" />
                 <span className="text-sm text-slate-300">Activ</span>
               </label>
+            </div>
+            {/* R4-09: Timeout field */}
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1"><Timer className="w-3 h-3" /> Timeout (secunde)</label>
+              <input type="number" min={10} max={3600} value={form.timeout_seconds} onChange={e => setForm({ ...form, timeout_seconds: parseInt(e.target.value) || 300 })}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm font-mono focus:border-primary-500 focus:outline-none" />
+            </div>
+            {/* R4-09: Max retries field */}
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block flex items-center gap-1"><RotateCcw className="w-3 h-3" /> Reincercari max</label>
+              <input type="number" min={0} max={5} value={form.max_retries} onChange={e => setForm({ ...form, max_retries: parseInt(e.target.value) || 0 })}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm font-mono focus:border-primary-500 focus:outline-none" />
             </div>
           </div>
           <div>
@@ -150,13 +227,22 @@ function ScheduledTasks() {
                 <div className="flex items-center gap-2">
                   <span className={`w-2 h-2 rounded-full ${task.enabled !== false ? 'bg-green-400' : 'bg-slate-500'}`} />
                   <span className="text-sm text-white font-medium">{task.name || 'Sarcina fara nume'}</span>
-                  <span className="text-xs text-slate-500 font-mono bg-slate-900 px-2 py-0.5 rounded">{task.cron}</span>
+                  <span className="text-xs text-slate-500 font-mono bg-slate-900 px-2 py-0.5 rounded">{task.schedule_cron || task.cron}</span>
+                  {task.timeout_seconds && (
+                    <span className="text-[10px] text-slate-600 flex items-center gap-0.5" title={`Timeout: ${task.timeout_seconds}s, Retries: ${task.max_retries ?? 1}`}>
+                      <Timer className="w-2.5 h-2.5" />{task.timeout_seconds}s
+                    </span>
+                  )}
                 </div>
                 {task.last_run && <p className="text-[10px] text-slate-500 mt-1">Ultima rulare: {task.last_run}</p>}
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button onClick={() => runTask(task.id)} className="p-1.5 text-green-400 hover:bg-green-400/10 rounded" title="Ruleaza acum">
                   <Play className="w-3.5 h-3.5" />
+                </button>
+                {/* R4-10: History button */}
+                <button onClick={() => loadHistory(task.id)} className="p-1.5 text-blue-400 hover:bg-blue-400/10 rounded" title="Istoric executii">
+                  <History className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={() => startEdit(task)} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded" title="Editeaza">
                   <Edit3 className="w-3.5 h-3.5" />
@@ -169,6 +255,54 @@ function ScheduledTasks() {
           ))}
         </div>
       )}
+
+      {/* R4-10: Execution history slide-in panel */}
+      {historyTaskId !== null && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={(e) => { if (e.target === e.currentTarget) setHistoryTaskId(null); }}>
+          <div className="w-full max-w-md bg-slate-900 border-l border-slate-700 shadow-2xl h-full overflow-y-auto animate-slide-in-right">
+            <div className="sticky top-0 bg-slate-900 border-b border-slate-700 p-4 flex items-center justify-between z-10">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <History className="w-4 h-4 text-blue-400" />
+                Istoric executii — Task #{historyTaskId}
+              </h3>
+              <button onClick={() => setHistoryTaskId(null)} className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {historyLoading ? (
+                <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
+              ) : historyRuns.length === 0 ? (
+                <p className="text-sm text-slate-500 text-center py-8">Nicio executie inregistrata</p>
+              ) : historyRuns.map(run => (
+                <div key={run.id} className={`rounded-lg p-3 border ${
+                  run.status === 'success' ? 'border-emerald-800/30 bg-emerald-900/10' :
+                  run.status === 'timeout' ? 'border-amber-800/30 bg-amber-900/10' :
+                  run.status === 'running' ? 'border-blue-800/30 bg-blue-900/10' :
+                  'border-red-800/30 bg-red-900/10'
+                }`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-xs font-semibold uppercase ${
+                      run.status === 'success' ? 'text-emerald-400' :
+                      run.status === 'timeout' ? 'text-amber-400' :
+                      run.status === 'running' ? 'text-blue-400' :
+                      'text-red-400'
+                    }`}>
+                      {run.status === 'success' ? 'Succes' : run.status === 'timeout' ? 'Timeout' : run.status === 'running' ? 'In curs' : 'Esuat'}
+                    </span>
+                    {run.duration_seconds != null && (
+                      <span className="text-[10px] text-slate-500 font-mono">{run.duration_seconds}s</span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500">{run.started_at ? new Date(run.started_at).toLocaleString('ro-RO') : '—'}</p>
+                  {run.output && <p className="text-xs text-slate-400 mt-1 truncate" title={run.output}>{run.output}</p>}
+                  {run.error && <p className="text-xs text-red-400 mt-1 truncate" title={run.error}>{run.error}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -178,7 +312,7 @@ function Shortcuts() {
   const [shortcuts, setShortcuts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', url: '', icon: 'link', category: '' });
+  const [form, setForm] = useState({ name: '', url_or_action: '', icon: 'link', color: '#6366f1', sort_order: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -199,7 +333,7 @@ function Shortcuts() {
         await apiClient.post('/api/automations/shortcuts', form);
       }
       setEditing(null);
-      setForm({ name: '', url: '', icon: 'link', category: '' });
+      setForm({ name: '', url_or_action: '', icon: 'link', color: '#6366f1', sort_order: 0 });
       load();
     } catch { /* toast handles it */ }
   };
@@ -213,7 +347,7 @@ function Shortcuts() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-400">Acces rapid la link-uri si comenzi frecvente</p>
-        <button onClick={() => { setEditing('new'); setForm({ name: '', url: '', icon: 'link', category: '' }); }}
+        <button onClick={() => { setEditing('new'); setForm({ name: '', url_or_action: '', icon: 'link', color: '#6366f1', sort_order: 0 }); }}
           className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm">
           <Plus className="w-4 h-4" /> Adauga Scurtatura
         </button>
@@ -229,13 +363,13 @@ function Shortcuts() {
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">URL / Comanda</label>
-              <input value={form.url} onChange={e => setForm({ ...form, url: e.target.value })}
+              <input value={form.url_or_action} onChange={e => setForm({ ...form, url_or_action: e.target.value })}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" placeholder="https://google.com" />
             </div>
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Categorie</label>
-              <input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" placeholder="Productivitate" />
+              <label className="text-xs text-slate-400 mb-1 block">Culoare</label>
+              <input type="color" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })}
+                className="w-full h-10 bg-slate-900 border border-slate-700 rounded-lg cursor-pointer" />
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Icon</label>
@@ -262,7 +396,7 @@ function Shortcuts() {
           {shortcuts.map(s => (
             <div key={s.id} className="bg-slate-800/40 rounded-lg p-4 flex flex-col items-center text-center group relative">
               <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => { setEditing(s.id); setForm({ name: s.name, url: s.url, icon: s.icon || 'link', category: s.category || '' }); }}
+                <button onClick={() => { setEditing(s.id); setForm({ name: s.name, url_or_action: s.url_or_action || s.url || '', icon: s.icon || 'link', color: s.color || '#6366f1', sort_order: s.sort_order || 0 }); }}
                   className="p-1 text-slate-400 hover:bg-slate-700 rounded"><Edit3 className="w-3 h-3" /></button>
                 <button onClick={() => remove(s.id)} className="p-1 text-red-400 hover:bg-red-400/10 rounded"><Trash2 className="w-3 h-3" /></button>
               </div>
@@ -270,8 +404,7 @@ function Shortcuts() {
                 <ExternalLink className="w-5 h-5 text-primary-400" />
               </div>
               <p className="text-sm text-white font-medium truncate w-full">{s.name}</p>
-              {s.category && <p className="text-[10px] text-slate-500 mt-0.5">{s.category}</p>}
-              <a href={s.url} target="_blank" rel="noopener noreferrer"
+              <a href={s.url_or_action || s.url} target="_blank" rel="noopener noreferrer"
                 className="mt-2 text-xs text-primary-400 hover:text-primary-300 transition-colors">Deschide</a>
             </div>
           ))}
@@ -293,7 +426,7 @@ function UptimeMonitor() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get('/api/automations/uptime');
+      const res = await apiClient.get('/api/automations/monitors');
       setMonitors(res.data.monitors || res.data || []);
     } catch { setMonitors([]); }
     setLoading(false);
@@ -304,7 +437,7 @@ function UptimeMonitor() {
   const addMonitor = async () => {
     if (!newUrl.trim()) return;
     try {
-      await apiClient.post('/api/automations/uptime', { name: newName || newUrl, url: newUrl });
+      await apiClient.post('/api/automations/monitors', { name: newName || newUrl, url: newUrl });
       setNewUrl(''); setNewName('');
       load();
     } catch { /* toast handles it */ }
@@ -312,13 +445,13 @@ function UptimeMonitor() {
 
   const checkNow = async (id) => {
     setChecking(id);
-    try { await apiClient.post(`/api/automations/uptime/${id}/check`); load(); } catch { /* toast handles it */ }
+    try { await apiClient.post(`/api/automations/monitors/${id}/check`); load(); } catch { /* toast handles it */ }
     setChecking(null);
   };
 
   const remove = async (id) => {
     if (!confirm('Stergi acest monitor?')) return;
-    try { await apiClient.delete(`/api/automations/uptime/${id}`); load(); } catch { /* toast handles it */ }
+    try { await apiClient.delete(`/api/automations/monitors/${id}`); load(); } catch { /* toast handles it */ }
   };
 
   return (

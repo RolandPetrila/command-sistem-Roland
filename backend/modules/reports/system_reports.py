@@ -15,6 +15,8 @@ Endpoints:
   GET /api/reports/dashboard/quick-stats
   GET /api/reports/dashboard/revenue-comparison
   GET /api/reports/dashboard/itp-trend
+  GET /api/reports/revenue-by-client
+  GET /api/reports/export/pdf
 """
 
 from __future__ import annotations
@@ -741,3 +743,309 @@ async def dashboard_itp_trend():
     except Exception as exc:
         logger.error("Eroare dashboard itp-trend: %s", exc)
     return result
+
+
+# ===========================================================================
+# REVENUE BY CLIENT (R4-36)
+# ===========================================================================
+
+@router.get("/revenue-by-client")
+async def revenue_by_client(
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Venituri per client — SUM(total), COUNT, AVG grupat pe client."""
+    conditions: list[str] = []
+    params: list = []
+
+    if date_from:
+        conditions.append("i.date >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("i.date <= ?")
+        params.append(date_to)
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    try:
+        async with get_db() as db:
+            sql = f"""
+                SELECT
+                    i.client_id,
+                    COALESCE(c.name, 'Fara client') AS client_name,
+                    SUM(i.total) AS total_revenue,
+                    COUNT(*) AS invoice_count,
+                    AVG(i.total) AS avg_invoice
+                FROM invoices i
+                LEFT JOIN clients c ON i.client_id = c.id
+                {where_clause}
+                GROUP BY i.client_id
+                ORDER BY total_revenue DESC
+            """
+            cursor = await db.execute(sql, tuple(params))
+            rows = await cursor.fetchall()
+
+            clients = []
+            period_total = 0.0
+            for r in rows:
+                rev = round(r["total_revenue"] or 0, 2)
+                period_total += rev
+                clients.append({
+                    "client_id": r["client_id"],
+                    "client_name": r["client_name"],
+                    "total_revenue": rev,
+                    "invoice_count": r["invoice_count"],
+                    "avg_invoice": round(r["avg_invoice"] or 0, 2),
+                })
+
+        return {
+            "clients": clients,
+            "period_total": round(period_total, 2),
+            "date_from": date_from or None,
+            "date_to": date_to or None,
+        }
+
+    except Exception as exc:
+        logger.error("Eroare revenue-by-client: %s", exc)
+        return {"clients": [], "period_total": 0.0}
+
+
+# ===========================================================================
+# EXPORT PDF REPORT
+# ===========================================================================
+
+@router.get("/export/pdf")
+async def export_pdf_report():
+    """Genereaza un raport PDF cu statistici sistem, facturi, activitate zilnica."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        )
+    except ImportError as exc:
+        raise HTTPException(500, f"ReportLab indisponibil: {exc}")
+
+    today = datetime.now().strftime("%d.%m.%Y %H:%M")
+    buf = io.BytesIO()
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=2 * cm,
+        rightMargin=2 * cm,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "ReportTitle",
+        parent=styles["Heading1"],
+        fontSize=16,
+        alignment=TA_CENTER,
+        spaceAfter=6,
+    )
+    subtitle_style = ParagraphStyle(
+        "ReportSubtitle",
+        parent=styles["Normal"],
+        fontSize=9,
+        alignment=TA_CENTER,
+        textColor=colors.grey,
+        spaceAfter=20,
+    )
+    section_style = ParagraphStyle(
+        "SectionHeader",
+        parent=styles["Heading2"],
+        fontSize=11,
+        spaceBefore=14,
+        spaceAfter=6,
+        textColor=colors.HexColor("#1d4ed8"),
+    )
+
+    _TABLE_STYLE = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a5f")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f4f8")]),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ])
+
+    story = []
+
+    # --- Title ---
+    story.append(Paragraph(f"Raport Sistem — {today}", title_style))
+    story.append(Paragraph("Roland Command Center — CIP Inspection SRL", subtitle_style))
+
+    # --- 1. Disk stats ---
+    story.append(Paragraph("1. Utilizare Disk", section_style))
+    disk = shutil.disk_usage(str(_PROJECT_DIR))
+    data_sz = _get_folder_size(_DATA_DIR)
+    uploads_sz = _get_folder_size(_UPLOADS_DIR)
+    db_path = settings.db_path
+    db_sz = db_path.stat().st_size if db_path.exists() else 0
+
+    disk_data = [
+        ["Metric", "Valoare"],
+        ["Spatiu total disk", _format_size(disk.total)],
+        ["Spatiu folosit disk", f"{_format_size(disk.used)} ({round(disk.used / disk.total * 100, 1)}%)"],
+        ["Spatiu liber disk", _format_size(disk.free)],
+        ["Folder data/", _format_size(data_sz)],
+        ["Folder uploads/", _format_size(uploads_sz)],
+        ["Baza de date SQLite", _format_size(db_sz)],
+    ]
+    t = Table(disk_data, colWidths=[9 * cm, 8 * cm])
+    t.setStyle(_TABLE_STYLE)
+    story.append(t)
+
+    # --- 2. Statistici fisiere ---
+    story.append(Paragraph("2. Statistici Fisiere", section_style))
+    file_count_data = {"data": 0, "uploads": 0}
+    for folder_name, folder_path in [("data", _DATA_DIR), ("uploads", _UPLOADS_DIR)]:
+        if folder_path.exists():
+            try:
+                file_count_data[folder_name] = sum(1 for f in folder_path.rglob("*") if f.is_file())
+            except (OSError, PermissionError):
+                pass
+
+    files_data = [
+        ["Folder", "Numar fisiere", "Dimensiune totala"],
+        ["data/", str(file_count_data["data"]), _format_size(data_sz)],
+        ["uploads/", str(file_count_data["uploads"]), _format_size(uploads_sz)],
+    ]
+    t2 = Table(files_data, colWidths=[6 * cm, 5 * cm, 6 * cm])
+    t2.setStyle(_TABLE_STYLE)
+    story.append(t2)
+
+    # --- 3. Statistici facturi si activitate ---
+    story.append(Paragraph("3. Facturi si Activitate", section_style))
+
+    inv_total_month = 0
+    inv_count_month = 0
+    inv_count_all = 0
+    inv_revenue_month = 0.0
+    daily_activity: list[dict] = []
+    monthly_revenue: list[dict] = []
+
+    try:
+        async with get_db() as db:
+            # Facturi luna curenta
+            try:
+                cur = await db.execute(
+                    "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS rev "
+                    "FROM invoices WHERE created_at >= date('now', 'start of month')"
+                )
+                row = await cur.fetchone()
+                if row:
+                    inv_count_month = row["cnt"]
+                    inv_revenue_month = round(row["rev"], 2)
+            except Exception:
+                pass
+
+            # Total facturi
+            try:
+                cur = await db.execute("SELECT COUNT(*) AS cnt FROM invoices")
+                row = await cur.fetchone()
+                inv_count_all = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            # Activitate zilnica — ultimele 7 zile
+            try:
+                cur = await db.execute(
+                    "SELECT date(timestamp) AS day, COUNT(*) AS cnt "
+                    "FROM activity_log "
+                    "WHERE timestamp >= date('now', '-7 days') "
+                    "GROUP BY day ORDER BY day ASC"
+                )
+                rows = await cur.fetchall()
+                daily_activity = [{"day": r["day"], "count": r["cnt"]} for r in rows]
+            except Exception:
+                pass
+
+            # Venituri lunare — ultimele 6 luni (facturi platite)
+            try:
+                cur = await db.execute(
+                    "SELECT strftime('%Y-%m', date) AS month, "
+                    "COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS rev "
+                    "FROM invoices WHERE status = 'paid' "
+                    "AND date >= date('now', '-6 months') "
+                    "GROUP BY month ORDER BY month ASC"
+                )
+                rows = await cur.fetchall()
+                monthly_revenue = [
+                    {"month": r["month"], "count": r["cnt"], "revenue": round(r["rev"], 2)}
+                    for r in rows
+                ]
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.error("Eroare PDF export DB query: %s", exc)
+
+    inv_data = [
+        ["Metric", "Valoare"],
+        ["Total facturi (toate)", str(inv_count_all)],
+        ["Facturi luna curenta", str(inv_count_month)],
+        ["Venituri luna curenta (platite)", f"{inv_revenue_month:.2f} RON"],
+    ]
+    t3 = Table(inv_data, colWidths=[9 * cm, 8 * cm])
+    t3.setStyle(_TABLE_STYLE)
+    story.append(t3)
+
+    # --- 4. Activitate zilnica (ultimele 7 zile) ---
+    story.append(Paragraph("4. Activitate Zilnica (ultimele 7 zile)", section_style))
+    if daily_activity:
+        act_data = [["Data", "Actiuni inregistrate"]]
+        for item in daily_activity:
+            act_data.append([item["day"], str(item["count"])])
+        t4 = Table(act_data, colWidths=[9 * cm, 8 * cm])
+        t4.setStyle(_TABLE_STYLE)
+        story.append(t4)
+    else:
+        story.append(Paragraph("Nu exista date de activitate in ultimele 7 zile.", styles["Normal"]))
+
+    # --- 5. Venituri lunare (ultimele 6 luni) ---
+    story.append(Paragraph("5. Venituri Lunare — Facturi Platite (ultimele 6 luni)", section_style))
+    if monthly_revenue:
+        rev_data = [["Luna", "Facturi platite", "Total RON"]]
+        for item in monthly_revenue:
+            rev_data.append([item["month"], str(item["count"]), f"{item['revenue']:.2f}"])
+        t5 = Table(rev_data, colWidths=[6 * cm, 5 * cm, 6 * cm])
+        t5.setStyle(_TABLE_STYLE)
+        story.append(t5)
+    else:
+        story.append(Paragraph("Nu exista facturi platite in ultimele 6 luni.", styles["Normal"]))
+
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(Paragraph(
+        f"Generat automat de Roland Command Center — {today}",
+        ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7,
+                       textColor=colors.grey, alignment=TA_CENTER),
+    ))
+
+    doc.build(story)
+    buf.seek(0)
+
+    filename = f"raport_sistem_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+
+    await log_activity(
+        action="reports.export.pdf",
+        summary=f"Raport PDF exportat: {filename}",
+    )
+
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

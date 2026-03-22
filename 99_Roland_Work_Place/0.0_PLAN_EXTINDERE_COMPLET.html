@@ -78,7 +78,7 @@
 <div class="container">
   <h1>Roland - Command Center</h1>
   <p class="project-name">Selector Funcții — Plan Extindere</p>
-  <p class="subtitle">Bifează funcțiile pe care le dorești ACUM, apoi apasă "Generează Plan" pentru a separa în ACTIV și PENDING. Copiază lista și transmite-o în Claude Code. <em style="color:#f87171">Actualizat 2026-03-22 — Faza 28 Runda 2 QA (39 bugfix-uri + 78 features = 117 total).</em></p>
+  <p class="subtitle">Bifează funcțiile pe care le dorești ACUM, apoi apasă "Generează Plan" pentru a separa în ACTIV și PENDING. Copiază lista și transmite-o în Claude Code. <em style="color:#f87171">Actualizat 2026-03-22 — Faza 29 Runda 3 Conectare (58 wiring + 39 QA + 78 features = 175 total).</em></p>
 
   <div class="stats-bar">
     <div class="stat-card"><div class="stat-label">Faze</div><div class="stat-value" id="statPhases">22</div></div>
@@ -579,6 +579,30 @@ const PHASES = [
       { id: "28.37", name: "✅ Dashboard: Use existing endpoints [PERF] (2026-03-22)", tech: "9 calls → 4-5 calls optimizat", cost: "Gratuit", done: true },
       { id: "28.38", name: "✅ Dashboard: Auto-refresh 5min (2026-03-22)", tech: "setInterval 300s", cost: "Gratuit", done: true },
       { id: "28.39", name: "✅ AI Providers: Cerebras fallback (2026-03-22)", tech: "Provider health + fallback chain", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: 29, name: "Runda 3 — Conectare Frontend-Backend & Polish (58 features / 14 module)", prio: "inalta",
+    note: "✅ ALL 58/58 DONE (2026-03-22). Frontend wiring complet, responsive mobile, dead code cleanup. 4 batches: R3-1 Bugs (15), R3-2 Workflow (15), R3-3 Wiring (15), R3-4 Polish (13).",
+    features: [
+      { id: "29.01", name: "✅ R3-01: ITP pagination fix (2026-03-22)", tech: "Backend skip/limit params pe GET /api/itp/inspections", cost: "Gratuit", done: true },
+      { id: "29.02", name: "✅ R3-02: ITP empty states (2026-03-22)", tech: "Mesaje clare cand nu exista inspectii/programari", cost: "Gratuit", done: true },
+      { id: "29.03", name: "✅ R3-03: Dashboard chart fix (2026-03-22)", tech: "Map period→date, total→count in ChartCard", cost: "Gratuit", done: true },
+      { id: "29.04", name: "✅ R3-04: Calculator oferta PDF (2026-03-22)", tech: "POST /api/price/offer-pdf wired in CalcPage", cost: "Gratuit", done: true },
+      { id: "29.05", name: "✅ R3-05-14: Calculator + Translator wiring (2026-03-22)", tech: "15 features: tarif, competitori, glosar, calibrare, TM, batch", cost: "Gratuit", done: true },
+      { id: "29.06", name: "✅ R3-15-30: Core workflows (2026-03-22)", tech: "Invoice presets/recurring/payments/reports, ITP history/rejections, FM fulltext/organize, AI search/rename", cost: "Gratuit", done: true },
+      { id: "29.07", name: "✅ R3-31-45: Extended wiring (2026-03-22)", tech: "Invoice tab panels, ITP slide-ins, FM modals, AI provider health, Automations status", cost: "Gratuit", done: true },
+      { id: "29.08", name: "✅ R3-46: AI provider health indicator (2026-03-22)", tech: "GET /api/ai/providers/{name}/health → green/red dot", cost: "Gratuit", done: true },
+      { id: "29.09", name: "✅ R3-47: Dashboard clickable cards (2026-03-22)", tech: "onClick navigate pe SummaryCard → pagina relevanta", cost: "Gratuit", done: true },
+      { id: "29.10", name: "✅ R3-48-49: Notepad search + export (2026-03-22)", tech: "Search filter client-side + Blob download .md/.txt", cost: "Gratuit", done: true },
+      { id: "29.11", name: "✅ R3-50: Vault providers update (2026-03-22)", tech: "PROVIDERS array: +groq, +gemini, +cerebras, +mistral (10 total)", cost: "Gratuit", done: true },
+      { id: "29.12", name: "✅ R3-51: AI mobile sidebar (2026-03-22)", tech: "hidden md:flex + hamburger + overlay pe mobile", cost: "Gratuit", done: true },
+      { id: "29.13", name: "✅ R3-52-53: Responsive grids (2026-03-22)", tech: "Translator + Facturare → grid-cols-1 md:grid-cols-2 lg:grid-cols-3", cost: "Gratuit", done: true },
+      { id: "29.14", name: "✅ R3-54: Passphrase generator (2026-03-22)", tech: "Tab Fraza-parola: word slider 3-8, separator picker, GET /api/tools/generate-passphrase", cost: "Gratuit", done: true },
+      { id: "29.15", name: "✅ R3-55: Barcode preview-all (2026-03-22)", tech: "POST /api/tools/barcode-preview-all → grid base64 imgs", cost: "Gratuit", done: true },
+      { id: "29.16", name: "✅ R3-56: Password history (2026-03-22)", tech: "GET /api/tools/password-history → reveal/copy per item", cost: "Gratuit", done: true },
+      { id: "29.17", name: "✅ R3-57: Vault delete confirm (2026-03-22)", tech: "window.confirm() + params: { confirm: true }", cost: "Gratuit", done: true },
+      { id: "29.18", name: "✅ R3-58: Dead code cleanup (2026-03-22)", tech: "Removed: StatsCards, RecentActivity, ActivityLog, useDebounce, useNotifications", cost: "Gratuit", done: true },
     ]
   }
 ];

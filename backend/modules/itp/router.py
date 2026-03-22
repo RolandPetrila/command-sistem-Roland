@@ -20,6 +20,9 @@ Endpoints:
   GET    /api/itp/expiring                              — vehicles with ITP expiring soon
   GET    /api/itp/export/csv                            — export all as CSV
   GET    /api/itp/export/excel                          — export all as Excel
+  GET    /api/itp/followup/due-soon                     — R4-24: vehicles due for re-inspection soon
+  PUT    /api/itp/appointments/{id}/mark-showup         — R4-26: mark no-show / showed up
+  GET    /api/itp/stats/noshow-rate                     — R4-26: no-show rate statistics
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
@@ -61,6 +64,27 @@ class InspectionCreate(BaseModel):
     price: float = 0
     inspector_name: Optional[str] = None
     notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_rejection_reasons(self):
+        """If result is 'Respins', rejection_reasons must be non-empty."""
+        result_lower = (self.result or "").strip().lower()
+        if result_lower == "respins":
+            rr = self.rejection_reasons
+            if not rr or rr in ("[]", "null", ""):
+                raise ValueError(
+                    "Motivele de respingere sunt obligatorii cand rezultatul este 'Respins'"
+                )
+            # Also validate if it's a JSON array
+            try:
+                parsed = json.loads(rr) if isinstance(rr, str) else rr
+                if isinstance(parsed, list) and len(parsed) == 0:
+                    raise ValueError(
+                        "Motivele de respingere sunt obligatorii cand rezultatul este 'Respins'"
+                    )
+            except (json.JSONDecodeError, TypeError):
+                pass  # Not JSON — treat as plain text, already non-empty
+        return self
 
 
 class AppointmentCreate(BaseModel):
@@ -109,8 +133,20 @@ async def list_inspections(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     search: str = Query("", description="Search by plate number or owner name"),
+    page: Optional[int] = Query(None, ge=1, description="Page number (alternative to skip)"),
+    per_page: Optional[int] = Query(None, ge=1, le=500, description="Items per page (alternative to limit)"),
 ):
-    """List all inspections with pagination and optional search."""
+    """List all inspections with pagination and optional search.
+
+    Accepts either skip/limit or page/per_page. If page is provided,
+    it takes precedence and calculates skip automatically.
+    """
+    # If page/per_page provided, convert to skip/limit
+    if page is not None:
+        per_page = per_page or limit
+        skip = (page - 1) * per_page
+        limit = per_page
+
     async with get_db() as db:
         if search:
             pattern = f"%{search}%"
@@ -142,7 +178,17 @@ async def list_inspections(
         rows = await cursor.fetchall()
         items = [dict(row) for row in rows]
 
-    return {"items": items, "total": total, "skip": skip, "limit": limit}
+    total_pages = (total + limit - 1) // limit if limit > 0 else 1
+    current_page = (skip // limit) + 1 if limit > 0 else 1
+
+    return {
+        "items": items,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "total_pages": total_pages,
+        "page": current_page,
+    }
 
 
 @router.post("/inspections")
@@ -176,12 +222,36 @@ async def create_inspection(data: InspectionCreate):
         await db.commit()
         new_id = cursor.lastrowid
 
+        # 3-strike rule: count previous rejections for this plate
+        blocked = False
+        if data.result == "Respins":
+            plate_upper = data.plate_number.upper().strip()
+            cnt_cursor = await db.execute(
+                "SELECT COUNT(*) FROM itp_inspections WHERE UPPER(plate_number) = ? AND result = 'Respins'",
+                (plate_upper,),
+            )
+            cnt_row = await cnt_cursor.fetchone()
+            rejection_count = cnt_row[0] if cnt_row else 0
+            if rejection_count >= 3:
+                blocked = True
+                logger.warning(
+                    "3-STRIKE BLOCK: plate %s has %d rejections (including current)",
+                    plate_upper, rejection_count,
+                )
+
     await log_activity(
         action="itp.create",
         summary=f"ITP creat: {data.plate_number} — {data.result}",
         details={"id": new_id, "plate": data.plate_number, "result": data.result},
     )
-    return {"id": new_id, "message": "Inspectie creata cu succes"}
+    response = {"id": new_id, "message": "Inspectie creata cu succes"}
+    if blocked:
+        response["blocked"] = True
+        response["blocked_message"] = (
+            f"ATENTIE: {data.plate_number.upper().strip()} a acumulat 3 sau mai multe respingeri. "
+            "Verificati vehiculul cu atentie inainte de urmatoarea inspectie."
+        )
+    return response
 
 
 @router.get("/inspections/{inspection_id}")
@@ -574,7 +644,121 @@ def _parse_excel(content: bytes) -> list[dict]:
     return result
 
 
+# ────────── Combined Statistics (for frontend) ──────────
+
+@router.get("/statistics")
+async def get_statistics_combined():
+    """Combined statistics for frontend — calls individual stat queries in one endpoint."""
+    async with get_db() as db:
+        # Monthly inspection counts
+        cursor = await db.execute(
+            "SELECT strftime('%Y-%m', inspection_date) as month, COUNT(*) as count "
+            "FROM itp_inspections GROUP BY month ORDER BY month"
+        )
+        monthly = [{"month": r[0], "count": r[1]} for r in await cursor.fetchall()]
+
+        # Brand distribution (top 10)
+        cursor = await db.execute(
+            "SELECT brand, COUNT(*) as count FROM itp_inspections "
+            "WHERE brand IS NOT NULL AND brand != '' "
+            "GROUP BY brand ORDER BY count DESC LIMIT 10"
+        )
+        brands = [{"brand": r[0], "count": r[1]} for r in await cursor.fetchall()]
+
+        # Monthly revenue
+        cursor = await db.execute(
+            "SELECT strftime('%Y-%m', inspection_date) as month, "
+            "COALESCE(SUM(price), 0) as revenue "
+            "FROM itp_inspections GROUP BY month ORDER BY month"
+        )
+        revenue = [{"month": r[0], "revenue": r[1]} for r in await cursor.fetchall()]
+
+        # Fuel type distribution
+        cursor = await db.execute(
+            "SELECT fuel_type, COUNT(*) as count FROM itp_inspections "
+            "WHERE fuel_type IS NOT NULL AND fuel_type != '' "
+            "GROUP BY fuel_type ORDER BY count DESC"
+        )
+        fuel = [{"fuel_type": r[0], "count": r[1]} for r in await cursor.fetchall()]
+
+    return {
+        "monthly_inspections": monthly,
+        "top_brands": brands,
+        "monthly_revenue": revenue,
+        "fuel_distribution": fuel,
+    }
+
+
 # ────────── Statistics ──────────
+
+
+@router.get("/statistics")
+async def statistics_combined():
+    """Combined statistics endpoint for frontend dashboard.
+
+    Returns monthly_inspections, top_brands, monthly_revenue, fuel_distribution
+    in a single request (called by ITPPage StatsTab).
+    """
+    year = datetime.now().year
+    month_names = [
+        "", "Ian", "Feb", "Mar", "Apr", "Mai", "Iun",
+        "Iul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+
+    async with get_db() as db:
+        # Monthly inspections
+        cursor = await db.execute(
+            """SELECT CAST(strftime('%%m', inspection_date) AS INTEGER) as month,
+                      COUNT(*) as count
+               FROM itp_inspections
+               WHERE strftime('%%Y', inspection_date) = ?
+               GROUP BY month ORDER BY month""",
+            (str(year),),
+        )
+        monthly_raw = {r[0]: r[1] for r in await cursor.fetchall()}
+        monthly_inspections = [
+            {"month": month_names[i], "count": monthly_raw.get(i, 0)}
+            for i in range(1, 13)
+        ]
+
+        # Top brands
+        cursor = await db.execute(
+            """SELECT brand, COUNT(*) as count FROM itp_inspections
+               WHERE brand IS NOT NULL AND brand != ''
+               GROUP BY brand ORDER BY count DESC LIMIT 10""",
+        )
+        top_brands = [{"brand": r[0], "count": r[1]} for r in await cursor.fetchall()]
+
+        # Monthly revenue
+        cursor = await db.execute(
+            """SELECT CAST(strftime('%%m', inspection_date) AS INTEGER) as month,
+                      SUM(price) as revenue
+               FROM itp_inspections
+               WHERE strftime('%%Y', inspection_date) = ?
+               GROUP BY month ORDER BY month""",
+            (str(year),),
+        )
+        revenue_raw = {r[0]: round(r[1] or 0, 2) for r in await cursor.fetchall()}
+        monthly_revenue = [
+            {"month": month_names[i], "revenue": revenue_raw.get(i, 0)}
+            for i in range(1, 13)
+        ]
+
+        # Fuel distribution
+        cursor = await db.execute(
+            """SELECT fuel_type, COUNT(*) as count FROM itp_inspections
+               WHERE fuel_type IS NOT NULL AND fuel_type != ''
+               GROUP BY fuel_type ORDER BY count DESC""",
+        )
+        fuel_distribution = [{"fuel_type": r[0], "count": r[1]} for r in await cursor.fetchall()]
+
+    return {
+        "monthly_inspections": monthly_inspections,
+        "top_brands": top_brands,
+        "monthly_revenue": monthly_revenue,
+        "fuel_distribution": fuel_distribution,
+    }
+
 
 @router.get("/stats/overview")
 async def stats_overview():
@@ -937,6 +1121,34 @@ async def export_excel():
 
 # ────────── F5: Appointments / Calendar ──────────
 
+# Allowed appointment status transitions (state machine)
+_APPOINTMENT_TRANSITIONS: dict[str, list[str]] = {
+    "scheduled":  ["confirmed", "cancelled"],
+    "confirmed":  ["checked_in", "cancelled"],
+    "checked_in": ["completed", "no_show", "cancelled"],
+    "completed":  [],   # terminal state
+    "cancelled":  [],   # terminal state
+    "no_show":    [],   # terminal state
+}
+
+
+def _validate_appointment_transition(current: str, new: str) -> None:
+    """Raise HTTP 400 if the status transition is not allowed."""
+    allowed = _APPOINTMENT_TRANSITIONS.get(current, [])
+    if new not in allowed:
+        if allowed:
+            allowed_str = ", ".join(f"'{s}'" for s in allowed)
+            raise HTTPException(
+                400,
+                f"Tranzitie invalida: '{current}' → '{new}'. "
+                f"Din starea '{current}' sunt permise doar: {allowed_str}.",
+            )
+        else:
+            raise HTTPException(
+                400,
+                f"Programarea este in starea finala '{current}' si nu mai poate fi modificata.",
+            )
+
 @router.get("/appointments")
 async def list_appointments(
     date_from: str = Query(None),
@@ -1052,9 +1264,18 @@ async def update_appointment(appt_id: int, data: AppointmentUpdate):
         raise HTTPException(400, "Niciun camp de actualizat")
     if "plate_number" in updates and updates["plate_number"]:
         updates["plate_number"] = updates["plate_number"].upper().strip()
-    fields = ", ".join(f"{k} = ?" for k in updates)
-    values = list(updates.values()) + [appt_id]
     async with get_db() as db:
+        # Validate status transition if status is being changed
+        if "status" in updates:
+            row = await db.execute(
+                "SELECT status FROM itp_appointments WHERE id = ?", (appt_id,)
+            )
+            existing = await row.fetchone()
+            if existing is None:
+                raise HTTPException(404, "Programarea nu a fost gasita")
+            _validate_appointment_transition(existing["status"], updates["status"])
+        fields = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [appt_id]
         cursor = await db.execute(
             f"UPDATE itp_appointments SET {fields} WHERE id = ?", values
         )
@@ -1081,6 +1302,13 @@ async def delete_appointment(appt_id: int):
 async def complete_appointment(appt_id: int, inspection_id: int = None):
     """Mark appointment as completed, optionally linking to an inspection."""
     async with get_db() as db:
+        row = await db.execute(
+            "SELECT status FROM itp_appointments WHERE id = ?", (appt_id,)
+        )
+        existing = await row.fetchone()
+        if existing is None:
+            raise HTTPException(404, "Programarea nu a fost gasita")
+        _validate_appointment_transition(existing["status"], "completed")
         cursor = await db.execute(
             "UPDATE itp_appointments SET status = 'completed', inspection_id = ? WHERE id = ?",
             (inspection_id, appt_id),
@@ -1089,3 +1317,154 @@ async def complete_appointment(appt_id: int, inspection_id: int = None):
         if cursor.rowcount == 0:
             raise HTTPException(404, "Programarea nu a fost gasita")
     return {"message": "Programare finalizata cu succes."}
+
+
+# ────────── R4-24: Follow-up Alerts (next inspection due) ──────────
+
+def _next_inspection_date(last_date_str: str, vehicle_type: str = "car") -> date | None:
+    """Calculate next inspection date from last inspection.
+
+    Cars: 12 months, Commercial vehicles: 6 months.
+    """
+    try:
+        last = date.fromisoformat(last_date_str)
+    except (ValueError, TypeError):
+        return None
+    months = 6 if vehicle_type == "commercial" else 12
+    # Add months: handle year/month overflow
+    year = last.year + (last.month + months - 1) // 12
+    month = (last.month + months - 1) % 12 + 1
+    day = min(last.day, 28)  # Safe day for all months
+    return date(year, month, day)
+
+
+@router.get("/followup/due-soon")
+async def followup_due_soon(days: int = Query(30, ge=1, le=365)):
+    """Vehicles with next inspection due within N days based on last inspection + 12 months.
+
+    Returns list sorted by next_due_date ascending (most urgent first).
+    Color coding: red (<7 days), yellow (7-14), green (14-30).
+    """
+    today_date = date.today()
+    future_date = today_date + timedelta(days=days)
+
+    async with get_db() as db:
+        # Get the latest inspection per plate (most recent inspection_date)
+        cursor = await db.execute(
+            """SELECT plate_number, owner_name, MAX(inspection_date) as last_inspection_date,
+                      brand, model, fuel_type
+               FROM itp_inspections
+               WHERE result = 'admis'
+               GROUP BY UPPER(plate_number)
+               ORDER BY last_inspection_date ASC"""
+        )
+        rows = await cursor.fetchall()
+
+    result = []
+    for row in rows:
+        item = dict(row)
+        last_date_str = item.get("last_inspection_date")
+        if not last_date_str:
+            continue
+        next_due = _next_inspection_date(last_date_str)
+        if next_due is None:
+            continue
+        # Only include if due within the requested window
+        if next_due > future_date:
+            continue
+        days_remaining = (next_due - today_date).days
+        result.append({
+            "plate": item["plate_number"],
+            "owner_name": item.get("owner_name") or "",
+            "brand": item.get("brand") or "",
+            "model": item.get("model") or "",
+            "last_inspection_date": last_date_str,
+            "next_due_date": next_due.isoformat(),
+            "days_remaining": days_remaining,
+        })
+
+    # Sort by days_remaining ascending (most urgent first)
+    result.sort(key=lambda x: x["days_remaining"])
+
+    return result
+
+
+# ────────── R4-26: No-show Tracking ──────────
+
+class MarkShowupRequest(BaseModel):
+    showed_up: bool
+
+
+@router.put("/appointments/{appt_id}/mark-showup")
+async def mark_appointment_showup(appt_id: int, data: MarkShowupRequest):
+    """Mark whether a client showed up for their appointment."""
+    async with get_db() as db:
+        # Ensure showed_up column exists
+        try:
+            await db.execute(
+                "ALTER TABLE itp_appointments ADD COLUMN showed_up INTEGER"
+            )
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+
+        row = await db.execute(
+            "SELECT status FROM itp_appointments WHERE id = ?", (appt_id,)
+        )
+        existing = await row.fetchone()
+        if existing is None:
+            raise HTTPException(404, "Programarea nu a fost gasita")
+        new_status = "completed" if data.showed_up else "no_show"
+        _validate_appointment_transition(existing["status"], new_status)
+
+        cursor = await db.execute(
+            "UPDATE itp_appointments SET showed_up = ?, status = ? WHERE id = ?",
+            (1 if data.showed_up else 0, new_status, appt_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Programarea nu a fost gasita")
+
+    label = "prezent" if data.showed_up else "neprezentare"
+    await log_activity(
+        action="itp.appointment_showup",
+        summary=f"Programare #{appt_id}: {label}",
+        details={"id": appt_id, "showed_up": data.showed_up},
+    )
+    return {"message": f"Programare marcata ca {label}."}
+
+
+@router.get("/stats/noshow-rate")
+async def stats_noshow_rate():
+    """No-show statistics for appointments."""
+    async with get_db() as db:
+        # Ensure showed_up column exists
+        try:
+            await db.execute(
+                "ALTER TABLE itp_appointments ADD COLUMN showed_up INTEGER"
+            )
+            await db.commit()
+        except Exception:
+            pass
+
+        cursor = await db.execute("SELECT COUNT(*) FROM itp_appointments")
+        total = (await cursor.fetchone())[0]
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM itp_appointments WHERE showed_up = 1"
+        )
+        showed_up = (await cursor.fetchone())[0]
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM itp_appointments WHERE showed_up = 0 AND showed_up IS NOT NULL"
+        )
+        no_shows = (await cursor.fetchone())[0]
+
+    no_show_rate = round((no_shows / total * 100), 1) if total > 0 else 0
+
+    return {
+        "total_appointments": total,
+        "showed_up": showed_up,
+        "no_shows": no_shows,
+        "no_show_rate_percent": no_show_rate,
+    }

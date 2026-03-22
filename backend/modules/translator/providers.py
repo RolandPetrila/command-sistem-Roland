@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 import httpx
@@ -379,8 +380,10 @@ async def translate_with_chain(
     errors = []
     for provider in providers:
         try:
+            t0 = time.perf_counter()
             translated = await provider.translate_text(text, source_lang, target_lang)
-            return {"translated_text": translated, "provider": provider.name}
+            latency_ms = (time.perf_counter() - t0) * 1000
+            return {"translated_text": translated, "provider": provider.name, "provider_latency_ms": round(latency_ms, 1)}
         except Exception as e:
             errors.append(f"{provider.name}: {e}")
             logger.warning("Translator provider %s a esuat: %s", provider.name, e)

@@ -7,6 +7,9 @@ Endpoints:
   GET    /api/notes/export       — export toate notele ca JSON (backup)
   GET    /api/notes/:id          — notă completă
   POST   /api/notes              — creează notă nouă (cu category)
+  POST   /api/notes/bulk-delete  — sterge mai multe note (R4-19)
+  POST   /api/notes/bulk-export  — export selectiv note ca JSON (R4-19)
+  POST   /api/notes/bulk-update-category — schimba categoria mai multor note (R4-19)
   PUT    /api/notes/:id          — actualizează titlu/conținut/category
   DELETE /api/notes/:id          — șterge notă
 """
@@ -60,6 +63,16 @@ class NoteUpdate(BaseModel):
     category: str | None = Field(None, max_length=100)
 
 
+# R4-19: Bulk operation models
+class BulkIdsRequest(BaseModel):
+    ids: list[int] = Field(..., min_length=1, max_length=500)
+
+
+class BulkCategoryRequest(BaseModel):
+    ids: list[int] = Field(..., min_length=1, max_length=500)
+    category: str = Field(..., max_length=100)
+
+
 @router.get("/notes")
 async def list_notes(category: str | None = Query(None, description="Filtru dupa categorie")):
     """Returnează toate notele (id, title, preview, category, updated_at)."""
@@ -98,15 +111,95 @@ async def search_notes(q: str = Query(..., min_length=1, description="Termen de 
 
 @router.get("/notes/export")
 async def export_notes():
-    """Export toate notele ca JSON (pentru backup)."""
+    """Export toate notele ca JSON (pentru backup), grupate pe categorie + array flat."""
     await _ensure_category_column()
     async with get_db() as db:
         cursor = await db.execute(
             "SELECT id, title, content, category, created_at, updated_at "
             "FROM notes ORDER BY id"
         )
+        rows = [dict(row) for row in await cursor.fetchall()]
+
+    # Group by category for structured export
+    categories: dict[str, list] = {}
+    for note in rows:
+        cat = note.get("category") or "general"
+        categories.setdefault(cat, []).append(note)
+
+    return {"categories": categories, "notes": rows}
+
+
+# ---------------------------------------------------------------------------
+# R4-19: Bulk operations
+# ---------------------------------------------------------------------------
+
+@router.post("/notes/bulk-delete")
+async def bulk_delete_notes(req: BulkIdsRequest):
+    """Sterge mai multe note dintr-o data."""
+    await _ensure_category_column()
+    async with get_db() as db:
+        placeholders = ",".join("?" for _ in req.ids)
+        cursor = await db.execute(
+            f"SELECT id FROM notes WHERE id IN ({placeholders})", req.ids
+        )
+        found_ids = [row[0] for row in await cursor.fetchall()]
+        if not found_ids:
+            raise HTTPException(404, "Nicio nota gasita cu ID-urile furnizate")
+        placeholders_found = ",".join("?" for _ in found_ids)
+        await db.execute(
+            f"DELETE FROM notes WHERE id IN ({placeholders_found})", found_ids
+        )
+        await db.commit()
+
+    await log_activity(
+        action="notepad_bulk_delete",
+        summary=f"{len(found_ids)} note sterse",
+        details={"deleted_ids": found_ids},
+    )
+    return {"status": "deleted", "deleted": len(found_ids), "ids": found_ids}
+
+
+@router.post("/notes/bulk-export")
+async def bulk_export_notes(req: BulkIdsRequest):
+    """Export selectiv note ca JSON."""
+    await _ensure_category_column()
+    async with get_db() as db:
+        placeholders = ",".join("?" for _ in req.ids)
+        cursor = await db.execute(
+            f"SELECT id, title, content, category, created_at, updated_at "
+            f"FROM notes WHERE id IN ({placeholders}) ORDER BY id",
+            req.ids,
+        )
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
+
+
+@router.post("/notes/bulk-update-category")
+async def bulk_update_category(req: BulkCategoryRequest):
+    """Actualizeaza categoria pe mai multe note."""
+    await _ensure_category_column()
+    async with get_db() as db:
+        placeholders = ",".join("?" for _ in req.ids)
+        cursor = await db.execute(
+            f"SELECT id FROM notes WHERE id IN ({placeholders})", req.ids
+        )
+        found_ids = [row[0] for row in await cursor.fetchall()]
+        if not found_ids:
+            raise HTTPException(404, "Nicio nota gasita cu ID-urile furnizate")
+        placeholders_found = ",".join("?" for _ in found_ids)
+        await db.execute(
+            f"UPDATE notes SET category = ?, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE id IN ({placeholders_found})",
+            [req.category] + found_ids,
+        )
+        await db.commit()
+
+    await log_activity(
+        action="notepad_bulk_category",
+        summary=f"{len(found_ids)} note → categorie '{req.category}'",
+        details={"ids": found_ids, "category": req.category},
+    )
+    return {"status": "updated", "updated": len(found_ids), "category": req.category}
 
 
 @router.get("/notes/{note_id}")

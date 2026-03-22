@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Car, Plus, Trash2, Edit3, Save, X, Search, ChevronLeft, ChevronRight,
   BarChart3, PieChart as PieChartIcon, TrendingUp, AlertTriangle, Upload,
-  Download, Loader2, FileSpreadsheet, Calendar
+  Download, Loader2, FileSpreadsheet, Calendar, Receipt, History, CheckCircle, XCircle, Ban,
+  Clock, UserCheck, UserX
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -13,6 +14,7 @@ import apiClient from '../api/client';
 const TABS = [
   { id: 'inspections', label: 'Inspectii', icon: Car },
   { id: 'appointments', label: 'Programari', icon: Calendar },
+  { id: 'followup', label: 'Follow-up', icon: Clock },
   { id: 'stats', label: 'Statistici', icon: BarChart3 },
   { id: 'expiring', label: 'Expirari', icon: AlertTriangle },
   { id: 'import-export', label: 'Import/Export', icon: FileSpreadsheet },
@@ -25,7 +27,8 @@ const PIE_COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#10b981', '#ef4444', '#8b5
 const emptyForm = {
   plate_number: '', vin: '', brand: '', model: '', year: new Date().getFullYear(),
   fuel_type: 'Benzina', inspection_date: new Date().toISOString().split('T')[0],
-  expiry_date: '', result: 'Admis', price: '', notes: ''
+  expiry_date: '', result: 'Admis', price: '', notes: '',
+  owner_name: '', owner_phone: '', inspector_name: '', rejection_reasons: []
 };
 
 // ===== INSPECTII =====
@@ -38,6 +41,12 @@ function InspectionsTab() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [deleting, setDeleting] = useState(null);
+  // R3-36: Vehicle history
+  const [vehicleHistory, setVehicleHistory] = useState(null);
+  const [vhData, setVhData] = useState([]);
+  const [vhLoading, setVhLoading] = useState(false);
+  // R3-37: Rejection reasons
+  const [rejectionReasons, setRejectionReasons] = useState([]);
   const perPage = 10;
 
   const load = useCallback(async () => {
@@ -54,7 +63,12 @@ function InspectionsTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  // R4-25: Check if rejection reasons are required but missing
+  const rejectionMissing = form.result === 'Respins' && (!form.rejection_reasons || form.rejection_reasons.length === 0);
+
   const save = async () => {
+    // R4-25: Block save if Respins without reasons
+    if (rejectionMissing) return;
     try {
       const payload = { ...form, price: form.price ? parseFloat(form.price) : 0, year: parseInt(form.year) };
       if (editing && editing !== 'new') {
@@ -90,7 +104,38 @@ function InspectionsTab() {
       result: insp.result || 'Admis',
       price: insp.price || '',
       notes: insp.notes || '',
+      owner_name: insp.owner_name || '',
+      owner_phone: insp.owner_phone || '',
+      inspector_name: insp.inspector_name || '',
+      rejection_reasons: insp.rejection_reasons || [],
     });
+    if (insp.result === 'Respins') loadRejectionReasons();
+  };
+
+  // R3-36: Vehicle history
+  const showVehicleHistory = async (plate) => {
+    setVehicleHistory(plate);
+    setVhLoading(true);
+    try {
+      const { data } = await apiClient.get(`/api/itp/vehicle-history/${encodeURIComponent(plate)}`);
+      setVhData(data?.inspections || data || []);
+    } catch { setVhData([]); }
+    setVhLoading(false);
+  };
+
+  // R3-37: Load rejection reasons
+  const loadRejectionReasons = async () => {
+    try {
+      const { data } = await apiClient.get('/api/itp/rejection-reasons');
+      setRejectionReasons(data?.reasons || data || []);
+    } catch { setRejectionReasons(['Franare deficitara', 'Emisii depasire', 'Directie defecta', 'Suspensie uzata', 'Lichide sub minim', 'Anvelope uzate', 'Corp rugina', 'Lumini defecte']); }
+  };
+
+  const createInvoice = async (insp) => {
+    try {
+      const { data } = await apiClient.post(`/api/invoice/from-itp/${insp.id}`);
+      alert(`Factura ${data.invoice_number || 'noua'} creata cu succes!`);
+    } catch { /* toast handles it */ }
   };
 
   return (
@@ -151,7 +196,7 @@ function InspectionsTab() {
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Rezultat</label>
-              <select value={form.result} onChange={e => setForm({ ...form, result: e.target.value })}
+              <select value={form.result} onChange={e => { setForm({ ...form, result: e.target.value }); if (e.target.value === 'Respins') loadRejectionReasons(); }}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none">
                 {RESULTS.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
@@ -162,13 +207,56 @@ function InspectionsTab() {
                 placeholder="0" className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" />
             </div>
           </div>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Proprietar</label>
+              <input value={form.owner_name} onChange={e => setForm({ ...form, owner_name: e.target.value })}
+                placeholder="Nume proprietar"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Telefon proprietar</label>
+              <input value={form.owner_phone} onChange={e => setForm({ ...form, owner_phone: e.target.value })}
+                placeholder="07xx xxx xxx"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Inspector</label>
+              <input value={form.inspector_name} onChange={e => setForm({ ...form, inspector_name: e.target.value })}
+                placeholder="Nume inspector"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none" />
+            </div>
+          </div>
+          {/* R3-37 + R4-25: Rejection reasons (visible + mandatory when Respins) */}
+          {form.result === 'Respins' && (
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">
+                Motive respingere <span className="text-red-400">*</span>
+                {rejectionMissing && <span className="ml-2 text-red-400 font-medium">Selecteaza cel putin un motiv!</span>}
+              </label>
+              <div className={`flex flex-wrap gap-2 p-2 rounded-lg border ${rejectionMissing ? 'border-red-500 bg-red-900/10' : 'border-transparent'}`}>
+                {(rejectionReasons.length > 0 ? rejectionReasons : ['Franare', 'Emisii', 'Directie', 'Suspensie', 'Lumini', 'Anvelope']).map(reason => (
+                  <label key={reason} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input type="checkbox"
+                      checked={(form.rejection_reasons || []).includes(reason)}
+                      onChange={e => {
+                        const cur = form.rejection_reasons || [];
+                        setForm({ ...form, rejection_reasons: e.target.checked ? [...cur, reason] : cur.filter(r => r !== reason) });
+                      }}
+                      className="rounded border-slate-600 accent-red-500" />
+                    <span className="text-slate-300">{reason}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Observatii</label>
             <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:border-primary-500 focus:outline-none resize-none" />
           </div>
           <div className="flex gap-2">
-            <button onClick={save} className="btn-primary px-4 py-1.5 text-sm flex items-center gap-1"><Save className="w-3.5 h-3.5" /> Salveaza</button>
+            <button onClick={save} disabled={rejectionMissing} className={`btn-primary px-4 py-1.5 text-sm flex items-center gap-1 ${rejectionMissing ? 'opacity-50 cursor-not-allowed' : ''}`}><Save className="w-3.5 h-3.5" /> Salveaza</button>
             <button onClick={() => setEditing(null)} className="btn-secondary px-4 py-1.5 text-sm flex items-center gap-1"><X className="w-3.5 h-3.5" /> Anuleaza</button>
           </div>
         </div>
@@ -227,8 +315,10 @@ function InspectionsTab() {
                     <td className="p-3 text-right text-primary-400 font-mono">{insp.price ? `${insp.price} RON` : '-'}</td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => startEdit(insp)} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded"><Edit3 className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => setDeleting(insp.id)} className="p-1.5 text-red-400 hover:bg-red-400/10 rounded"><Trash2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => showVehicleHistory(insp.plate_number)} className="p-1.5 text-blue-400 hover:bg-blue-400/10 rounded" title="Istoric vehicul"><History className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => createInvoice(insp)} className="p-1.5 text-amber-400 hover:bg-amber-400/10 rounded" title="Creaza factura"><Receipt className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => startEdit(insp)} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded" title="Editeaza"><Edit3 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => setDeleting(insp.id)} className="p-1.5 text-red-400 hover:bg-red-400/10 rounded" title="Sterge"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </td>
                   </tr>
@@ -249,6 +339,107 @@ function InspectionsTab() {
           </div>
         </>
       )}
+
+      {/* R3-36: Vehicle history modal */}
+      {vehicleHistory && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex justify-end">
+          <div className="bg-slate-900 w-full max-w-md h-full overflow-y-auto p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Istoric vehicul — {vehicleHistory}</h3>
+              <button onClick={() => setVehicleHistory(null)} className="p-1.5 hover:bg-slate-800 rounded"><X className="w-4 h-4" /></button>
+            </div>
+            {vhLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-slate-500" /></div>
+            ) : vhData.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-8">Nicio inspectie anterioara pentru acest vehicul.</p>
+            ) : (
+              <div className="space-y-2">
+                {vhData.map((insp, i) => (
+                  <div key={i} className="bg-slate-800 rounded-lg p-3">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-slate-300">{insp.inspection_date}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${insp.result === 'Admis' ? 'bg-green-400/10 text-green-400' : 'bg-red-400/10 text-red-400'}`}>
+                        {insp.result}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">Expirare: {insp.expiry_date} | Pret: {insp.price || '-'} RON</div>
+                    {insp.notes && <div className="text-xs text-slate-600 mt-0.5">{insp.notes}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== R4-24: FOLLOW-UP =====
+function FollowUpTab() {
+  const [vehicles, setVehicles] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await apiClient.get('/api/itp/followup/due-soon', { params: { days: 30 } });
+        setVehicles(data || []);
+      } catch { setVehicles([]); }
+      setLoading(false);
+    })();
+  }, []);
+
+  if (loading) return <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>;
+
+  const getDaysColor = (days) => {
+    if (days <= 0) return 'text-red-400 bg-red-400/10';
+    if (days < 7) return 'text-red-400 bg-red-400/10';
+    if (days <= 14) return 'text-yellow-400 bg-yellow-400/10';
+    return 'text-emerald-400 bg-emerald-400/10';
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-400">Vehicule care necesita re-inspectie in urmatoarele 30 de zile (bazat pe ultima inspectie + 12 luni)</p>
+
+      {vehicles.length === 0 ? (
+        <div className="text-center py-12">
+          <Clock className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+          <p className="text-sm text-slate-500">Niciun vehicul nu necesita re-inspectie in curand</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-slate-700">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-800/60 text-slate-400 text-xs">
+                <th className="text-left p-3">Nr. Auto</th>
+                <th className="text-left p-3">Proprietar</th>
+                <th className="text-left p-3">Marca / Model</th>
+                <th className="text-left p-3">Ultima Inspectie</th>
+                <th className="text-left p-3">Urmatoarea</th>
+                <th className="text-center p-3">Zile Ramase</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vehicles.map((v, i) => (
+                <tr key={i} className="border-t border-slate-700/50 hover:bg-slate-800/30 transition-colors">
+                  <td className="p-3 text-white font-mono font-medium">{v.plate}</td>
+                  <td className="p-3 text-slate-300">{v.owner_name || '-'}</td>
+                  <td className="p-3 text-slate-300">{v.brand} {v.model}</td>
+                  <td className="p-3 text-slate-400">{v.last_inspection_date}</td>
+                  <td className="p-3 text-slate-400">{v.next_due_date}</td>
+                  <td className="p-3 text-center">
+                    <span className={`text-xs px-2 py-1 rounded font-medium ${getDaysColor(v.days_remaining)}`}>
+                      {v.days_remaining <= 0 ? `Depasit (${Math.abs(v.days_remaining)} zile)` : `${v.days_remaining} zile`}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -256,13 +447,18 @@ function InspectionsTab() {
 // ===== STATISTICI =====
 function StatsTab() {
   const [stats, setStats] = useState(null);
+  const [noshowStats, setNoshowStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiClient.get('/api/itp/statistics');
-        setStats(res.data);
+        const [statsRes, noshowRes] = await Promise.all([
+          apiClient.get('/api/itp/statistics'),
+          apiClient.get('/api/itp/stats/noshow-rate').catch(() => ({ data: null })),
+        ]);
+        setStats(statsRes.data);
+        setNoshowStats(noshowRes.data);
       } catch { setStats(null); }
       setLoading(false);
     })();
@@ -348,6 +544,35 @@ function StatsTab() {
           </ResponsiveContainer>
         ) : <p className="text-sm text-slate-500 text-center py-8">Fara date</p>}
       </div>
+
+      {/* R4-26: No-show rate stats */}
+      {noshowStats && noshowStats.total_appointments > 0 && (
+        <div className="bg-slate-800/40 rounded-lg p-4 lg:col-span-2">
+          <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+            <UserX className="w-4 h-4 text-red-400" /> Statistici Prezenta Programari
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-white">{noshowStats.total_appointments}</div>
+              <div className="text-xs text-slate-400">Total programari</div>
+            </div>
+            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-emerald-400">{noshowStats.showed_up}</div>
+              <div className="text-xs text-slate-400">Prezenti</div>
+            </div>
+            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-red-400">{noshowStats.no_shows}</div>
+              <div className="text-xs text-slate-400">Neprezentari</div>
+            </div>
+            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+              <div className={`text-2xl font-bold ${noshowStats.no_show_rate_percent > 20 ? 'text-red-400' : noshowStats.no_show_rate_percent > 10 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                {noshowStats.no_show_rate_percent}%
+              </div>
+              <div className="text-xs text-slate-400">Rata neprezentare</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -451,8 +676,8 @@ function ImportExportTab() {
   const handleExport = async (format) => {
     setExportLoading(true);
     try {
-      const res = await apiClient.get('/api/itp/export', {
-        params: { format },
+      const endpoint = format === 'xlsx' ? '/api/itp/export/excel' : '/api/itp/export/csv';
+      const res = await apiClient.get(endpoint, {
         responseType: 'blob',
       });
       const url = URL.createObjectURL(new Blob([res.data]));
@@ -511,11 +736,15 @@ function ImportExportTab() {
   );
 }
 
+const RO_MONTHS = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+
 // ===== F5: PROGRAMARI =====
 function AppointmentsTab() {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  const now = new Date();
+  const [calendarMonth, setCalendarMonth] = useState({ year: now.getFullYear(), month: now.getMonth() });
   const [form, setForm] = useState({
     plate_number: '', owner_name: '', owner_phone: '',
     scheduled_date: new Date().toISOString().split('T')[0],
@@ -554,7 +783,27 @@ function AppointmentsTab() {
     try { await apiClient.put(`/api/itp/appointments/${id}`, { status }); load(); } catch { /* toast handles it */ }
   };
 
+  // R4-26: Mark showed up / no-show
+  const markShowup = async (id, showedUp) => {
+    try { await apiClient.put(`/api/itp/appointments/${id}/mark-showup`, { showed_up: showedUp }); load(); } catch { /* toast handles it */ }
+  };
+
   const statusColors = { scheduled: 'text-blue-400', confirmed: 'text-green-400', completed: 'text-gray-400', cancelled: 'text-red-400', no_show: 'text-yellow-400' };
+
+  const prevMonth = () => setCalendarMonth(cm => {
+    const d = new Date(cm.year, cm.month - 1, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+  const nextMonth = () => setCalendarMonth(cm => {
+    const d = new Date(cm.year, cm.month + 1, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+
+  const visibleAppointments = appointments.filter(a => {
+    if (!a.scheduled_date) return false;
+    const d = new Date(a.scheduled_date);
+    return d.getFullYear() === calendarMonth.year && d.getMonth() === calendarMonth.month;
+  });
 
   return (
     <div className="space-y-4">
@@ -563,6 +812,19 @@ function AppointmentsTab() {
         <button onClick={() => { setEditing('new'); setForm({ plate_number: '', owner_name: '', owner_phone: '', scheduled_date: new Date().toISOString().split('T')[0], scheduled_time: '08:00', duration_min: 30, notes: '' }); }}
           className="flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm">
           <Plus size={14} /> Programare noua
+        </button>
+      </div>
+
+      {/* Month navigation */}
+      <div className="flex items-center justify-center gap-3">
+        <button onClick={prevMonth} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-colors">
+          <ChevronLeft size={18} />
+        </button>
+        <span className="text-sm font-medium text-white min-w-[120px] text-center">
+          {RO_MONTHS[calendarMonth.month]} {calendarMonth.year}
+        </span>
+        <button onClick={nextMonth} className="p-1.5 hover:bg-gray-800 rounded-lg text-gray-400 hover:text-white transition-colors">
+          <ChevronRight size={18} />
         </button>
       </div>
 
@@ -586,23 +848,42 @@ function AppointmentsTab() {
 
       {loading ? (
         <div className="flex justify-center py-8"><Loader2 className="animate-spin text-gray-500" size={24} /></div>
-      ) : appointments.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">Nicio programare</div>
+      ) : visibleAppointments.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          {appointments.length === 0 ? 'Nicio programare' : `Nicio programare in ${RO_MONTHS[calendarMonth.month]} ${calendarMonth.year}`}
+        </div>
       ) : (
         <div className="space-y-2">
-          {appointments.map(a => (
+          {visibleAppointments.map(a => (
             <div key={a.id} className="bg-gray-900 rounded-lg p-3 flex items-center gap-3">
               <div className="flex-1">
                 <div className="font-medium text-sm">{a.plate_number} {a.owner_name && `— ${a.owner_name}`}</div>
                 <div className="text-xs text-gray-400">{a.scheduled_date} la {a.scheduled_time} ({a.duration_min} min)</div>
                 {a.notes && <div className="text-xs text-gray-500 mt-0.5">{a.notes}</div>}
               </div>
-              <span className={`text-xs font-medium ${statusColors[a.status] || 'text-gray-400'}`}>{a.status}</span>
+              <div className="flex flex-col items-end gap-0.5">
+                <span className={`text-xs font-medium ${statusColors[a.status] || 'text-gray-400'}`}>{a.status}</span>
+                {a.showed_up === 1 && <span className="text-[10px] text-emerald-400">Prezent</span>}
+                {a.showed_up === 0 && a.showed_up !== null && <span className="text-[10px] text-red-400">Neprezentare</span>}
+              </div>
               <div className="flex gap-1">
                 {a.status === 'scheduled' && (
                   <button onClick={() => updateStatus(a.id, 'confirmed')} className="p-1.5 hover:bg-green-700/30 rounded text-green-400" title="Confirma">
                     <Car size={14} />
                   </button>
+                )}
+                {(a.status === 'scheduled' || a.status === 'confirmed') && (
+                  <>
+                    <button onClick={() => markShowup(a.id, true)} className="p-1.5 hover:bg-green-700/30 rounded text-emerald-400" title="S-a prezentat">
+                      <UserCheck size={14} />
+                    </button>
+                    <button onClick={() => markShowup(a.id, false)} className="p-1.5 hover:bg-red-700/30 rounded text-red-400" title="Nu s-a prezentat">
+                      <UserX size={14} />
+                    </button>
+                    <button onClick={() => updateStatus(a.id, 'cancelled')} className="p-1.5 hover:bg-red-700/30 rounded text-orange-400" title="Anuleaza">
+                      <Ban size={14} />
+                    </button>
+                  </>
                 )}
                 <button onClick={() => { setEditing(a.id); setForm({ plate_number: a.plate_number, owner_name: a.owner_name || '', owner_phone: a.owner_phone || '', scheduled_date: a.scheduled_date, scheduled_time: a.scheduled_time, duration_min: a.duration_min, notes: a.notes || '' }); }}
                   className="p-1.5 hover:bg-gray-700 rounded text-gray-400"><Edit3 size={14} /></button>
@@ -624,6 +905,7 @@ export default function ITPPage() {
     switch (activeTab) {
       case 'inspections': return <InspectionsTab />;
       case 'appointments': return <AppointmentsTab />;
+      case 'followup': return <FollowUpTab />;
       case 'stats': return <StatsTab />;
       case 'expiring': return <ExpiringTab />;
       case 'import-export': return <ImportExportTab />;

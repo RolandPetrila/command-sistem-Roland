@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date
 from pathlib import Path
 from typing import Any, Optional
@@ -49,6 +50,7 @@ class ClientCreate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     notes: Optional[str] = None
+    default_payment_terms: Optional[str] = None  # net_15, net_30, net_45, immediate, or custom
 
 
 class ClientUpdate(BaseModel):
@@ -59,6 +61,7 @@ class ClientUpdate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     notes: Optional[str] = None
+    default_payment_terms: Optional[str] = None
 
 
 class InvoiceItem(BaseModel):
@@ -144,6 +147,13 @@ class PartialPayment(BaseModel):
     payment_date: str = Field(default_factory=lambda: date.today().isoformat())
     method: str = "transfer"  # transfer, cash, card
     notes: Optional[str] = None
+
+
+class BatchPdfRequest(BaseModel):
+    invoice_ids: Optional[list[int]] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    client_id: Optional[int] = None
 
 
 class FromCalculationRequest(BaseModel):
@@ -250,6 +260,7 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
     Footer: detalii bancare placeholder
     Watermark: DRAFT (pentru draft) sau ANULAT (pentru cancelled)
     """
+    import html as _html
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm, mm
@@ -363,12 +374,14 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
 
     # --- CLIENT INFO ---
     elements.append(Paragraph("Date client", style_section))
-    client_name = invoice.get("client_name", "N/A")
-    client_cui = invoice.get("client_cui", "")
-    client_reg = invoice.get("client_reg_com", "")
-    client_addr = invoice.get("client_address", "")
-    client_email = invoice.get("client_email", "")
-    client_phone = invoice.get("client_phone", "")
+    # Escape all user-provided strings before embedding in ReportLab XML/HTML
+    # to prevent tag injection (e.g. <b>, <script>) from corrupting the PDF.
+    client_name = _html.escape(invoice.get("client_name", "N/A"))
+    client_cui = _html.escape(invoice.get("client_cui", "") or "")
+    client_reg = _html.escape(invoice.get("client_reg_com", "") or "")
+    client_addr = _html.escape(invoice.get("client_address", "") or "")
+    client_email = _html.escape(invoice.get("client_email", "") or "")
+    client_phone = _html.escape(invoice.get("client_phone", "") or "")
 
     client_lines = [f"<b>{client_name}</b>"]
     if client_cui:
@@ -397,7 +410,7 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
 
     table_data = [header_row]
     for idx, item in enumerate(items, 1):
-        desc = item.get("description", "")
+        desc = _html.escape(item.get("description", ""))
         qty = item.get("quantity", 1)
         unit_price = item.get("unit_price", 0)
         item_total = item.get("total", qty * unit_price)
@@ -464,8 +477,16 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
     elements.append(Spacer(1, 12 * mm))
     elements.append(Paragraph("_" * 70, style_footer))
     elements.append(Spacer(1, 2 * mm))
+    # Citeste IBAN/banca din setari companie (daca exista)
+    iban = invoice.get("company_iban") or os.environ.get("COMPANY_IBAN", "")
+    bank = invoice.get("company_bank") or os.environ.get("COMPANY_BANK", "")
+    bank_info = ""
+    if iban:
+        bank_info = f" | IBAN: {iban}"
+        if bank:
+            bank_info += f" | Banca: {bank}"
     elements.append(Paragraph(
-        "CIP Inspection SRL | CUI: 43978110 | Cont bancar: [completati] | Banca: [completati]",
+        f"CIP Inspection SRL | CUI: 43978110 | J15/117/2021{bank_info}",
         style_footer,
     ))
     elements.append(Paragraph(

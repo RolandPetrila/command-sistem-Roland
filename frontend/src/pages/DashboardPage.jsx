@@ -14,6 +14,8 @@ import {
   CircleDot,
   ArrowRight,
   RefreshCw,
+  AlertTriangle,
+  DollarSign,
 } from 'lucide-react';
 import api from '../api/client';
 import ExchangeRateCard from '../components/Dashboard/ExchangeRateCard';
@@ -45,7 +47,11 @@ function formatRelativeTime(isoStr) {
 
 function dayLabel(dateStr) {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
+  // Parse YYYY-MM-DD as local time (not UTC) to avoid timezone offset shifting the day
+  const parts = String(dateStr).split('T')[0].split('-');
+  const d = parts.length === 3
+    ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    : new Date(dateStr);
   return d.toLocaleDateString('ro-RO', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
@@ -53,20 +59,33 @@ function dayLabel(dateStr) {
 // Summary Card
 // ---------------------------------------------------------------------------
 
-function SummaryCard({ icon: Icon, label, value, color, loading: isLoading }) {
+function SummaryCard({ icon: Icon, label, value, color, loading: isLoading, error, onRetry, onClick }) {
   return (
-    <div className="bg-gray-900 rounded-2xl shadow border border-gray-800 p-5 flex items-start justify-between">
+    <div onClick={!error ? onClick : undefined}
+      className={`bg-gray-900 rounded-2xl shadow border ${error ? 'border-red-800/40' : 'border-gray-800'} p-5 flex items-start justify-between ${!error && onClick ? 'cursor-pointer hover:border-gray-600 transition-colors' : ''}`}>
       <div>
         <p className="text-xs text-gray-400 mb-1 uppercase tracking-wide">{label}</p>
-        <p className="text-2xl font-bold text-gray-100">
-          {isLoading ? (
-            <Loader2 size={20} className="animate-spin text-gray-500" />
-          ) : (
-            value ?? '0'
-          )}
-        </p>
+        {isLoading ? (
+          <div className="mt-1 space-y-2">
+            <div className="animate-pulse bg-gray-700 rounded h-6 w-24" />
+            <div className="animate-pulse bg-gray-700 rounded h-3 w-16" />
+          </div>
+        ) : error ? (
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-sm text-red-400">Eroare la incarcare</span>
+            {onRetry && (
+              <button onClick={(e) => { e.stopPropagation(); onRetry(); }}
+                className="p-1 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
+                title="Reincearca">
+                <RefreshCw size={14} />
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="text-2xl font-bold text-gray-100">{value ?? '0'}</p>
+        )}
       </div>
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${color}`}>
+      <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${error ? 'bg-red-600/50' : color}`}>
         <Icon size={22} className="text-white" />
       </div>
     </div>
@@ -204,22 +223,59 @@ function QuickActions() {
 // Recent Activity (last 5 entries from activity-log)
 // ---------------------------------------------------------------------------
 
+const ACTIVITY_FILTERS = [
+  { id: 'all', label: 'Toate' },
+  { id: 'calc', label: 'Calculator', prefix: 'calc' },
+  { id: 'translator', label: 'Translator', prefix: 'translat' },
+  { id: 'invoice', label: 'Facturare', prefix: 'invoice' },
+  { id: 'itp', label: 'ITP', prefix: 'itp' },
+];
+
 function RecentActivityList({ entries, loading: isLoading }) {
+  const [filter, setFilter] = useState('all');
+
+  const filtered = useMemo(() => {
+    if (filter === 'all') return entries;
+    const f = ACTIVITY_FILTERS.find((t) => t.id === filter);
+    if (!f || !f.prefix) return entries;
+    return entries.filter(
+      (e) => e.action && e.action.toLowerCase().startsWith(f.prefix)
+    );
+  }, [entries, filter]);
+
   return (
     <div className="bg-gray-900 rounded-2xl shadow border border-gray-800 p-5">
       <div className="flex items-center gap-2 mb-4">
         <FileText size={18} className="text-cyan-400" />
         <h3 className="text-sm font-semibold text-gray-200">Activitate Recenta</h3>
       </div>
+      {/* Filter pills (R4-34) */}
+      <div className="flex gap-1.5 mb-4 flex-wrap">
+        {ACTIVITY_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setFilter(f.id)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+              filter === f.id
+                ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40'
+                : 'bg-gray-800 text-gray-400 border border-gray-700 hover:text-gray-200 hover:bg-gray-700'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
       {isLoading ? (
         <div className="flex justify-center py-6">
           <Loader2 size={18} className="animate-spin text-gray-600" />
         </div>
-      ) : entries.length === 0 ? (
-        <p className="text-sm text-gray-500 text-center py-4">Nicio activitate inregistrata.</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-gray-500 text-center py-4">
+          {filter === 'all' ? 'Nicio activitate inregistrata.' : 'Nicio activitate pentru acest modul.'}
+        </p>
       ) : (
         <div className="space-y-2">
-          {entries.map((entry, idx) => (
+          {filtered.map((entry, idx) => (
             <div
               key={idx}
               className="flex items-start gap-3 p-3 rounded-xl bg-gray-800/50 hover:bg-gray-800 transition-colors"
@@ -271,6 +327,10 @@ export default function DashboardPage() {
   const [itpActiveCount, setItpActiveCount] = useState(0);
   const [uptimeStr, setUptimeStr] = useState('-');
 
+  // Per-card error tracking (R4-33)
+  const [statsError, setStatsError] = useState(false);
+  const [uptimeError, setUptimeError] = useState(false);
+
   // Chart + providers + recent
   const [chartData, setChartData] = useState([]);
   const [providers, setProviders] = useState([]);
@@ -281,21 +341,30 @@ export default function DashboardPage() {
   const [providersLoading, setProvidersLoading] = useState(true);
   const [recentLoading, setRecentLoading] = useState(true);
 
+  // R3-29: Additional dashboard widgets
+  const [receivable, setReceivable] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [alertsLoading, setAlertsLoading] = useState(true);
+
   const fetchAll = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
 
     try {
       const results = await Promise.allSettled([
         // 0 - quick-stats (replaces: invoice/list, activity-log?translator, itp/list)
-        api.get('/api/reports/dashboard/quick-stats').catch(() => ({ data: {} })),
+        api.get('/api/reports/dashboard/quick-stats'),
         // 1 - system info (uptime)
-        api.get('/api/reports/system-info').catch(() => ({ data: {} })),
+        api.get('/api/reports/system-info'),
         // 2 - timeline (chart)
-        api.get('/api/reports/timeline/stats', { params: { group_by: 'day', days: 7 } }).catch(() => ({ data: [] })),
+        api.get('/api/reports/timeline/stats', { params: { group_by: 'day', days: 7 } }),
         // 3 - AI providers
-        api.get('/api/ai/providers').catch(() => ({ data: [] })),
+        api.get('/api/ai/providers'),
         // 4 - recent activity
-        api.get('/api/activity-log', { params: { limit: 5 } }).catch(() => ({ data: { entries: [] } })),
+        api.get('/api/activity-log', { params: { limit: 5 } }),
+        // 5 - receivable (R3-29)
+        api.get('/api/reports/dashboard/receivable'),
+        // 6 - alerts (R3-29)
+        api.get('/api/reports/dashboard/alerts'),
       ]);
 
       // 0 - Quick stats (invoices, translations, ITP — single call)
@@ -304,6 +373,9 @@ export default function DashboardPage() {
         setInvoiceCount(d?.invoices_this_month ?? 0);
         setTranslationCount(d?.translations_this_month ?? 0);
         setItpActiveCount(d?.itp_this_month ?? 0);
+        setStatsError(false);
+      } else {
+        setStatsError(true);
       }
 
       // 1 - Uptime
@@ -311,6 +383,9 @@ export default function DashboardPage() {
         const d = results[1].value?.data;
         const up = d?.uptime || d?.system_uptime || d?.uptime_string || '-';
         setUptimeStr(typeof up === 'string' ? up : '-');
+        setUptimeError(false);
+      } else {
+        setUptimeError(true);
       }
 
       // 2 - Chart
@@ -336,6 +411,18 @@ export default function DashboardPage() {
         const entries = d?.entries || (Array.isArray(d) ? d : []);
         setRecentEntries(entries);
       }
+
+      // 5 - Receivable (R3-29)
+      if (results[5]?.status === 'fulfilled') {
+        setReceivable(results[5].value?.data);
+      }
+
+      // 6 - Alerts (R3-29)
+      setAlertsLoading(false);
+      if (results[6]?.status === 'fulfilled') {
+        const d = results[6].value?.data;
+        setAlerts(d?.alerts || (Array.isArray(d) ? d : []));
+      }
     } catch {
       // toast handles it — individual cards show fallback values
     } finally {
@@ -351,14 +438,6 @@ export default function DashboardPage() {
   }, [fetchAll]);
 
   // ---------- Render ----------
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-blue-400" size={32} />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 bg-gray-950 min-h-full">
@@ -382,26 +461,70 @@ export default function DashboardPage() {
           label="Total Facturi"
           value={invoiceCount}
           color="bg-blue-600/80"
+          loading={loading}
+          error={statsError}
+          onRetry={() => fetchAll(true)}
         />
         <SummaryCard
           icon={Languages}
           label="Total Traduceri"
           value={translationCount}
           color="bg-emerald-600/80"
+          loading={loading}
+          error={statsError}
+          onRetry={() => fetchAll(true)}
         />
         <SummaryCard
           icon={Car}
           label="ITP Active"
           value={itpActiveCount}
           color="bg-amber-600/80"
+          loading={loading}
+          error={statsError}
+          onRetry={() => fetchAll(true)}
         />
         <SummaryCard
           icon={Clock}
           label="Uptime Sistem"
           value={uptimeStr}
           color="bg-purple-600/80"
+          loading={loading}
+          error={uptimeError}
+          onRetry={() => fetchAll(true)}
         />
       </div>
+
+      {/* ---------- Alerts + Receivable Row (R3-29) ---------- */}
+      {(alerts.length > 0 || (receivable && receivable.total_receivable > 0)) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {receivable && receivable.total_receivable > 0 && (
+            <div className="bg-gray-900 rounded-2xl shadow border border-amber-800/30 p-5">
+              <div className="flex items-center gap-2 mb-2">
+                <DollarSign size={18} className="text-amber-400" />
+                <h3 className="text-sm font-semibold text-gray-200">De incasat</h3>
+              </div>
+              <p className="text-2xl font-bold text-amber-400">{receivable.total_receivable?.toFixed(2)} RON</p>
+              <p className="text-xs text-gray-500">{receivable.unpaid_count || 0} facturi neplatite</p>
+            </div>
+          )}
+          {alerts.length > 0 && (
+            <div className="bg-gray-900 rounded-2xl shadow border border-red-800/30 p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle size={18} className="text-red-400" />
+                <h3 className="text-sm font-semibold text-gray-200">Alerte ({alerts.length})</h3>
+              </div>
+              <div className="space-y-2 max-h-32 overflow-y-auto">
+                {alerts.slice(0, 5).map((a, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs">
+                    <span className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${a.severity === 'critical' ? 'bg-red-500' : a.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                    <span className="text-gray-300">{a.message || a.title}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---------- Main Grid (3 columns desktop) ---------- */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

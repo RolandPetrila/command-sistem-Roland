@@ -191,6 +191,17 @@ def calculate_ensemble_price(
         w2 /= total_w
         w3 /= total_w
 
+    # Dacă documentul e scanat, word_rate e nesigur (OCR errors) → redistribuim
+    if features.get("is_scanned", False):
+        w_sum = w1 + w3
+        if w_sum > 0:
+            w1 = w1 / w_sum
+            w3 = w3 / w_sum
+        else:
+            w1 = 0.6
+            w3 = 0.4
+        w2 = 0.0
+
     # Dacă similaritatea nu a returnat preț valid, redistribuim ponderile
     if price_similarity == 0.0 and result_similarity["details"].get("error"):
         # Redistribuim ponderea similarității între celelalte 2 metode

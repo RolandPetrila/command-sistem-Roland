@@ -79,6 +79,8 @@ class TaskCreate(BaseModel):
     action_type: str
     action_config: Optional[dict] = None
     enabled: bool = True
+    timeout_seconds: int = 300  # R4-09: 5 min default
+    max_retries: int = 1  # R4-09: retry once on failure
 
 
 class TaskUpdate(BaseModel):
@@ -87,6 +89,8 @@ class TaskUpdate(BaseModel):
     action_type: Optional[str] = None
     action_config: Optional[dict] = None
     enabled: Optional[bool] = None
+    timeout_seconds: Optional[int] = None
+    max_retries: Optional[int] = None
 
 
 class ShortcutCreate(BaseModel):
@@ -217,6 +221,62 @@ def _cron_matches(cron_expr: str, now: datetime) -> bool:
     )
 
 
+# Field ranges: (min_val, max_val)
+_CRON_FIELD_RANGES = [
+    (0, 59),   # minute
+    (0, 23),   # hour
+    (1, 31),   # day of month
+    (1, 12),   # month
+    (0, 6),    # day of week
+]
+
+
+def _validate_cron_expr(expr: str) -> str | None:
+    """Validate a 5-field cron expression. Returns error message or None if valid."""
+    parts = expr.strip().split()
+    if len(parts) != 5:
+        return "Expresia cron trebuie sa aiba exact 5 campuri (min ora zi luna zi_sapt)"
+
+    field_names = ["minut", "ora", "zi_luna", "luna", "zi_sapt"]
+    for i, (field, (lo, hi)) in enumerate(zip(parts, _CRON_FIELD_RANGES)):
+        # Wildcard and step are always valid structurally; validate numeric values
+        if field == "*":
+            continue
+        if field.startswith("*/"):
+            try:
+                step = int(field[2:])
+                if step <= 0:
+                    return f"Campul '{field_names[i]}': pasul din '*/N' trebuie sa fie pozitiv"
+            except ValueError:
+                return f"Campul '{field_names[i]}': pas invalid in '{field}'"
+            continue
+        # Comma list
+        candidates = field.split(",") if "," in field else [field]
+        for part in candidates:
+            if "-" in part:
+                try:
+                    a, b = part.split("-", 1)
+                    a, b = int(a), int(b)
+                    if not (lo <= a <= hi and lo <= b <= hi and a <= b):
+                        return (
+                            f"Campul '{field_names[i]}': intervalul '{part}' "
+                            f"trebuie sa fie in [{lo}-{hi}]"
+                        )
+                except ValueError:
+                    return f"Campul '{field_names[i]}': interval invalid '{part}'"
+            else:
+                try:
+                    v = int(part)
+                    if not (lo <= v <= hi):
+                        return (
+                            f"Campul '{field_names[i]}': valoarea {v} "
+                            f"trebuie sa fie in [{lo}-{hi}]"
+                        )
+                except ValueError:
+                    return f"Campul '{field_names[i]}': valoare invalida '{part}'"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Background cron scheduler
 # ---------------------------------------------------------------------------
@@ -224,11 +284,41 @@ def _cron_matches(cron_expr: str, now: datetime) -> bool:
 _scheduler_task: Optional[asyncio.Task] = None
 _scheduler_status: dict[str, Any] = {
     "running": False,
+    "paused": False,  # R4-11: scheduler pause/resume
+    "paused_at": None,
     "last_check": None,
     "tasks_due": 0,
     "tasks_executed": 0,
     "last_error": None,
 }
+
+
+async def _execute_with_timeout(action_type: str, config: dict | None, timeout_secs: int) -> str:
+    """Execute a task action with asyncio timeout. R4-09."""
+    return await asyncio.wait_for(
+        _run_action(action_type, config),
+        timeout=timeout_secs,
+    )
+
+
+async def _record_run_result(
+    run_id: int, task_id: int, status: str,
+    output: str | None = None, error: str | None = None,
+):
+    """Update task_runs and scheduled_tasks after execution."""
+    finished_at = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        await db.execute(
+            """UPDATE task_runs
+               SET status = ?, output = ?, error = ?, finished_at = ?
+               WHERE id = ?""",
+            (status, output, error, finished_at, run_id),
+        )
+        await db.execute(
+            "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
+            (finished_at, task_id),
+        )
+        await db.commit()
 
 
 async def _cron_scheduler_loop():
@@ -241,13 +331,18 @@ async def _cron_scheduler_loop():
         try:
             await asyncio.sleep(60)
 
+            # R4-11: Skip execution when paused
+            if _scheduler_status.get("paused", False):
+                continue
+
             now = datetime.now(timezone.utc)
             _scheduler_status["last_check"] = now.isoformat()
             tasks_due = 0
 
             async with get_db() as db:
                 cursor = await db.execute(
-                    """SELECT id, name, schedule_cron, action_type, action_config, last_run
+                    """SELECT id, name, schedule_cron, action_type, action_config,
+                              last_run, timeout_seconds, max_retries, retry_count
                        FROM scheduled_tasks
                        WHERE enabled = 1 AND schedule_cron IS NOT NULL AND schedule_cron != ''"""
                 )
@@ -295,20 +390,19 @@ async def _cron_scheduler_loop():
                         except (json.JSONDecodeError, TypeError):
                             config = None
 
-                    try:
-                        output = await _run_action(task["action_type"], config)
-                        finished_at = datetime.now(timezone.utc).isoformat()
+                    timeout_secs = task.get("timeout_seconds") or 300
 
+                    try:
+                        output = await _execute_with_timeout(
+                            task["action_type"], config, timeout_secs
+                        )
+                        await _record_run_result(run_id, task["id"], "success", output=output)
+
+                        # Reset retry_count on success
                         async with get_db() as db:
                             await db.execute(
-                                """UPDATE task_runs
-                                   SET status = 'success', output = ?, finished_at = ?
-                                   WHERE id = ?""",
-                                (output, finished_at, run_id),
-                            )
-                            await db.execute(
-                                "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
-                                (finished_at, task["id"]),
+                                "UPDATE scheduled_tasks SET retry_count = 0 WHERE id = ?",
+                                (task["id"],),
                             )
                             await db.commit()
 
@@ -317,23 +411,48 @@ async def _cron_scheduler_loop():
                             "Cron task executat: #%d '%s' - succes",
                             task["id"], task["name"],
                         )
-                    except Exception as exc:
-                        finished_at = datetime.now(timezone.utc).isoformat()
+                    except asyncio.TimeoutError:
+                        error_msg = f"Timeout dupa {timeout_secs}s"
+                        await _record_run_result(run_id, task["id"], "timeout", error=error_msg)
+
+                        # R4-09: Retry logic on timeout
+                        max_retries = task.get("max_retries") or 1
+                        retry_count = (task.get("retry_count") or 0) + 1
                         async with get_db() as db:
                             await db.execute(
-                                """UPDATE task_runs
-                                   SET status = 'failed', error = ?, finished_at = ?
-                                   WHERE id = ?""",
-                                (str(exc)[:1000], finished_at, run_id),
-                            )
-                            await db.execute(
-                                "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
-                                (finished_at, task["id"]),
+                                "UPDATE scheduled_tasks SET retry_count = ? WHERE id = ?",
+                                (retry_count, task["id"]),
                             )
                             await db.commit()
+
+                        if retry_count <= max_retries:
+                            logger.info(
+                                "Cron task timeout: #%d '%s' - retry %d/%d in 15min",
+                                task["id"], task["name"], retry_count, max_retries,
+                            )
+                        else:
+                            logger.warning(
+                                "Cron task timeout: #%d '%s' - max retries exhausted",
+                                task["id"], task["name"],
+                            )
+
+                    except Exception as exc:
+                        error_msg = str(exc)[:1000]
+                        await _record_run_result(run_id, task["id"], "failed", error=error_msg)
+
+                        # R4-09: Retry logic on failure
+                        max_retries = task.get("max_retries") or 1
+                        retry_count = (task.get("retry_count") or 0) + 1
+                        async with get_db() as db:
+                            await db.execute(
+                                "UPDATE scheduled_tasks SET retry_count = ? WHERE id = ?",
+                                (retry_count, task["id"]),
+                            )
+                            await db.commit()
+
                         logger.warning(
-                            "Cron task esuat: #%d '%s' - %s",
-                            task["id"], task["name"], exc,
+                            "Cron task esuat: #%d '%s' - %s (retry %d/%d)",
+                            task["id"], task["name"], exc, retry_count, max_retries,
                         )
                         # Log error to activity_log for visibility in diagnostics
                         try:
@@ -346,6 +465,8 @@ async def _cron_scheduler_loop():
                                     "action_type": task["action_type"],
                                     "error": str(exc)[:500],
                                     "run_id": run_id,
+                                    "retry_count": retry_count,
+                                    "max_retries": max_retries,
                                 },
                             )
                         except Exception:
@@ -382,6 +503,32 @@ def stop_cron_scheduler():
         logger.info("Cron scheduler task anulat.")
     _scheduler_task = None
     _scheduler_status["running"] = False
+
+
+async def resume_uptime_monitors():
+    """Resume all enabled uptime monitors after server restart.
+
+    Called from lifespan/startup after cron scheduler is started.
+    Fetches all monitors with enabled=1 from DB and re-creates their
+    background asyncio tasks.
+    """
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT id, url, interval_seconds FROM uptime_monitors WHERE enabled = 1"
+            )
+            monitors = await cursor.fetchall()
+
+        resumed = 0
+        for row in monitors:
+            monitor_id, url, interval = row[0], row[1], row[2]
+            _start_monitor(monitor_id, url, interval)
+            resumed += 1
+
+        if resumed:
+            logger.info("Uptime monitors resumed: %d monitors restarted.", resumed)
+    except Exception as exc:
+        logger.warning("Nu s-au putut relua uptime monitors: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -555,13 +702,20 @@ async def create_task(body: TaskCreate):
             detail=f"Tip actiune invalid. Valide: {', '.join(VALID_ACTION_TYPES)}",
         )
 
+    if body.schedule_cron:
+        cron_error = _validate_cron_expr(body.schedule_cron)
+        if cron_error:
+            raise HTTPException(status_code=400, detail=f"Expresie cron invalida: {cron_error}")
+
     config_json = json.dumps(body.action_config) if body.action_config else None
 
     async with get_db() as db:
         cursor = await db.execute(
-            """INSERT INTO scheduled_tasks (name, schedule_cron, action_type, action_config, enabled)
-               VALUES (?, ?, ?, ?, ?)""",
-            (body.name, body.schedule_cron, body.action_type, config_json, int(body.enabled)),
+            """INSERT INTO scheduled_tasks
+               (name, schedule_cron, action_type, action_config, enabled, timeout_seconds, max_retries)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (body.name, body.schedule_cron, body.action_type, config_json,
+             int(body.enabled), body.timeout_seconds, body.max_retries),
         )
         await db.commit()
         task_id = cursor.lastrowid
@@ -588,6 +742,9 @@ async def update_task(task_id: int, body: TaskUpdate):
             updates.append("name = ?")
             params.append(body.name)
         if body.schedule_cron is not None:
+            cron_error = _validate_cron_expr(body.schedule_cron)
+            if cron_error:
+                raise HTTPException(status_code=400, detail=f"Expresie cron invalida: {cron_error}")
             updates.append("schedule_cron = ?")
             params.append(body.schedule_cron)
         if body.action_type is not None:
@@ -604,6 +761,12 @@ async def update_task(task_id: int, body: TaskUpdate):
         if body.enabled is not None:
             updates.append("enabled = ?")
             params.append(int(body.enabled))
+        if body.timeout_seconds is not None:
+            updates.append("timeout_seconds = ?")
+            params.append(body.timeout_seconds)
+        if body.max_retries is not None:
+            updates.append("max_retries = ?")
+            params.append(body.max_retries)
 
         if not updates:
             raise HTTPException(status_code=400, detail="Nimic de actualizat")
@@ -673,38 +836,25 @@ async def run_task_now(task_id: int):
                 except (json.JSONDecodeError, TypeError):
                     config = None
 
-            output = await _run_action(task_dict["action_type"], config)
-
-            async with get_db() as db2:
-                now = datetime.now(timezone.utc).isoformat()
-                await db2.execute(
-                    """UPDATE task_runs
-                       SET status = 'success', output = ?, finished_at = ?
-                       WHERE id = ?""",
-                    (output, now, run_id),
-                )
-                await db2.execute(
-                    "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
-                    (now, task_id),
-                )
-                await db2.commit()
+            timeout_secs = task_dict.get("timeout_seconds") or 300
+            output = await _execute_with_timeout(
+                task_dict["action_type"], config, timeout_secs
+            )
+            await _record_run_result(run_id, task_id, "success", output=output)
 
             await log_activity(
                 action="automations.task_run",
                 summary=f"Task executat: {task_dict['name']} - succes",
                 details={"output": output[:500]},
             )
+        except asyncio.TimeoutError:
+            timeout_secs = task_dict.get("timeout_seconds") or 300
+            error_msg = f"Timeout dupa {timeout_secs}s"
+            await _record_run_result(run_id, task_id, "timeout", error=error_msg)
+            logger.warning("Task manual timeout: #%d '%s'", task_id, task_dict["name"])
         except Exception as exc:
             logger.error("Task run failed: %s", exc)
-            async with get_db() as db2:
-                now = datetime.now(timezone.utc).isoformat()
-                await db2.execute(
-                    """UPDATE task_runs
-                       SET status = 'failed', error = ?, finished_at = ?
-                       WHERE id = ?""",
-                    (str(exc)[:1000], now, run_id),
-                )
-                await db2.commit()
+            await _record_run_result(run_id, task_id, "failed", error=str(exc)[:1000])
             # Log error to activity_log for visibility in diagnostics
             try:
                 await log_activity(
@@ -728,14 +878,100 @@ async def run_task_now(task_id: int):
 
 @router.get("/scheduler/status")
 async def scheduler_status():
-    """Return the cron scheduler status: running, last check, tasks due."""
+    """Return the cron scheduler status: running, paused, last check, tasks due."""
+    # Count active (enabled) tasks for the status display
+    active_tasks = 0
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) as cnt FROM scheduled_tasks WHERE enabled = 1"
+            )
+            row = await cursor.fetchone()
+            active_tasks = row["cnt"] if row else 0
+    except Exception:
+        pass
+
     return {
-        "running": _scheduler_status.get("running", False),
+        "running": _scheduler_status.get("running", False) and not _scheduler_status.get("paused", False),
+        "paused": _scheduler_status.get("paused", False),
+        "paused_at": _scheduler_status.get("paused_at"),
         "last_check": _scheduler_status.get("last_check"),
         "tasks_due": _scheduler_status.get("tasks_due", 0),
         "tasks_executed": _scheduler_status.get("tasks_executed", 0),
+        "active_tasks": active_tasks,
         "last_error": _scheduler_status.get("last_error"),
     }
+
+
+# R4-11: Scheduler pause/resume toggle
+@router.post("/scheduler/toggle")
+async def toggle_scheduler():
+    """Pause or resume the cron scheduler. R4-11."""
+    global _scheduler_status
+    currently_paused = _scheduler_status.get("paused", False)
+    _scheduler_status["paused"] = not currently_paused
+    _scheduler_status["paused_at"] = (
+        datetime.now(timezone.utc).isoformat() if not currently_paused else None
+    )
+
+    action = "paused" if _scheduler_status["paused"] else "resumed"
+    logger.info("Scheduler %s by user.", action)
+
+    await log_activity(
+        action=f"automations.scheduler_{action}",
+        summary=f"Scheduler {action}",
+    )
+    return {
+        "paused": _scheduler_status["paused"],
+        "paused_at": _scheduler_status["paused_at"],
+        "message": f"Scheduler {action}",
+    }
+
+
+# R4-10: Task execution history with drill-down
+@router.get("/tasks/{task_id}/history")
+async def task_execution_history(task_id: int, limit: int = 50):
+    """Return the last N executions for a specific task. R4-10."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM scheduled_tasks WHERE id = ?", (task_id,)
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Task negasit")
+
+        cursor = await db.execute(
+            """SELECT id, task_id, started_at, finished_at, status, output, error
+               FROM task_runs
+               WHERE task_id = ?
+               ORDER BY started_at DESC
+               LIMIT ?""",
+            (task_id, limit),
+        )
+        runs = []
+        for r in await cursor.fetchall():
+            rd = _row_dict(r)
+            # Calculate duration_seconds if both timestamps exist
+            if rd.get("started_at") and rd.get("finished_at"):
+                try:
+                    start_str = rd["started_at"]
+                    end_str = rd["finished_at"]
+                    # Parse both timestamps (strip tz for safe subtraction)
+                    if "T" in start_str:
+                        start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                    else:
+                        start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+                    if "T" in end_str:
+                        end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                    else:
+                        end_dt = datetime.strptime(end_str, "%Y-%m-%d %H:%M:%S")
+                    rd["duration_seconds"] = round((end_dt - start_dt).total_seconds(), 1)
+                except (ValueError, TypeError):
+                    rd["duration_seconds"] = None
+            else:
+                rd["duration_seconds"] = None
+            runs.append(rd)
+
+        return {"task_id": task_id, "runs": runs, "count": len(runs)}
 
 
 # ---------------------------------------------------------------------------

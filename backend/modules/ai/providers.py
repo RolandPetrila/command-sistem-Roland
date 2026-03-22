@@ -354,14 +354,19 @@ async def ai_generate_stream(
         yield {"error": "Niciun provider AI configurat. Adaugă o cheie API în setările AI."}
         return
 
+    failed_provider = None
     for provider in providers:
         try:
+            # R4-16: If a previous provider failed, emit fallback info
+            if failed_provider:
+                yield {"fallback_from": failed_provider, "provider": provider.name}
             async for chunk in provider.generate_stream(prompt, system_prompt):
                 yield {"chunk": chunk, "provider": provider.name, "model": provider.model}
             yield {"done": True, "provider": provider.name, "model": provider.model}
             return
         except Exception as e:
             logger.warning(f"Provider {provider.name} stream failed: {e}")
+            failed_provider = provider.name
             continue
 
     yield {"error": f"Toți providerii AI au eșuat."}

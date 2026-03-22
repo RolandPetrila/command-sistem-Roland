@@ -5,6 +5,7 @@ Endpoints:
   GET  /api/quick-tools/exchange-rate              — curs BNR curent (cache 1h)
   GET  /api/quick-tools/exchange-rate/convert      — conversie valuta
   GET  /api/quick-tools/company-check/{cui}        — verificare CUI la ANAF
+  POST /api/quick-tools/anaf-batch-check           — verificare batch CUI la ANAF (R4-20)
   GET  /api/quick-tools/number-to-words            — numar in litere (romana)
 """
 
@@ -18,6 +19,7 @@ from datetime import date
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -391,3 +393,95 @@ async def get_number_to_words(
         "number": number,
         "words": text,
     }
+
+
+# ---------------------------------------------------------------------------
+# R4-20: ANAF Batch CUI Verification
+# ---------------------------------------------------------------------------
+
+class AnafBatchRequest(BaseModel):
+    cuis: list[str] = Field(..., min_length=1, max_length=50)
+
+
+@router.post("/anaf-batch-check")
+async def anaf_batch_check(req: AnafBatchRequest):
+    """Verificare batch CUI-uri la ANAF. Max 50, cu 200ms delay intre apeluri."""
+    results = []
+    for raw_cui in req.cuis:
+        clean = raw_cui.strip().upper()
+        if clean.startswith("RO"):
+            clean = clean[2:]
+        clean = clean.strip()
+
+        try:
+            cui_int = int(clean)
+        except ValueError:
+            results.append({
+                "cui": raw_cui.strip(),
+                "valid": False,
+                "company_name": None,
+                "address": None,
+                "status": f"CUI invalid (nu e numeric): {raw_cui.strip()}",
+            })
+            continue
+
+        # Check cache first
+        cached = _anaf_cache.get(cui_int)
+        if cached and (time.time() - cached["ts"]) < _ANAF_CACHE_TTL:
+            data = cached["data"]
+            results.append({
+                "cui": str(cui_int),
+                "valid": data.get("found", False),
+                "company_name": data.get("denumire"),
+                "address": data.get("adresa"),
+                "status": data.get("stare") or ("Gasit" if data.get("found") else "Negasit"),
+            })
+            continue
+
+        # Call ANAF API
+        today_str = date.today().strftime("%Y-%m-%d")
+        payload = [{"cui": cui_int, "data": today_str}]
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(_ANAF_URL, json=payload)
+                resp.raise_for_status()
+            body = resp.json()
+            found_list = body.get("found", [])
+            if not found_list:
+                result_data = {
+                    "found": False, "cui": cui_int, "denumire": None,
+                    "adresa": None, "stare": None,
+                    "data_verificare": today_str,
+                }
+            else:
+                item = found_list[0]
+                general = item.get("date_generale", {})
+                result_data = {
+                    "found": True, "cui": cui_int,
+                    "denumire": general.get("denumire"),
+                    "adresa": general.get("adresa"),
+                    "stare": general.get("stare_inregistrare"),
+                    "data_verificare": today_str,
+                }
+            _anaf_cache[cui_int] = {"data": result_data, "ts": time.time()}
+            results.append({
+                "cui": str(cui_int),
+                "valid": result_data.get("found", False),
+                "company_name": result_data.get("denumire"),
+                "address": result_data.get("adresa"),
+                "status": result_data.get("stare") or ("Gasit" if result_data.get("found") else "Negasit"),
+            })
+        except Exception as exc:
+            logger.warning("ANAF batch check error for CUI %s: %s", cui_int, exc)
+            results.append({
+                "cui": str(cui_int),
+                "valid": False,
+                "company_name": None,
+                "address": None,
+                "status": f"Eroare ANAF: {str(exc)[:100]}",
+            })
+
+        # 200ms delay between calls to respect ANAF rate limits
+        await asyncio.sleep(0.2)
+
+    return {"results": results, "total": len(results)}

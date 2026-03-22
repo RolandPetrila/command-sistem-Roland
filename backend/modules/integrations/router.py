@@ -21,6 +21,7 @@ import json
 import logging
 import re
 import smtplib
+import time as _time
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -92,6 +93,28 @@ def _extract_email_body(msg: email.message.Message) -> str:
             charset = msg.get_content_charset() or "utf-8"
             return payload.decode(charset, errors="replace")
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Status cache (R4-32) — 5 min TTL in-memory
+# ---------------------------------------------------------------------------
+
+_STATUS_CACHE_TTL = 300  # 5 minutes in seconds
+_status_cache: dict[str, dict] = {}
+
+
+def _cache_get(provider: str) -> dict | None:
+    """Return cached status if exists and < TTL old, else None."""
+    entry = _status_cache.get(provider)
+    if entry and (_time.time() - entry["timestamp"]) < _STATUS_CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _cache_set(provider: str, data: dict) -> dict:
+    """Store status result in cache with current timestamp. Returns data."""
+    _status_cache[provider] = {"data": data, "timestamp": _time.time()}
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -214,35 +237,93 @@ class GitHubIssueCreate(BaseModel):
 @router.get("/gmail/status")
 async def gmail_status():
     """Verifică dacă Gmail este configurat."""
+    cached = _cache_get("gmail")
+    if cached is not None:
+        return cached
+
     email_addr = await _get_config_key("gmail_email")
     app_password = await _get_config_key("gmail_app_password")
     configured = bool(email_addr and app_password)
-    return {
+    result = {
         "provider": "gmail",
         "configured": configured,
         "email": email_addr if configured else None,
         "message": "Gmail configurat." if configured else "Lipsesc cheile gmail_email și/sau gmail_app_password din Setări AI.",
+        "cached_at": _time.time(),
     }
+    return _cache_set("gmail", result)
 
 
-@router.get("/gmail/messages")
-async def gmail_list_messages(
-    q: str = Query("", description="Criteriu de căutare IMAP"),
-    max_results: int = Query(20, ge=1, le=100),
-):
-    """Listează ultimele email-uri din inbox via IMAP."""
+@router.get("/gmail/labels")
+async def gmail_list_labels():
+    """Listează label-urile/folderele disponibile în contul Gmail via IMAP."""
     email_addr = await _get_config_key("gmail_email")
     app_password = await _get_config_key("gmail_app_password")
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat. Adaugă gmail_email și gmail_app_password în Setări AI.")
 
-    def _imap_list(addr: str, pwd: str, search_q: str, limit: int) -> list[dict]:
+    def _imap_labels(addr: str, pwd: str) -> list[dict]:
+        """Blocking IMAP LIST — runs in thread via asyncio.to_thread."""
+        imap = None
+        try:
+            imap = imaplib.IMAP4_SSL("imap.gmail.com")
+            imap.login(addr, pwd)
+            status, data = imap.list()
+            if status != "OK":
+                return []
+            labels = []
+            for item in data:
+                decoded = item.decode("utf-8", errors="replace") if isinstance(item, bytes) else str(item)
+                # Format: '(\\HasNoChildren) "/" "INBOX"'
+                match = re.search(r'"([^"]*)"$', decoded)
+                if match:
+                    name = match.group(1)
+                else:
+                    parts = decoded.rsplit(" ", 1)
+                    name = parts[-1].strip('"') if parts else decoded
+                labels.append({"name": name, "raw": decoded})
+            return labels
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
+    try:
+        labels = await asyncio.to_thread(_imap_labels, email_addr, app_password)
+        return {"labels": labels, "total": len(labels)}
+    except imaplib.IMAP4.error as exc:
+        logger.error("Eroare IMAP labels: %s", exc)
+        raise HTTPException(500, f"Eroare conectare Gmail IMAP: {exc}")
+    except Exception as exc:
+        logger.error("Eroare Gmail labels: %s", exc)
+        raise HTTPException(500, f"Eroare Gmail labels: {exc}")
+
+
+@router.get("/gmail/messages")
+async def gmail_list_messages(
+    q: str = Query("", description="Criteriu de căutare IMAP"),
+    label: str = Query("INBOX", description="Label/folder IMAP (default INBOX)"),
+    max_results: int = Query(20, ge=1, le=100),
+):
+    """Listează ultimele email-uri din inbox (sau alt label) via IMAP."""
+    email_addr = await _get_config_key("gmail_email")
+    app_password = await _get_config_key("gmail_app_password")
+    if not email_addr or not app_password:
+        raise HTTPException(400, "Gmail nu este configurat. Adaugă gmail_email și gmail_app_password în Setări AI.")
+
+    def _imap_list(addr: str, pwd: str, search_q: str, limit: int, mailbox: str) -> list[dict]:
         """Blocking IMAP fetch — runs in thread via asyncio.to_thread."""
         imap = None
         try:
             imap = imaplib.IMAP4_SSL("imap.gmail.com")
             imap.login(addr, pwd)
-            imap.select("INBOX", readonly=True)
+            # Use provided label/folder instead of hardcoded INBOX
+            status, _ = imap.select(f'"{mailbox}"', readonly=True)
+            if status != "OK":
+                # Fallback to INBOX if label not found
+                imap.select("INBOX", readonly=True)
 
             search_criteria = f'({search_q})' if search_q else "ALL"
             status, data = imap.search(None, search_criteria)
@@ -280,14 +361,14 @@ async def gmail_list_messages(
                     pass
 
     try:
-        messages = await asyncio.to_thread(_imap_list, email_addr, app_password, q, max_results)
+        messages = await asyncio.to_thread(_imap_list, email_addr, app_password, q, max_results, label)
 
         await log_activity(
             action="integrations.gmail.list",
-            summary=f"Listat {len(messages)} email-uri",
+            summary=f"Listat {len(messages)} email-uri (label: {label})",
         )
 
-        return {"messages": messages, "total": len(messages)}
+        return {"messages": messages, "total": len(messages), "label": label}
 
     except imaplib.IMAP4.error as exc:
         logger.error("Eroare IMAP Gmail: %s", exc)
@@ -539,6 +620,10 @@ async def _drive_headers() -> dict[str, str]:
 @router.get("/drive/status")
 async def drive_status():
     """Verifică dacă Google Drive este configurat."""
+    cached = _cache_get("google_drive")
+    if cached is not None:
+        return cached
+
     token = await _get_config_key("google_drive_token")
     configured = bool(token)
 
@@ -552,35 +637,39 @@ async def drive_status():
                 )
                 if resp.status_code == 200:
                     user_info = resp.json().get("user", {})
-                    return {
+                    return _cache_set("google_drive", {
                         "provider": "google_drive",
                         "configured": True,
                         "connected": True,
                         "user": user_info.get("displayName", ""),
                         "email": user_info.get("emailAddress", ""),
                         "message": "Google Drive conectat.",
-                    }
+                        "cached_at": _time.time(),
+                    })
                 else:
-                    return {
+                    return _cache_set("google_drive", {
                         "provider": "google_drive",
                         "configured": True,
                         "connected": False,
                         "message": "Token Google Drive expirat sau invalid. Re-autentifică din Setări.",
-                    }
+                        "cached_at": _time.time(),
+                    })
         except Exception:
-            return {
+            return _cache_set("google_drive", {
                 "provider": "google_drive",
                 "configured": True,
                 "connected": False,
                 "message": "Nu s-a putut verifica conexiunea Google Drive.",
-            }
+                "cached_at": _time.time(),
+            })
 
-    return {
+    return _cache_set("google_drive", {
         "provider": "google_drive",
         "configured": False,
         "connected": False,
         "message": "Lipsește google_drive_token din Setări AI.",
-    }
+        "cached_at": _time.time(),
+    })
 
 
 @router.get("/drive/files")
@@ -769,6 +858,10 @@ async def _calendar_headers() -> dict[str, str]:
 @router.get("/calendar/status")
 async def calendar_status():
     """Verifică dacă Google Calendar este configurat."""
+    cached = _cache_get("google_calendar")
+    if cached is not None:
+        return cached
+
     token = await _get_config_key("google_calendar_token")
     configured = bool(token)
 
@@ -781,34 +874,38 @@ async def calendar_status():
                 )
                 if resp.status_code == 200:
                     cal_info = resp.json()
-                    return {
+                    return _cache_set("google_calendar", {
                         "provider": "google_calendar",
                         "configured": True,
                         "connected": True,
                         "calendar": cal_info.get("summary", ""),
                         "message": "Google Calendar conectat.",
-                    }
+                        "cached_at": _time.time(),
+                    })
                 else:
-                    return {
+                    return _cache_set("google_calendar", {
                         "provider": "google_calendar",
                         "configured": True,
                         "connected": False,
                         "message": "Token Google Calendar expirat sau invalid.",
-                    }
+                        "cached_at": _time.time(),
+                    })
         except Exception:
-            return {
+            return _cache_set("google_calendar", {
                 "provider": "google_calendar",
                 "configured": True,
                 "connected": False,
                 "message": "Nu s-a putut verifica conexiunea Google Calendar.",
-            }
+                "cached_at": _time.time(),
+            })
 
-    return {
+    return _cache_set("google_calendar", {
         "provider": "google_calendar",
         "configured": False,
         "connected": False,
         "message": "Lipsește google_calendar_token din Setări AI.",
-    }
+        "cached_at": _time.time(),
+    })
 
 
 @router.get("/calendar/events")
@@ -1038,6 +1135,10 @@ async def _github_headers() -> dict[str, str]:
 @router.get("/github/status")
 async def github_status():
     """Verifică dacă GitHub este configurat."""
+    cached = _cache_get("github")
+    if cached is not None:
+        return cached
+
     token = await _get_config_key("github_token")
     configured = bool(token)
 
@@ -1053,7 +1154,7 @@ async def github_status():
                 )
                 if resp.status_code == 200:
                     user = resp.json()
-                    return {
+                    return _cache_set("github", {
                         "provider": "github",
                         "configured": True,
                         "connected": True,
@@ -1061,28 +1162,32 @@ async def github_status():
                         "name": user.get("name", ""),
                         "repos": user.get("public_repos", 0),
                         "message": "GitHub conectat.",
-                    }
+                        "cached_at": _time.time(),
+                    })
                 else:
-                    return {
+                    return _cache_set("github", {
                         "provider": "github",
                         "configured": True,
                         "connected": False,
                         "message": "Token GitHub invalid sau expirat.",
-                    }
+                        "cached_at": _time.time(),
+                    })
         except Exception:
-            return {
+            return _cache_set("github", {
                 "provider": "github",
                 "configured": True,
                 "connected": False,
                 "message": "Nu s-a putut verifica conexiunea GitHub.",
-            }
+                "cached_at": _time.time(),
+            })
 
-    return {
+    return _cache_set("github", {
         "provider": "github",
         "configured": False,
         "connected": False,
         "message": "Lipsește github_token din Setări AI.",
-    }
+        "cached_at": _time.time(),
+    })
 
 
 @router.get("/github/repos")
@@ -1290,3 +1395,14 @@ async def integrations_status_overview():
         "total_count": len(results),
         "message": f"{configured_count}/{len(results)} integrări configurate.",
     }
+
+
+@router.post("/status/refresh")
+async def integrations_status_refresh():
+    """Golește cache-ul de status pentru toate integrările, forțând verificare proaspătă."""
+    _status_cache.clear()
+    await log_activity(
+        action="integrations.status.refresh",
+        summary="Cache status integrări golit manual",
+    )
+    return {"status": "ok", "message": "Cache status golit. Următoarea verificare va fi proaspătă."}

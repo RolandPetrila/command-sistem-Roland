@@ -25,6 +25,7 @@ from app.core.activity_log import log_activity
 from app.db.database import get_db
 
 from .router import (
+    BatchPdfRequest,
     InvoiceItem,
     OfferPdfRequest,
     TemplateGenerateRequest,
@@ -450,6 +451,94 @@ async def generate_pdf(invoice_id: int):
         path=str(pdf_path),
         filename=pdf_filename,
         media_type="application/pdf",
+    )
+
+
+# ═══════════════════════════════════════════
+# R4-28: Batch PDF ZIP export
+# ═══════════════════════════════════════════
+
+@pdf_router.post("/export-batch-pdf")
+async def export_batch_pdf(data: BatchPdfRequest):
+    """Genereaza PDF-uri pentru mai multe facturi si le impacheteaza intr-un ZIP."""
+    import tempfile
+    import zipfile
+
+    async with get_db() as db:
+        if data.invoice_ids:
+            if len(data.invoice_ids) > 100:
+                raise HTTPException(400, "Maxim 100 facturi per export batch.")
+            placeholders = ", ".join("?" for _ in data.invoice_ids)
+            cursor = await db.execute(
+                f"""SELECT i.*, c.name as client_name, c.cui as client_cui,
+                           c.reg_com as client_reg_com, c.address as client_address,
+                           c.email as client_email, c.phone as client_phone
+                    FROM invoices i
+                    LEFT JOIN clients c ON i.client_id = c.id
+                    WHERE i.id IN ({placeholders})
+                    ORDER BY i.date DESC, i.id DESC""",
+                data.invoice_ids,
+            )
+        else:
+            conditions = []
+            params: list = []
+            if data.date_from:
+                conditions.append("i.date >= ?")
+                params.append(data.date_from)
+            if data.date_to:
+                conditions.append("i.date <= ?")
+                params.append(data.date_to)
+            if data.client_id:
+                conditions.append("i.client_id = ?")
+                params.append(data.client_id)
+            if not conditions:
+                raise HTTPException(400, "Specifica invoice_ids sau cel putin un filtru (date_from, date_to, client_id).")
+            where = " AND ".join(conditions)
+            cursor = await db.execute(
+                f"""SELECT i.*, c.name as client_name, c.cui as client_cui,
+                           c.reg_com as client_reg_com, c.address as client_address,
+                           c.email as client_email, c.phone as client_phone
+                    FROM invoices i
+                    LEFT JOIN clients c ON i.client_id = c.id
+                    WHERE {where}
+                    ORDER BY i.date DESC, i.id DESC
+                    LIMIT 100""",
+                params,
+            )
+        rows = await cursor.fetchall()
+
+    if not rows:
+        raise HTTPException(404, "Nicio factura gasita pentru criteriile date.")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for row in rows:
+            invoice = dict(row)
+            items = _items_from_json(invoice.get("items_json", "[]"))
+            pdf_filename = f"{invoice['invoice_number']}.pdf"
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                _build_invoice_pdf(invoice, items, tmp_path)
+                zf.write(tmp_path, pdf_filename)
+            except Exception as exc:
+                logger.error("Eroare PDF batch pentru %s: %s", invoice.get("invoice_number"), exc)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+
+    zip_buffer.seek(0)
+    zip_filename = f"invoices_{date.today().isoformat()}.zip"
+
+    await log_activity(
+        action="invoice.batch_pdf",
+        summary=f"Export batch PDF: {len(rows)} facturi",
+        details={"count": len(rows)},
+    )
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
     )
 
 

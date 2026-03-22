@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Barcode, Download, RefreshCw, Copy, Check } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Barcode, Download, RefreshCw, Copy, Check, Grid3X3, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import apiClient from '../api/client';
 
 const BARCODE_TYPES = [
@@ -18,6 +18,12 @@ export default function BarcodePage() {
   const [error, setError] = useState('');
   const [generated, setGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
+  // R3-55: Preview all types
+  const [previewAll, setPreviewAll] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  // R4-07: EAN-13 live validation
+  const [eanValidation, setEanValidation] = useState(null);
+  const eanTimerRef = useRef(null);
 
   // Cleanup blob URL on unmount or change
   useEffect(() => {
@@ -25,6 +31,32 @@ export default function BarcodePage() {
       if (imageUrl) URL.revokeObjectURL(imageUrl);
     };
   }, [imageUrl]);
+
+  // R4-07: Live EAN-13 validation as user types
+  useEffect(() => {
+    if (eanTimerRef.current) clearTimeout(eanTimerRef.current);
+    if (barcodeType !== 'ean13' || !data.trim()) {
+      setEanValidation(null);
+      return;
+    }
+    const digitsOnly = data.replace(/\D/g, '');
+    if (digitsOnly.length < 12) {
+      setEanValidation(null);
+      return;
+    }
+    eanTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await apiClient.post('/api/tools/validate-barcode', {
+          code: digitsOnly,
+          barcode_type: 'ean13',
+        });
+        setEanValidation(res.data);
+      } catch {
+        setEanValidation(null);
+      }
+    }, 300);
+    return () => { if (eanTimerRef.current) clearTimeout(eanTimerRef.current); };
+  }, [data, barcodeType]);
 
   const generate = useCallback(async () => {
     if (!data.trim()) {
@@ -107,6 +139,21 @@ export default function BarcodePage() {
     }
   }, [imageUrl, data]);
 
+  // R3-55: Generate all barcode types at once
+  const generatePreviewAll = useCallback(async () => {
+    if (!data.trim()) { setError('Introdu textul de encodat'); return; }
+    setPreviewLoading(true);
+    setPreviewAll(null);
+    try {
+      const { data: result } = await apiClient.post('/api/tools/barcode-preview-all', { data: data.trim() });
+      setPreviewAll(result);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Eroare la previzualizare');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [data]);
+
   const selectedType = BARCODE_TYPES.find(t => t.id === barcodeType) || BARCODE_TYPES[0];
 
   return (
@@ -174,6 +221,27 @@ export default function BarcodePage() {
               ? 'QR Code accepta orice text, URL-uri, numere, etc.'
               : 'Code 128 accepta orice text alfanumeric'}
           </p>
+          {/* R4-07: EAN-13 live validation indicator */}
+          {barcodeType === 'ean13' && eanValidation && (
+            <div className={`mt-2 flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg ${
+              eanValidation.valid
+                ? 'bg-emerald-900/20 border border-emerald-800/30 text-emerald-300'
+                : 'bg-red-900/20 border border-red-800/30 text-red-300'
+            }`}>
+              {eanValidation.valid
+                ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                : <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
+              <span>{eanValidation.message}</span>
+              {!eanValidation.valid && eanValidation.corrected && (
+                <button
+                  onClick={() => setData(eanValidation.corrected)}
+                  className="ml-auto text-primary-400 hover:text-primary-300 font-medium whitespace-nowrap"
+                >
+                  Corecteaza: {eanValidation.corrected}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Show text toggle */}
@@ -197,16 +265,54 @@ export default function BarcodePage() {
           <p className="text-red-400 text-sm mb-4">{error}</p>
         )}
 
-        {/* Generate button */}
-        <button
-          onClick={generate}
-          disabled={loading || !data.trim()}
-          className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-sm font-semibold disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Se genereaza...' : 'Genereaza Cod de Bare'}
-        </button>
+        {/* Generate buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={generate}
+            disabled={loading || !data.trim()}
+            className="btn-primary flex-1 flex items-center justify-center gap-2 py-3 text-sm font-semibold disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Se genereaza...' : 'Genereaza Cod de Bare'}
+          </button>
+          {/* R3-55: Preview all types */}
+          <button
+            onClick={generatePreviewAll}
+            disabled={previewLoading || !data.trim()}
+            className="btn-secondary flex items-center gap-2 px-4 py-3 text-sm font-semibold disabled:opacity-50"
+            title="Previzualizare toate tipurile"
+          >
+            {previewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Grid3X3 className="w-4 h-4" />}
+            Toate
+          </button>
+        </div>
       </div>
+
+      {/* R3-55: Preview all types grid */}
+      {previewAll && (
+        <div className="card p-6">
+          <h3 className="text-sm font-medium text-slate-400 mb-4">Previzualizare toate tipurile</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {Object.entries(previewAll).map(([key, val]) => (
+              <div key={key} className={`rounded-lg p-4 border ${val.success ? 'border-slate-700 bg-slate-800/30' : 'border-red-800/30 bg-red-900/10'}`}>
+                <p className="text-xs text-slate-400 mb-2 font-medium">{val.type || key}</p>
+                {val.success ? (
+                  <div className="bg-white p-3 rounded flex items-center justify-center">
+                    <img src={`data:image/png;base64,${val.base64}`} alt={`${val.type} barcode`}
+                      className="max-w-full h-auto" style={{ maxHeight: 80, imageRendering: 'pixelated' }} />
+                  </div>
+                ) : (
+                  <p className="text-xs text-red-400">{val.error || 'Incompatibil cu datele introduse'}</p>
+                )}
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setPreviewAll(null)}
+            className="mt-3 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+            Inchide previzualizarea
+          </button>
+        </div>
+      )}
 
       {/* Preview */}
       {generated && imageUrl && (

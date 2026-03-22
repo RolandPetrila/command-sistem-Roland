@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Calculator, Loader2, AlertTriangle, FileText } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Calculator, Loader2, AlertTriangle, FileText, Languages, CheckCircle, XCircle } from 'lucide-react';
 import DropZone from '../components/Upload/DropZone';
 import FileList from '../components/Upload/FileList';
 import ProgressBar from '../components/Upload/ProgressBar';
@@ -13,7 +14,24 @@ import PriceExplanation from '../components/Price/PriceExplanation';
 import CompetitorAnalysis from '../components/Price/CompetitorAnalysis';
 import { uploadFile, calculatePrice, getSettings, createProgressWebSocket } from '../api/client';
 
+// R4-17: Pre-flight validation constants
+const MAX_FILE_SIZE_MB = 50;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt'];
+
+function validateFile(file) {
+  const ext = '.' + file.name.split('.').pop().toLowerCase();
+  if (!ALLOWED_EXTENSIONS.includes(ext)) {
+    return `Format neacceptat: "${file.name}". Acceptat: PDF, DOCX, TXT`;
+  }
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    return `Fisierul "${file.name}" depaseste limita de ${MAX_FILE_SIZE_MB}MB (${(file.size / (1024 * 1024)).toFixed(1)}MB)`;
+  }
+  return null;
+}
+
 export default function UploadPage() {
+  const navigate = useNavigate();
   const [files, setFiles] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [processing, setProcessing] = useState(false);
@@ -35,11 +53,28 @@ export default function UploadPage() {
   }, []);
 
   const handleFilesAdded = (newFiles) => {
-    const updated = [...files, ...newFiles];
-    setFiles(updated);
-    setSelectedIds(updated.map((_, i) => i));
-    setResults([]);
-    setError('');
+    // R4-17: Pre-flight validation — check each file before adding
+    const validFiles = [];
+    const errors = [];
+    for (const file of newFiles) {
+      const err = validateFile(file);
+      if (err) {
+        errors.push(err);
+      } else {
+        validFiles.push(file);
+      }
+    }
+    if (errors.length > 0) {
+      setError(errors.join('\n'));
+    } else {
+      setError('');
+    }
+    if (validFiles.length > 0) {
+      const updated = [...files, ...validFiles];
+      setFiles(updated);
+      setSelectedIds(updated.map((_, i) => i));
+      setResults([]);
+    }
   };
 
   const handleToggleSelect = (idx) => {
@@ -75,12 +110,16 @@ export default function UploadPage() {
     setResults([]);
     setCurrentFileIndex(0);
 
-    const totalFiles = selectedIds.length;
+    // Snapshot both arrays at start so React state updates mid-loop don't shift indexes
+    const filesSnapshot = [...files];
+    const selectedSnapshot = [...selectedIds];
+
+    const totalFiles = selectedSnapshot.length;
     const allResults = [];
 
     for (let i = 0; i < totalFiles; i++) {
-      const fileIdx = selectedIds[i];
-      const file = files[fileIdx];
+      const fileIdx = selectedSnapshot[i];
+      const file = filesSnapshot[fileIdx];
 
       setCurrentFileIndex(i);
       setCurrentFileName(file.name);
@@ -184,6 +223,31 @@ export default function UploadPage() {
       {/* Results */}
       {results.length > 0 && (
         <div className="space-y-8">
+          {/* R4-18: Batch summary — succeeded/failed count */}
+          {results.length > 1 && (() => {
+            const succeeded = results.filter((r) => !r._error).length;
+            const failed = results.length - succeeded;
+            return (
+              <div className={`flex items-center gap-3 rounded-xl p-4 ${
+                failed === 0
+                  ? 'bg-emerald-500/10 border border-emerald-500/30'
+                  : failed === results.length
+                  ? 'bg-red-500/10 border border-red-500/30'
+                  : 'bg-amber-500/10 border border-amber-500/30'
+              }`}>
+                {failed === 0 ? (
+                  <CheckCircle size={20} className="text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle size={20} className="text-amber-400 shrink-0" />
+                )}
+                <span className="text-sm text-slate-200">
+                  {succeeded}/{results.length} fisiere procesate cu succes
+                  {failed > 0 && `, ${failed} ${failed === 1 ? 'eroare' : 'erori'}`}
+                </span>
+              </div>
+            );
+          })()}
+
           {/* Total summary for multiple files */}
           {results.filter((r) => !r._error).length > 1 && (
             <div className="card glow-primary">
@@ -209,9 +273,14 @@ export default function UploadPage() {
           {/* Individual results */}
           {results.map((result, idx) => (
             <div key={idx} className="space-y-4">
-              {/* File header */}
+              {/* File header — R4-18: per-file status icon */}
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-3">
+                  {result._error ? (
+                    <XCircle size={18} className="text-red-400" />
+                  ) : (
+                    <CheckCircle size={18} className="text-emerald-400" />
+                  )}
                   <FileText size={18} className="text-primary-400" />
                   <h2 className="text-lg font-bold text-slate-100">{result._filename}</h2>
                 </div>
@@ -277,9 +346,15 @@ export default function UploadPage() {
                     docType={result.doc_type || 'general'}
                   />
 
-                  {/* Self-learn button */}
-                  <div className="flex justify-center">
+                  {/* Self-learn + Translate buttons */}
+                  <div className="flex justify-center gap-3">
                     <SelfLearnButton uploadId={result._uploadId} marketPrice={result.market_price} />
+                    <button
+                      onClick={() => navigate('/translator', { state: { filename: result._filename } })}
+                      className="btn-secondary flex items-center gap-2"
+                    >
+                      <Languages size={16} /> Trimite la traducere
+                    </button>
                   </div>
                 </>
               )}

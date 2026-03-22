@@ -16,6 +16,7 @@ Endpoints:
   POST   /api/ai/ocr-enhance         — OCR + AI post-processing
   POST   /api/ai/diff                — Compare two documents
   GET    /api/ai/providers           — List available providers
+  GET    /api/ai/providers/:name/health — Check provider health (R3-46)
   GET    /api/ai/config              — Get AI config keys (no values)
   POST   /api/ai/config              — Set API key
   DELETE /api/ai/config/:key         — Remove API key
@@ -23,6 +24,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import json
 import logging
@@ -43,6 +45,7 @@ from .providers import (
     ai_generate_stream,
     get_available_providers,
 )
+from .token_tracker import track_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
@@ -133,26 +136,40 @@ async def _build_context_data() -> str:
     return "\n".join(parts) if parts else ""
 
 
+async def _ensure_user_renamed_column():
+    """Add user_renamed column to chat_sessions if it doesn't exist yet."""
+    async with get_db() as db:
+        try:
+            await db.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN user_renamed INTEGER NOT NULL DEFAULT 0"
+            )
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest):
     """Chat with AI — streaming SSE response with provider selection and context mode."""
+    await _ensure_user_renamed_column()
     session_id = req.session_id or str(uuid.uuid4())
 
     # Ensure session exists
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT id, title FROM chat_sessions WHERE id = ?", (session_id,)
+            "SELECT id, title, user_renamed FROM chat_sessions WHERE id = ?", (session_id,)
         )
         existing = await cursor.fetchone()
         if not existing:
             title = req.message[:50] + ("..." if len(req.message) > 50 else "")
             await db.execute(
-                "INSERT INTO chat_sessions (id, title) VALUES (?, ?)",
+                "INSERT INTO chat_sessions (id, title, user_renamed) VALUES (?, ?, 0)",
                 (session_id, title),
             )
             await db.commit()
-        elif existing["title"] == "Chat nou":
+        elif existing["title"] == "Chat nou" and not existing["user_renamed"]:
             # Feature 1: Auto-update title from first real message
+            # Skip if user has manually renamed the session (user_renamed=1)
             auto_title = req.message[:50] + ("..." if len(req.message) > 50 else "")
             await db.execute(
                 "UPDATE chat_sessions SET title = ? WHERE id = ?",
@@ -191,9 +208,16 @@ async def chat(req: ChatRequest):
                 + "\n\nPoți folosi aceste date pentru a oferi răspunsuri relevante."
             )
 
+    # R4-15: Track truncation info for document context
+    truncation_info = None
     prompt_parts = []
     if req.document_context:
-        prompt_parts.append(f"Context document:\n{_truncate_text(req.document_context)}\n\n---\n")
+        original_chars = len(req.document_context)
+        truncated_context = _truncate_text(req.document_context)
+        used_chars = min(original_chars, 60000)
+        if original_chars > 60000:
+            truncation_info = {"truncated": True, "original_chars": original_chars, "used_chars": used_chars}
+        prompt_parts.append(f"Context document:\n{truncated_context}\n\n---\n")
 
     for msg in history[:-1]:  # exclude last (current user message)
         role_label = "Utilizator" if msg["role"] == "user" else "Asistent"
@@ -209,10 +233,17 @@ async def chat(req: ChatRequest):
         provider_name = ""
         model_name = ""
 
+        # R4-15: Emit truncation warning if applicable
+        if truncation_info:
+            yield f"data: {json.dumps({'type': 'truncation_warning', **truncation_info})}\n\n"
+
         async for data in ai_generate_stream(full_prompt, system_prompt, preferred_provider):
             if "error" in data:
                 yield f"data: {json.dumps(data)}\n\n"
                 return
+            # R4-16: Emit provider fallback info
+            if data.get("fallback_from"):
+                yield f"data: {json.dumps({'type': 'provider_info', 'provider': data.get('provider', ''), 'fallback_from': data['fallback_from']})}\n\n"
             if "chunk" in data:
                 full_response.append(data["chunk"])
                 provider_name = data.get("provider", "")
@@ -236,10 +267,14 @@ async def chat(req: ChatRequest):
                 except Exception as e:
                     logger.error(f"Failed to save assistant message: {e}")
 
+                # Track token usage (approximate from char count, same as non-streaming endpoints)
+                total_chars = len(full_prompt) + len(assistant_text)
+                await track_usage(provider_name, chars=total_chars)
+
                 await log_activity(
                     action="ai.chat",
                     summary=f"Chat: {req.message[:80]}",
-                    details={"session_id": session_id, "provider": provider_name, "model": model_name, "response_len": len(assistant_text)},
+                    details={"session_id": session_id, "provider": provider_name, "model": model_name, "response_len": len(assistant_text), "chars_tracked": total_chars},
                 )
                 yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'provider': provider_name, 'model': model_name})}\n\n"
 
@@ -318,6 +353,36 @@ async def delete_session(session_id: str):
         await db.commit()
     await log_activity(action="ai.delete_session", summary=f"Sesiune chat ștearsă")
     return {"status": "deleted"}
+
+
+class RenameSessionRequest(BaseModel):
+    title: str
+
+
+@router.put("/chat/sessions/{session_id}")
+async def rename_session(session_id: str, req: RenameSessionRequest):
+    """Rename a chat session. Sets user_renamed=1 so auto-title never overwrites it."""
+    await _ensure_user_renamed_column()
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(400, "Titlul nu poate fi gol.")
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM chat_sessions WHERE id = ?", (session_id,)
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(404, "Sesiunea nu există")
+        await db.execute(
+            "UPDATE chat_sessions SET title = ?, user_renamed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (title, session_id),
+        )
+        await db.commit()
+    await log_activity(
+        action="ai.rename_session",
+        summary=f"Sesiune redenumita: {title}",
+        details={"session_id": session_id, "title": title},
+    )
+    return {"status": "ok", "session_id": session_id, "title": title}
 
 
 @router.get("/chat/sessions/{session_id}/export")
@@ -692,6 +757,29 @@ async def diff_documents(
 async def list_providers():
     """List available AI providers and their status."""
     return await get_available_providers()
+
+
+@router.get("/providers/{provider_name}/health")
+async def check_provider_health(provider_name: str):
+    """R3-46: Check if a specific AI provider is healthy (key valid, API reachable)."""
+    from .providers import PROVIDER_CLASSES, ENV_KEY_MAP, _get_db_key
+    if provider_name not in PROVIDER_CLASSES:
+        raise HTTPException(404, detail=f"Provider necunoscut: {provider_name}")
+    env_var = ENV_KEY_MAP[provider_name]
+    api_key = os.environ.get(env_var) or await _get_db_key(f"{provider_name}_api_key")
+    if not api_key:
+        return {"provider": provider_name, "healthy": False, "error": "API key neconfigurat"}
+    try:
+        provider = PROVIDER_CLASSES[provider_name](api_key)
+        result = await asyncio.wait_for(
+            provider.generate("Respond with OK", system_prompt="Reply only with the word OK."),
+            timeout=10.0,
+        )
+        return {"provider": provider_name, "healthy": True, "response_length": len(result)}
+    except asyncio.TimeoutError:
+        return {"provider": provider_name, "healthy": False, "error": "Timeout (10s)"}
+    except Exception as e:
+        return {"provider": provider_name, "healthy": False, "error": str(e)[:200]}
 
 
 @router.get("/config")

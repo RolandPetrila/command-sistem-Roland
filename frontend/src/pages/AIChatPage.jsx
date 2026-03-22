@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Send, Paperclip, Bot, User, Loader2, X, Settings2, Database, ChevronDown, Download, Mic, MicOff, FileText } from 'lucide-react';
+import { Plus, Trash2, Send, Paperclip, Bot, User, Loader2, X, Settings2, Database, ChevronDown, Download, Mic, MicOff, FileText, Search, Pencil, Check } from 'lucide-react';
 import api from '../api/client';
 import TokenIndicator from '../components/shared/TokenIndicator';
 
@@ -25,9 +25,23 @@ export default function AIChatPage() {
   // F2: Prompt Templates
   const [templates, setTemplates] = useState([]);
   const [showTemplates, setShowTemplates] = useState(false);
+  // R3-46: Provider health
+  const [providerHealth, setProviderHealth] = useState({});
+  // R3-51: Mobile sidebar
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // R3-41: Session search
+  const [sessionSearch, setSessionSearch] = useState('');
+  // R3-42: Session rename
+  const [renamingSession, setRenamingSession] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  // R4-15: Context truncation warning
+  const [truncationWarning, setTruncationWarning] = useState(null);
+  // R4-16: Provider fallback indicator
+  const [fallbackInfo, setFallbackInfo] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
+  const streamAbortRef = useRef(null);
 
   useEffect(() => {
     loadSessions();
@@ -40,6 +54,7 @@ export default function AIChatPage() {
     return () => {
       clearInterval(interval);
       if (recognitionRef.current) recognitionRef.current.stop();
+      if (streamAbortRef.current) streamAbortRef.current.abort();
     };
   }, [backendOk]);
 
@@ -120,6 +135,26 @@ export default function AIChatPage() {
     setSessions([]);
     setActiveSession(null);
     setMessages([]);
+  };
+
+  // R3-46: Check provider health
+  const checkProviderHealth = async (providerName) => {
+    try {
+      const { data } = await api.get(`/api/ai/providers/${providerName}/health`);
+      setProviderHealth(prev => ({ ...prev, [providerName]: data.healthy !== false }));
+    } catch {
+      setProviderHealth(prev => ({ ...prev, [providerName]: false }));
+    }
+  };
+
+  // R3-42: Rename session
+  const renameSession = async (id) => {
+    if (!renameValue.trim()) { setRenamingSession(null); return; }
+    try {
+      await api.put(`/api/ai/chat/sessions/${id}`, { title: renameValue.trim() });
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, title: renameValue.trim() } : s));
+    } catch { /* toast handles it */ }
+    setRenamingSession(null);
   };
 
   // F2: Load templates
@@ -217,14 +252,23 @@ export default function AIChatPage() {
     setInput('');
     setLoading(true);
 
+    // R4-15/R4-16: Reset per-message metadata
+    setTruncationWarning(null);
+    setFallbackInfo(null);
+
     setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true }]);
+
+    const abortController = new AbortController();
+    // Store on a ref so the useEffect cleanup can cancel an in-flight stream
+    streamAbortRef.current = abortController;
 
     try {
       const baseUrl = window.location.origin;
       const response = await fetch(`${baseUrl}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({
           message: userMsg,
           session_id: activeSession,
@@ -251,6 +295,18 @@ export default function AIChatPage() {
           if (!line.startsWith('data: ')) continue;
           try {
             const data = JSON.parse(line.slice(6));
+
+            // R4-15: Handle truncation warning event
+            if (data.type === 'truncation_warning') {
+              setTruncationWarning(data);
+              continue;
+            }
+
+            // R4-16: Handle provider fallback info event
+            if (data.type === 'provider_info') {
+              setFallbackInfo({ provider: data.provider, fallback_from: data.fallback_from });
+              continue;
+            }
 
             if (data.error) {
               setMessages(prev => {
@@ -289,6 +345,17 @@ export default function AIChatPage() {
                 }
                 return [...updated];
               });
+              // R4-16: Persist fallback info on the last message after done
+              if (fallbackInfo) {
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === 'assistant') {
+                    last.fallbackInfo = fallbackInfo;
+                  }
+                  return [...updated];
+                });
+              }
             }
           } catch { /* skip malformed SSE */ }
         }
@@ -299,16 +366,20 @@ export default function AIChatPage() {
       }
       loadSessions();
     } catch (err) {
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.streaming) {
-          last.content = `⚠️ Eroare conexiune: ${err.message}`;
-          last.streaming = false;
-        }
-        return [...updated];
-      });
+      // AbortError fires when the component unmounts mid-stream — not a real error
+      if (err.name !== 'AbortError') {
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.streaming) {
+            last.content = `⚠️ Eroare conexiune: ${err.message}`;
+            last.streaming = false;
+          }
+          return [...updated];
+        });
+      }
     } finally {
+      streamAbortRef.current = null;
       setLoading(false);
     }
   };
@@ -328,10 +399,15 @@ export default function AIChatPage() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] -m-6">
-      {/* Session sidebar */}
-      <div className="w-64 bg-gray-900 border-r border-gray-700 flex flex-col">
+      {/* R3-51: Mobile hamburger */}
+      <button onClick={() => setSidebarOpen(p => !p)}
+        className="md:hidden fixed top-16 left-2 z-40 p-2 bg-gray-800 rounded-lg border border-gray-700">
+        <Settings2 size={16} />
+      </button>
+      {/* Session sidebar — collapsible on mobile */}
+      <div className={`${sidebarOpen ? 'fixed inset-0 z-30 md:relative md:inset-auto' : 'hidden md:flex'} md:flex w-64 bg-gray-900 border-r border-gray-700 flex-col`}>
         <div className="p-3 border-b border-gray-700 flex gap-2">
-          <button onClick={newSession}
+          <button onClick={() => { newSession(); setSidebarOpen(false); }}
             className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors">
             <Plus size={16} /> Chat Nou
           </button>
@@ -348,12 +424,13 @@ export default function AIChatPage() {
         {showConfig && (
           <div className="p-3 border-b border-gray-700 space-y-2 text-xs">
             <div className="text-gray-400 font-medium mb-1">Provideri AI</div>
-            {['gemini', 'openai', 'groq'].map(p => {
+            {['gemini', 'cerebras', 'groq', 'mistral', 'openai'].map(p => {
               const configured = providers.find(pr => pr.name === p)?.configured;
               const isEditing = editingKey === p;
               return (
                 <div key={p} className="flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${configured ? 'bg-green-500' : 'bg-gray-600'}`} />
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 cursor-pointer ${configured ? (providerHealth[p] === true ? 'bg-green-500' : providerHealth[p] === false ? 'bg-red-500' : 'bg-green-500') : 'bg-gray-600'}`}
+                    onClick={() => configured && checkProviderHealth(p)} title={configured ? 'Click pt health check' : 'Neconfigurat'} />
                   <span className="w-14 capitalize flex-shrink-0">{p}</span>
                   {configured && !isEditing ? (
                     <>
@@ -386,15 +463,39 @@ export default function AIChatPage() {
           </div>
         )}
 
+        {/* R3-41: Session search */}
+        <div className="px-2 py-1.5 border-b border-gray-800">
+          <div className="relative">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input value={sessionSearch} onChange={e => setSessionSearch(e.target.value)}
+              placeholder="Cauta conversatie..."
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-gray-600" />
+          </div>
+        </div>
         <div className="flex-1 overflow-y-auto">
-          {sessions.map(s => (
-            <div key={s.id} onClick={() => loadSession(s.id)}
+          {sessions.filter(s => !sessionSearch || s.title?.toLowerCase().includes(sessionSearch.toLowerCase())).map(s => (
+            <div key={s.id} onClick={() => { if (renamingSession !== s.id) loadSession(s.id); }}
               className={`flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-800 border-b border-gray-800 ${activeSession === s.id ? 'bg-gray-800' : ''}`}>
-              <span className="text-sm truncate flex-1">{s.title}</span>
-              <button onClick={e => deleteSession(s.id, e)}
-                className="p-1 hover:text-red-400 opacity-50 hover:opacity-100">
-                <Trash2 size={14} />
-              </button>
+              {renamingSession === s.id ? (
+                <input value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') renameSession(s.id); if (e.key === 'Escape') setRenamingSession(null); }}
+                  onBlur={() => renameSession(s.id)}
+                  autoFocus className="flex-1 bg-gray-900 border border-gray-600 rounded px-1.5 py-0.5 text-xs mr-1" />
+              ) : (
+                <span className="text-sm truncate flex-1" onDoubleClick={e => { e.stopPropagation(); setRenamingSession(s.id); setRenameValue(s.title || ''); }}>{s.title}</span>
+              )}
+              <div className="flex items-center gap-0.5">
+                {renamingSession !== s.id && (
+                  <button onClick={e => { e.stopPropagation(); setRenamingSession(s.id); setRenameValue(s.title || ''); }}
+                    className="p-1 hover:text-blue-400 opacity-0 group-hover:opacity-100 text-gray-500" title="Redenumeste">
+                    <Pencil size={12} />
+                  </button>
+                )}
+                <button onClick={e => deleteSession(s.id, e)}
+                  className="p-1 hover:text-red-400 opacity-50 hover:opacity-100">
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -423,6 +524,14 @@ export default function AIChatPage() {
             <Download size={16} />
           </button>
         </div>
+
+        {/* R4-15: Truncation warning banner */}
+        {truncationWarning && (
+          <div className="mx-4 mt-2 px-3 py-2 bg-yellow-900/30 border border-yellow-600/40 rounded-lg text-xs text-yellow-300 flex items-center justify-between">
+            <span>Document trunchiat: {truncationWarning.used_chars?.toLocaleString('ro-RO')} din {truncationWarning.original_chars?.toLocaleString('ro-RO')} caractere folosite. Uploadati versiune mai scurta pentru analiza completa.</span>
+            <button onClick={() => setTruncationWarning(null)} className="ml-2 text-yellow-500 hover:text-yellow-300"><X size={14} /></button>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -464,6 +573,12 @@ export default function AIChatPage() {
                 {msg.provider && !msg.streaming && (
                   <div className="text-xs text-gray-400 mt-1 text-right">
                     {msg.provider}{msg.model ? ` (${msg.model})` : ''}
+                  </div>
+                )}
+                {/* R4-16: Provider fallback badge */}
+                {msg.fallbackInfo && (
+                  <div className="text-xs text-yellow-400/80 mt-1 bg-yellow-900/20 rounded px-2 py-0.5 inline-block">
+                    Raspuns de la: {msg.fallbackInfo.provider} (fallback de la {msg.fallbackInfo.fallback_from})
                   </div>
                 )}
               </div>
