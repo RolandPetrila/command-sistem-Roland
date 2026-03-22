@@ -241,6 +241,7 @@ async def timeline_export(
 @router.get("/export/full")
 async def export_full(
     tables: str = Query("", description="Tabele selectate (comma-separated), gol = toate"),
+    limit: int = Query(10_000, ge=1, le=100_000, description="Limita randuri per tabela (default 10000)"),
 ):
     """Export complet al tuturor datelor ca JSON — clienti, facturi, activitate, jurnal, bookmark-uri."""
     export_data: dict[str, Any] = {
@@ -273,7 +274,9 @@ async def export_full(
         async with get_db() as db:
             for table in tables_to_export:
                 try:
-                    cursor = await db.execute(f"SELECT * FROM {table}")
+                    cursor = await db.execute(
+                        f"SELECT * FROM {table} LIMIT ?", (limit,)
+                    )
                     rows = await cursor.fetchall()
                     export_data["tables"][table] = [dict(row) for row in rows]
                 except Exception:

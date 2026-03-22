@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import shutil
+import time as _time_mod
 import uuid
 import zipfile
 from pathlib import Path
@@ -39,6 +40,32 @@ router = APIRouter(prefix="/api/converter", tags=["converter"])
 
 _TMP = Path(gettempdir()) / "roland_converter"
 _TMP.mkdir(exist_ok=True)
+
+# Stale temp file cleanup interval (seconds)
+_STALE_AGE = 600  # 10 minutes
+_last_stale_cleanup = 0.0
+
+
+def _cleanup_stale_tmp():
+    """Remove temp files older than _STALE_AGE seconds (safety net for error paths)."""
+    global _last_stale_cleanup
+    now = _time_mod.time()
+    # Run at most once per 60 seconds
+    if now - _last_stale_cleanup < 60:
+        return
+    _last_stale_cleanup = now
+    try:
+        for p in _TMP.iterdir():
+            try:
+                if p.is_file() and (now - p.stat().st_mtime) > _STALE_AGE:
+                    p.unlink()
+                elif p.is_dir() and (now - p.stat().st_mtime) > _STALE_AGE:
+                    shutil.rmtree(p, ignore_errors=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 # ---------- File size limit ----------
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -122,6 +149,7 @@ _is_image = lambda fn, ct: _check_type(fn, ct,
 
 @router.post("/pdf-to-docx")
 async def pdf_to_docx(file: UploadFile = File(...)):
+    _cleanup_stale_tmp()
     logger.info("PDF->DOCX request: filename=%r, content_type=%r", file.filename, file.content_type)
 
     if not _is_pdf(file.filename, file.content_type):
@@ -162,6 +190,7 @@ async def pdf_to_docx(file: UploadFile = File(...)):
 
 @router.post("/docx-to-pdf")
 async def docx_to_pdf(file: UploadFile = File(...)):
+    _cleanup_stale_tmp()
     logger.info("DOCX->PDF request: filename=%r, content_type=%r, size_hint=%s",
                 file.filename, file.content_type, file.size)
 
@@ -337,6 +366,7 @@ async def docx_to_pdf(file: UploadFile = File(...)):
 
 @router.post("/merge-pdfs")
 async def merge_pdfs(files: list[UploadFile] = File(...)):
+    _cleanup_stale_tmp()
     logger.info("Merge PDFs: %d files", len(files))
     if len(files) < 2:
         raise HTTPException(400, "Trebuie minim 2 fisiere PDF")
@@ -389,6 +419,7 @@ async def split_pdf(
     file: UploadFile = File(...),
     pages: str = Form("all"),
 ):
+    _cleanup_stale_tmp()
     logger.info("Split PDF: filename=%r, content_type=%r", file.filename, file.content_type)
     if not _is_pdf(file.filename, file.content_type):
         raise HTTPException(400, f"Fisierul trebuie sa fie PDF. Primit: {file.filename!r} ({file.content_type})")
@@ -642,6 +673,9 @@ async def compress_images(
 
 # ---------- Resize Images ----------
 
+_MAX_RESIZE_DIM = 4096  # max width/height in pixels to prevent DOS
+
+
 @router.post("/resize-images")
 async def resize_images(
     files: list[UploadFile] = File(...),
@@ -649,6 +683,12 @@ async def resize_images(
     height: int = Form(0),
     keep_ratio: bool = Form(True),
 ):
+    # Cap dimensions at _MAX_RESIZE_DIM to prevent memory DOS
+    if width > _MAX_RESIZE_DIM:
+        width = _MAX_RESIZE_DIM
+    if height > _MAX_RESIZE_DIM:
+        height = _MAX_RESIZE_DIM
+
     file_data = []
     for f in files:
         data = await f.read()

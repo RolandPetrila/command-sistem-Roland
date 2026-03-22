@@ -14,10 +14,12 @@ Chei necesare în ai_config:
 
 from __future__ import annotations
 
+import asyncio
 import email
 import imaplib
 import json
 import logging
+import re
 import smtplib
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
@@ -31,7 +33,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
@@ -93,6 +95,32 @@ def _extract_email_body(msg: email.message.Message) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def _validate_email_format(addr: str) -> str:
+    """Validate a single email address format."""
+    addr = addr.strip()
+    if not _EMAIL_RE.match(addr):
+        raise ValueError(f"Adresa email invalidă: {addr}")
+    return addr
+
+
+def _validate_iso8601(value: str, field_name: str) -> str:
+    """Validate that a string is a parseable ISO 8601 datetime."""
+    try:
+        datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"Câmpul '{field_name}' nu este o dată ISO 8601 validă: {value}"
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
 # Pydantic Models
 # ---------------------------------------------------------------------------
 
@@ -104,6 +132,16 @@ class EmailSendRequest(BaseModel):
     cc: list[str] = []
     bcc: list[str] = []
 
+    @field_validator("to")
+    @classmethod
+    def validate_to(cls, v: str) -> str:
+        return _validate_email_format(v)
+
+    @field_validator("cc", "bcc")
+    @classmethod
+    def validate_cc_bcc(cls, v: list[str]) -> list[str]:
+        return [_validate_email_format(addr) for addr in v]
+
 
 class CalendarEventCreate(BaseModel):
     summary: str
@@ -111,12 +149,56 @@ class CalendarEventCreate(BaseModel):
     end: str    # ISO 8601 datetime
     description: str = ""
 
+    @field_validator("start")
+    @classmethod
+    def validate_start(cls, v: str) -> str:
+        return _validate_iso8601(v, "start")
+
+    @field_validator("end")
+    @classmethod
+    def validate_end(cls, v: str, info) -> str:
+        v = _validate_iso8601(v, "end")
+        start_val = info.data.get("start")
+        if start_val:
+            try:
+                if datetime.fromisoformat(v) < datetime.fromisoformat(start_val):
+                    raise ValueError(
+                        "Data de final (end) nu poate fi înainte de data de start."
+                    )
+            except (ValueError, TypeError):
+                pass  # start already failed validation; skip comparison
+        return v
+
 
 class CalendarEventUpdate(BaseModel):
     summary: str | None = None
     start: str | None = None   # ISO 8601 datetime
     end: str | None = None     # ISO 8601 datetime
     description: str | None = None
+
+    @field_validator("start")
+    @classmethod
+    def validate_start(cls, v: str | None) -> str | None:
+        if v is not None:
+            return _validate_iso8601(v, "start")
+        return v
+
+    @field_validator("end")
+    @classmethod
+    def validate_end(cls, v: str | None, info) -> str | None:
+        if v is None:
+            return v
+        v = _validate_iso8601(v, "end")
+        start_val = info.data.get("start")
+        if start_val:
+            try:
+                if datetime.fromisoformat(v) < datetime.fromisoformat(start_val):
+                    raise ValueError(
+                        "Data de final (end) nu poate fi înainte de data de start."
+                    )
+            except (ValueError, TypeError):
+                pass
+        return v
 
 
 class GitHubIssueCreate(BaseModel):
@@ -154,40 +236,51 @@ async def gmail_list_messages(
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat. Adaugă gmail_email și gmail_app_password în Setări AI.")
 
+    def _imap_list(addr: str, pwd: str, search_q: str, limit: int) -> list[dict]:
+        """Blocking IMAP fetch — runs in thread via asyncio.to_thread."""
+        imap = None
+        try:
+            imap = imaplib.IMAP4_SSL("imap.gmail.com")
+            imap.login(addr, pwd)
+            imap.select("INBOX", readonly=True)
+
+            search_criteria = f'({search_q})' if search_q else "ALL"
+            status, data = imap.search(None, search_criteria)
+            if status != "OK":
+                return []
+
+            msg_ids = data[0].split()
+            msg_ids = list(reversed(msg_ids))[:limit]
+
+            messages = []
+            for msg_id in msg_ids:
+                status, msg_data = imap.fetch(msg_id, "(RFC822.SIZE BODY[HEADER.FIELDS (FROM SUBJECT DATE)])")
+                if status != "OK" or not msg_data or not msg_data[0]:
+                    continue
+
+                raw_header = msg_data[0][1] if isinstance(msg_data[0], tuple) else b""
+                if isinstance(raw_header, bytes):
+                    header_msg = email.message_from_bytes(raw_header)
+                else:
+                    continue
+
+                messages.append({
+                    "id": msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
+                    "from": _decode_mime_header(header_msg.get("From")),
+                    "subject": _decode_mime_header(header_msg.get("Subject")),
+                    "date": header_msg.get("Date", ""),
+                })
+
+            return messages
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(email_addr, app_password)
-        mail.select("INBOX", readonly=True)
-
-        search_criteria = f'({q})' if q else "ALL"
-        status, data = mail.search(None, search_criteria)
-        if status != "OK":
-            mail.logout()
-            return {"messages": [], "total": 0}
-
-        msg_ids = data[0].split()
-        msg_ids = list(reversed(msg_ids))[:max_results]  # cele mai recente
-
-        messages = []
-        for msg_id in msg_ids:
-            status, msg_data = mail.fetch(msg_id, "(RFC822.SIZE BODY[HEADER.FIELDS (FROM SUBJECT DATE)])")
-            if status != "OK" or not msg_data or not msg_data[0]:
-                continue
-
-            raw_header = msg_data[0][1] if isinstance(msg_data[0], tuple) else b""
-            if isinstance(raw_header, bytes):
-                header_msg = email.message_from_bytes(raw_header)
-            else:
-                continue
-
-            messages.append({
-                "id": msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
-                "from": _decode_mime_header(header_msg.get("From")),
-                "subject": _decode_mime_header(header_msg.get("Subject")),
-                "date": header_msg.get("Date", ""),
-            })
-
-        mail.logout()
+        messages = await asyncio.to_thread(_imap_list, email_addr, app_password, q, max_results)
 
         await log_activity(
             action="integrations.gmail.list",
@@ -212,41 +305,53 @@ async def gmail_read_message(message_id: str):
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat.")
 
+    def _imap_read(addr: str, pwd: str, mid: str) -> dict | None:
+        """Blocking IMAP read — runs in thread via asyncio.to_thread."""
+        imap = None
+        try:
+            imap = imaplib.IMAP4_SSL("imap.gmail.com")
+            imap.login(addr, pwd)
+            imap.select("INBOX", readonly=True)
+
+            status, msg_data = imap.fetch(mid.encode(), "(RFC822)")
+            if status != "OK" or not msg_data or not msg_data[0]:
+                return None
+
+            raw_email = msg_data[0][1]
+            msg = email.message_from_bytes(raw_email)
+
+            # Colectează atașamentele (doar metadata)
+            attachments = []
+            if msg.is_multipart():
+                for part in msg.walk():
+                    filename = part.get_filename()
+                    if filename:
+                        attachments.append({
+                            "filename": _decode_mime_header(filename),
+                            "content_type": part.get_content_type(),
+                            "size": len(part.get_payload(decode=True) or b""),
+                        })
+
+            return {
+                "id": mid,
+                "from": _decode_mime_header(msg.get("From")),
+                "to": _decode_mime_header(msg.get("To")),
+                "subject": _decode_mime_header(msg.get("Subject")),
+                "date": msg.get("Date", ""),
+                "body": _extract_email_body(msg),
+                "attachments": attachments,
+            }
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(email_addr, app_password)
-        mail.select("INBOX", readonly=True)
-
-        status, msg_data = mail.fetch(message_id.encode(), "(RFC822)")
-        if status != "OK" or not msg_data or not msg_data[0]:
-            mail.logout()
+        result = await asyncio.to_thread(_imap_read, email_addr, app_password, message_id)
+        if result is None:
             raise HTTPException(404, "Email negăsit.")
-
-        raw_email = msg_data[0][1]
-        msg = email.message_from_bytes(raw_email)
-        mail.logout()
-
-        # Colectează atașamentele (doar metadata)
-        attachments = []
-        if msg.is_multipart():
-            for part in msg.walk():
-                filename = part.get_filename()
-                if filename:
-                    attachments.append({
-                        "filename": _decode_mime_header(filename),
-                        "content_type": part.get_content_type(),
-                        "size": len(part.get_payload(decode=True) or b""),
-                    })
-
-        result = {
-            "id": message_id,
-            "from": _decode_mime_header(msg.get("From")),
-            "to": _decode_mime_header(msg.get("To")),
-            "subject": _decode_mime_header(msg.get("Subject")),
-            "date": msg.get("Date", ""),
-            "body": _extract_email_body(msg),
-            "attachments": attachments,
-        }
 
         await log_activity(
             action="integrations.gmail.read",
@@ -270,27 +375,39 @@ async def gmail_send(req: EmailSendRequest):
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat. Adaugă gmail_email și gmail_app_password în Setări AI.")
 
+    def _smtp_send(addr: str, pwd: str, request: EmailSendRequest) -> None:
+        """Blocking SMTP send — runs in thread via asyncio.to_thread."""
+        smtp_conn = None
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = addr
+            msg["To"] = request.to
+            msg["Subject"] = request.subject
+
+            # CC apare in header-ul mesajului
+            if request.cc:
+                msg["Cc"] = ", ".join(request.cc)
+
+            content_type = "html" if request.html else "plain"
+            msg.attach(MIMEText(request.body, content_type, "utf-8"))
+
+            # Destinatarii SMTP = To + CC + BCC (BCC NU apare in header)
+            all_recipients = [request.to]
+            all_recipients.extend(request.cc)
+            all_recipients.extend(request.bcc)
+
+            smtp_conn = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+            smtp_conn.login(addr, pwd)
+            smtp_conn.sendmail(addr, all_recipients, msg.as_string())
+        finally:
+            if smtp_conn:
+                try:
+                    smtp_conn.quit()
+                except Exception:
+                    pass
+
     try:
-        msg = MIMEMultipart()
-        msg["From"] = email_addr
-        msg["To"] = req.to
-        msg["Subject"] = req.subject
-
-        # CC apare in header-ul mesajului
-        if req.cc:
-            msg["Cc"] = ", ".join(req.cc)
-
-        content_type = "html" if req.html else "plain"
-        msg.attach(MIMEText(req.body, content_type, "utf-8"))
-
-        # Destinatarii SMTP = To + CC + BCC (BCC NU apare in header)
-        all_recipients = [req.to]
-        all_recipients.extend(req.cc)
-        all_recipients.extend(req.bcc)
-
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(email_addr, app_password)
-            smtp.sendmail(email_addr, all_recipients, msg.as_string())
+        await asyncio.to_thread(_smtp_send, email_addr, app_password, req)
 
         cc_info = f", CC: {', '.join(req.cc)}" if req.cc else ""
         bcc_info = f", BCC: {len(req.bcc)} dest." if req.bcc else ""
@@ -319,44 +436,56 @@ async def gmail_download_attachment(
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat.")
 
+    def _imap_attachment(addr: str, pwd: str, mid: str, att_idx: int) -> tuple[str, str, bytes]:
+        """Blocking IMAP attachment fetch — runs in thread via asyncio.to_thread.
+        Returns (filename, content_type, payload) or raises."""
+        imap = None
+        try:
+            imap = imaplib.IMAP4_SSL("imap.gmail.com")
+            imap.login(addr, pwd)
+            imap.select("INBOX", readonly=True)
+
+            status, msg_data = imap.fetch(mid.encode(), "(RFC822)")
+            if status != "OK" or not msg_data or not msg_data[0]:
+                raise ValueError("EMAIL_NOT_FOUND")
+
+            raw_email = msg_data[0][1]
+            msg = email.message_from_bytes(raw_email)
+
+            # Colectează toate atașamentele
+            attachments = []
+            if msg.is_multipart():
+                for part in msg.walk():
+                    fn = part.get_filename()
+                    if fn:
+                        attachments.append(part)
+
+            if not attachments:
+                raise ValueError("NO_ATTACHMENTS")
+
+            if att_idx >= len(attachments):
+                raise ValueError(f"INDEX_OUT_OF_RANGE:{len(attachments)}")
+
+            target_part = attachments[att_idx]
+            filename = _decode_mime_header(target_part.get_filename() or "attachment")
+            content_type = target_part.get_content_type() or "application/octet-stream"
+            payload = target_part.get_payload(decode=True)
+
+            if not payload:
+                raise ValueError("EMPTY_ATTACHMENT")
+
+            return filename, content_type, payload
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(email_addr, app_password)
-        mail.select("INBOX", readonly=True)
-
-        status, msg_data = mail.fetch(message_id.encode(), "(RFC822)")
-        if status != "OK" or not msg_data or not msg_data[0]:
-            mail.logout()
-            raise HTTPException(404, "Email negăsit.")
-
-        raw_email = msg_data[0][1]
-        msg = email.message_from_bytes(raw_email)
-        mail.logout()
-
-        # Colectează toate atașamentele
-        attachments = []
-        if msg.is_multipart():
-            for part in msg.walk():
-                filename = part.get_filename()
-                if filename:
-                    attachments.append(part)
-
-        if not attachments:
-            raise HTTPException(404, "Emailul nu conține atașamente.")
-
-        if attachment_index >= len(attachments):
-            raise HTTPException(
-                404,
-                f"Index atașament invalid. Emailul are {len(attachments)} atașament(e) (index 0-{len(attachments) - 1}).",
-            )
-
-        target_part = attachments[attachment_index]
-        filename = _decode_mime_header(target_part.get_filename() or "attachment")
-        content_type = target_part.get_content_type() or "application/octet-stream"
-        payload = target_part.get_payload(decode=True)
-
-        if not payload:
-            raise HTTPException(404, "Atașamentul este gol.")
+        filename, content_type, payload = await asyncio.to_thread(
+            _imap_attachment, email_addr, app_password, message_id, attachment_index
+        )
 
         await log_activity(
             action="integrations.gmail.attachment",
@@ -369,6 +498,18 @@ async def gmail_download_attachment(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    except ValueError as exc:
+        err = str(exc)
+        if err == "EMAIL_NOT_FOUND":
+            raise HTTPException(404, "Email negăsit.")
+        elif err == "NO_ATTACHMENTS":
+            raise HTTPException(404, "Emailul nu conține atașamente.")
+        elif err.startswith("INDEX_OUT_OF_RANGE:"):
+            count = err.split(":")[1]
+            raise HTTPException(404, f"Index atașament invalid. Emailul are {count} atașament(e).")
+        elif err == "EMPTY_ATTACHMENT":
+            raise HTTPException(404, "Atașamentul este gol.")
+        raise HTTPException(500, f"Eroare descărcare atașament: {exc}")
     except HTTPException:
         raise
     except imaplib.IMAP4.error as exc:
@@ -453,7 +594,8 @@ async def drive_list_files(
 
     q_parts = []
     if query:
-        q_parts.append(f"name contains '{query}'")
+        safe_query = query.replace("\\", "\\\\").replace("'", "\\'")
+        q_parts.append(f"name contains '{safe_query}'")
     if folder_id:
         q_parts.append(f"'{folder_id}' in parents")
     q_parts.append("trashed = false")

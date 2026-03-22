@@ -356,6 +356,25 @@ async def move_item(req: MoveRequest):
 
 # ---------- Delete ----------
 
+async def _cascade_delete_db_entries(file_path: str) -> None:
+    """Remove orphaned DB entries (tags, favorites, FTS) for a deleted file path."""
+    async with get_db() as db:
+        await db.execute("DELETE FROM file_tags WHERE file_path = ?", (file_path,))
+        await db.execute("DELETE FROM file_favorites WHERE file_path = ?", (file_path,))
+        await db.execute("DELETE FROM file_index WHERE file_path = ?", (file_path,))
+        await db.commit()
+
+
+async def _cascade_delete_dir_entries(dir_path: str) -> None:
+    """Remove orphaned DB entries for all files under a deleted directory."""
+    prefix = dir_path.rstrip("/") + "/"
+    async with get_db() as db:
+        await db.execute("DELETE FROM file_tags WHERE file_path LIKE ?", (prefix + "%",))
+        await db.execute("DELETE FROM file_favorites WHERE file_path LIKE ?", (prefix + "%",))
+        await db.execute("DELETE FROM file_index WHERE file_path LIKE ?", (prefix + "%",))
+        await db.commit()
+
+
 @router.delete("/delete")
 async def delete_item(path: str = Query(...)):
     target = _resolve(path)
@@ -367,10 +386,20 @@ async def delete_item(path: str = Query(...)):
         raise HTTPException(403, "Nu se poate sterge directorul radacina")
 
     name = target.name
-    if target.is_dir():
+    is_dir = target.is_dir()
+    if is_dir:
         shutil.rmtree(target)
     else:
         target.unlink()
+
+    # Cascade: clean up orphaned DB entries (tags, favorites, FTS)
+    try:
+        if is_dir:
+            await _cascade_delete_dir_entries(path)
+        else:
+            await _cascade_delete_db_entries(path)
+    except Exception as exc:
+        logger.warning("Cascade delete DB cleanup failed for %s: %s", path, exc)
 
     await log_activity(action="filemanager.delete", summary=f"Delete: {name}",
                        details={"path": path, "name": name})
@@ -412,10 +441,19 @@ async def batch_operations(req: BatchRequest):
                     errors.append({"path": p, "error": "Nu se poate sterge directorul radacina"})
                     continue
                 name = target.name
-                if target.is_dir():
+                is_dir = target.is_dir()
+                if is_dir:
                     shutil.rmtree(target)
                 else:
                     target.unlink()
+                # Cascade: clean up orphaned DB entries
+                try:
+                    if is_dir:
+                        await _cascade_delete_dir_entries(p)
+                    else:
+                        await _cascade_delete_db_entries(p)
+                except Exception:
+                    pass  # best-effort cleanup
                 success.append({"path": p, "name": name})
             except Exception as e:
                 errors.append({"path": p, "error": str(e)})

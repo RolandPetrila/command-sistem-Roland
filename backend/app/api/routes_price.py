@@ -18,7 +18,9 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.core.activity_log import log_activity
 from app.core.analyzer import extract_features
+from app.core.calibration_cache import load_calibration_data, invalidate_calibration_cache
 from app.core.pricing.ensemble import calculate_ensemble_price
+from app.core.pricing.similarity import _reference_cache as similarity_reference_cache
 from app.core.validation import validate_price
 from app.core.self_learning import get_all_references, add_validated_price as sl_add_validated_price
 from app.db.database import get_db, get_setting
@@ -50,7 +52,9 @@ class CalculateRequest(BaseModel):
     file_path: str | None = Field(None, description="Calea directă către fișier")
     invoice_percent: float | None = Field(
         None,
-        description="Procentul de facturare (implicit din setări)",
+        gt=0,
+        le=100,
+        description="Procentul de facturare (implicit din setări, 0-100%)",
     )
     source_lang: str | None = Field(
         None,
@@ -113,7 +117,7 @@ async def calculate_price(request: CalculateRequest):
     })
 
     try:
-        features = extract_features(str(file_path))
+        features = await asyncio.to_thread(extract_features, str(file_path))
     except Exception as exc:
         raise HTTPException(
             status_code=422,
@@ -283,6 +287,11 @@ async def validate_price_endpoint(request: ValidatePriceRequest):
         original_estimate=original_estimate,
     )
 
+    # R2-6: Invalidate caches so the newly learned price takes effect immediately
+    similarity_reference_cache.clear()
+    invalidate_calibration_cache()
+    logger.info("Reference + calibration caches invalidated after validate_price.")
+
     await log_activity(
         action="validate_price",
         summary=f"{upload['filename']} → validat la {request.validated_price} RON (estimare: {original_estimate})",
@@ -307,6 +316,47 @@ async def validate_price_endpoint(request: ValidatePriceRequest):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_ALLOWED_DIRS: list[Path] = [
+    settings.uploads_dir.resolve(),
+    settings.data_dir.resolve(),
+    settings.reference_dir.resolve(),
+]
+
+_MAX_FILE_SIZE_BYTES = settings.max_upload_size_mb * 1024 * 1024  # R2-7: default 50 MB
+
+
+def _validate_path_traversal(path: Path) -> None:
+    """R2-1: Ensure resolved path is inside an allowed directory."""
+    resolved = path.resolve()
+    for allowed in _ALLOWED_DIRS:
+        try:
+            resolved.relative_to(allowed)
+            return
+        except ValueError:
+            continue
+    raise HTTPException(
+        status_code=403,
+        detail="Acces interzis: calea fișierului este în afara directoarelor permise.",
+    )
+
+
+def _validate_file_size(path: Path) -> None:
+    """R2-7: Reject files larger than max_upload_size_mb before processing."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return  # file gone — will be caught later
+    if size > _MAX_FILE_SIZE_BYTES:
+        size_mb = round(size / (1024 * 1024), 1)
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Fișierul ({size_mb} MB) depășește limita maximă "
+                f"de {settings.max_upload_size_mb} MB."
+            ),
+        )
+
 
 async def _resolve_file(
     request: CalculateRequest,
@@ -337,15 +387,18 @@ async def _resolve_file(
                 status_code=404,
                 detail=f"Fișierul '{row['filename']}' nu mai există pe disc.",
             )
+        _validate_file_size(path)  # R2-7
         return path, row["id"], row["filename"]
 
     if request.file_path:
         path = Path(request.file_path)
+        _validate_path_traversal(path)  # R2-1
         if not path.exists():
             raise HTTPException(
                 status_code=404,
                 detail=f"Fișierul nu a fost găsit: {request.file_path}",
             )
+        _validate_file_size(path)  # R2-7
         return path, None, path.name
 
     raise HTTPException(
@@ -362,26 +415,9 @@ def _load_reference_data() -> list[dict[str, Any]]:
         return []
 
 
-_calibration_cache: dict = {"data": None, "mtime": 0.0}
-
-
 def _load_calibration_data() -> dict[str, Any] | None:
-    """Încarcă datele de calibrare din fișierul JSON, dacă există. Cached until file changes."""
-    cal_file = settings.calibration_file
-    if not cal_file.exists():
-        return None
-    try:
-        current_mtime = cal_file.stat().st_mtime
-        if _calibration_cache["data"] is not None and current_mtime == _calibration_cache["mtime"]:
-            return _calibration_cache["data"]
-        with open(cal_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        result = data.get("calibration", data)
-        _calibration_cache["data"] = result
-        _calibration_cache["mtime"] = current_mtime
-        return result
-    except (json.JSONDecodeError, OSError):
-        return None
+    """Shared calibration loader — delegates to calibration_cache module."""
+    return load_calibration_data()
 
 
 async def _get_invoice_percent() -> float:

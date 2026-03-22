@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
@@ -35,15 +35,15 @@ router = APIRouter(prefix="/api/reports", tags=["Reports — Journal"])
 # ---------------------------------------------------------------------------
 
 class JournalEntryCreate(BaseModel):
-    title: str
-    content: str = ""
+    title: str = Field(..., max_length=500)
+    content: str = Field("", max_length=100_000)
     mood: str = "neutral"
     tags: list[str] = []
 
 
 class JournalEntryUpdate(BaseModel):
-    title: str | None = None
-    content: str | None = None
+    title: str | None = Field(None, max_length=500)
+    content: str | None = Field(None, max_length=100_000)
     mood: str | None = None
     tags: list[str] | None = None
 
@@ -55,6 +55,13 @@ class BookmarkCreate(BaseModel):
     description: str = ""
     tags: list[str] = []
 
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if v and not v.startswith(("http://", "https://")):
+            raise ValueError("URL trebuie sa inceapa cu http:// sau https://")
+        return v
+
 
 class BookmarkUpdate(BaseModel):
     title: str | None = None
@@ -62,6 +69,13 @@ class BookmarkUpdate(BaseModel):
     category: str | None = None
     description: str | None = None
     tags: list[str] | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str | None) -> str | None:
+        if v is not None and v != "" and not v.startswith(("http://", "https://")):
+            raise ValueError("URL trebuie sa inceapa cu http:// sau https://")
+        return v
 
 
 # ===========================================================================
@@ -89,8 +103,10 @@ async def journal_list(
         conditions.append("mood = ?")
         params.append(mood)
     if tag:
-        conditions.append("tags LIKE ?")
-        params.append(f"%{tag}%")
+        conditions.append(
+            "EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)"
+        )
+        params.append(tag)
 
     where_clause = ""
     if conditions:
@@ -274,8 +290,10 @@ async def bookmarks_list(
                 conditions.append("category = ?")
                 params.append(category)
             if tags:
-                conditions.append("tags LIKE ?")
-                params.append(f"%{tags}%")
+                conditions.append(
+                    "EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)"
+                )
+                params.append(tags)
 
             where_clause = ""
             if conditions:

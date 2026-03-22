@@ -335,6 +335,21 @@ async def _cron_scheduler_loop():
                             "Cron task esuat: #%d '%s' - %s",
                             task["id"], task["name"], exc,
                         )
+                        # Log error to activity_log for visibility in diagnostics
+                        try:
+                            await log_activity(
+                                action="scheduler.error",
+                                summary=f"Cron task esuat: #{task['id']} '{task['name']}' — {task['action_type']}",
+                                details={
+                                    "task_id": task["id"],
+                                    "task_name": task["name"],
+                                    "action_type": task["action_type"],
+                                    "error": str(exc)[:500],
+                                    "run_id": run_id,
+                                },
+                            )
+                        except Exception:
+                            pass  # Don't let logging failure break the scheduler
 
                 except Exception as exc:
                     logger.warning("Eroare procesare cron task #%d: %s", task.get("id", 0), exc)
@@ -370,11 +385,32 @@ def stop_cron_scheduler():
 
 
 # ---------------------------------------------------------------------------
-# Helper: create downtime notification
+# Helper: create downtime / recovery notification with cooldown
 # ---------------------------------------------------------------------------
 
-async def _create_downtime_notification(monitor_name: str, url: str, error: str | None):
-    """Insert a notification when a monitor transitions to down state."""
+# Track last DOWN notification time per monitor_id to enforce 30-min cooldown
+_downtime_cooldowns: dict[int, float] = {}
+_DOWNTIME_COOLDOWN_SECS = 30 * 60  # 30 minutes
+
+
+async def _create_downtime_notification(
+    monitor_name: str, url: str, error: str | None, monitor_id: int | None = None
+):
+    """Insert a notification when a monitor transitions to down state.
+
+    Enforces a 30-minute cooldown per monitor: won't send another DOWN
+    notification for the same monitor within that window.
+    """
+    # Cooldown check
+    if monitor_id is not None:
+        last_notified = _downtime_cooldowns.get(monitor_id, 0)
+        if (time.time() - last_notified) < _DOWNTIME_COOLDOWN_SECS:
+            logger.debug(
+                "Cooldown activ pentru monitor %d, skip notificare DOWN", monitor_id
+            )
+            return
+        _downtime_cooldowns[monitor_id] = time.time()
+
     try:
         msg = f"Monitorul '{monitor_name}' ({url}) este DOWN."
         if error:
@@ -389,6 +425,22 @@ async def _create_downtime_notification(monitor_name: str, url: str, error: str 
         logger.info("Notificare downtime creata pentru: %s", monitor_name)
     except Exception as exc:
         logger.warning("Eroare creare notificare downtime: %s", exc)
+
+
+async def _create_recovery_notification(monitor_name: str, url: str):
+    """Insert a notification when a monitor recovers (FAIL -> OK transition)."""
+    try:
+        msg = f"Monitorul '{monitor_name}' ({url}) este din nou UP."
+        async with get_db() as db:
+            await db.execute(
+                """INSERT INTO notifications (title, message, type, source, link)
+                   VALUES (?, ?, 'success', 'uptime_monitor', NULL)""",
+                (f"Recovery: {monitor_name}", msg),
+            )
+            await db.commit()
+        logger.info("Notificare recovery creata pentru: %s", monitor_name)
+    except Exception as exc:
+        logger.warning("Eroare creare notificare recovery: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -653,6 +705,21 @@ async def run_task_now(task_id: int):
                     (str(exc)[:1000], now, run_id),
                 )
                 await db2.commit()
+            # Log error to activity_log for visibility in diagnostics
+            try:
+                await log_activity(
+                    action="scheduler.error",
+                    summary=f"Task manual esuat: #{task_id} '{task_dict['name']}' — {task_dict['action_type']}",
+                    details={
+                        "task_id": task_id,
+                        "task_name": task_dict["name"],
+                        "action_type": task_dict["action_type"],
+                        "error": str(exc)[:500],
+                        "run_id": run_id,
+                    },
+                )
+            except Exception:
+                pass  # Don't let logging failure break the execution
 
     asyncio.create_task(_execute())
 
@@ -878,14 +945,22 @@ async def _monitor_loop(monitor_id: int, url: str, interval: int):
                 )
                 await db.commit()
 
+                # Fetch monitor name for notifications
+                cursor = await db.execute(
+                    "SELECT name FROM uptime_monitors WHERE id = ?", (monitor_id,)
+                )
+                mon_row = await cursor.fetchone()
+                mon_name = _row_dict(mon_row)["name"] if mon_row else f"Monitor #{monitor_id}"
+
                 # Detect transition OK -> FAIL: create downtime notification
                 if prev_ok and not current_ok:
-                    cursor = await db.execute(
-                        "SELECT name FROM uptime_monitors WHERE id = ?", (monitor_id,)
+                    await _create_downtime_notification(
+                        mon_name, url, result.get("error"), monitor_id=monitor_id
                     )
-                    mon_row = await cursor.fetchone()
-                    mon_name = _row_dict(mon_row)["name"] if mon_row else f"Monitor #{monitor_id}"
-                    await _create_downtime_notification(mon_name, url, result.get("error"))
+
+                # Detect transition FAIL -> OK: create recovery notification
+                if not prev_ok and current_ok:
+                    await _create_recovery_notification(mon_name, url)
 
             prev_ok = current_ok
 

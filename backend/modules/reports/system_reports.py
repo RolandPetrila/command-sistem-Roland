@@ -401,8 +401,13 @@ async def get_exchange_rates():
         rates = {}
         for rate_el in cube.findall("bnr:Rate", _BNR_NS):
             currency = rate_el.get("currency", "")
+            if rate_el.text is None:
+                continue
             multiplier = int(rate_el.get("multiplier", "1"))
-            value = float(rate_el.text)
+            try:
+                value = float(rate_el.text)
+            except (TypeError, ValueError):
+                continue
             rates[currency] = round(value / multiplier, 4)
 
         result = {

@@ -292,6 +292,13 @@ async def get_dashboard_insights():
     """
     cache_key = "dashboard_insights"
 
+    # Proactive TTL cleanup: remove all expired cache entries
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM ai_insights_cache WHERE expires_at <= CURRENT_TIMESTAMP"
+        )
+        await db.commit()
+
     # Check cache
     async with get_db() as db:
         cursor = await db.execute(

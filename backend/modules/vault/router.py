@@ -107,16 +107,30 @@ def _record_attempt(client_ip: str) -> None:
 
 # --- Session management (30 min TTL) ---
 
-_sessions: dict[str, dict] = {}  # token -> {"master_password": str, "expires": float}
+_sessions: dict[str, dict] = {}  # token -> {"pw_hash": str, "pw_enc": bytes, "expires": float}
 _SESSION_TTL = 30 * 60  # 30 minutes in seconds
 
 
+def _hash_session_pw(master_password: str) -> str:
+    """Hash master password for session validation (never store plaintext)."""
+    return hashlib.sha256(master_password.encode()).hexdigest()
+
+
 def _create_session(master_password: str) -> str:
-    """Creează o sesiune nouă și returnează token-ul."""
+    """Creează o sesiune nouă și returnează token-ul.
+
+    Password is stored hashed (for validation) and encrypted with a
+    per-session Fernet key (for crypto operations that need the original).
+    Plaintext is never kept in the session dict.
+    """
     _cleanup_expired_sessions()
     token = str(uuid.uuid4())
+    # Encrypt password with a per-session key so plaintext is not in memory
+    session_key = base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest())
+    pw_enc = Fernet(session_key).encrypt(master_password.encode())
     _sessions[token] = {
-        "master_password": master_password,
+        "pw_hash": _hash_session_pw(master_password),
+        "pw_enc": pw_enc,
         "expires": time.time() + _SESSION_TTL,
     }
     return token
@@ -137,6 +151,7 @@ def _resolve_master_password(
     """Rezolvă master password din header direct sau din session token.
 
     Prioritate: X-Master-Password > X-Vault-Session.
+    Session stores password hashed + encrypted (never plaintext).
     Aruncă HTTPException dacă niciuna nu e validă.
     """
     if x_master_password:
@@ -146,7 +161,18 @@ def _resolve_master_password(
         _cleanup_expired_sessions()
         session = _sessions.get(x_vault_session)
         if session and session["expires"] > time.time():
-            return session["master_password"]
+            # Decrypt password from session using token-derived key
+            session_key = base64.urlsafe_b64encode(
+                hashlib.sha256(x_vault_session.encode()).digest()
+            )
+            try:
+                decrypted = Fernet(session_key).decrypt(session["pw_enc"]).decode()
+            except InvalidToken:
+                raise HTTPException(401, "Sesiune coruptă. Deblochează din nou.")
+            # Verify hash matches as extra safety check
+            if _hash_session_pw(decrypted) != session["pw_hash"]:
+                raise HTTPException(401, "Sesiune invalidă. Deblochează din nou.")
+            return decrypted
         raise HTTPException(401, "Sesiune expirată sau invalidă. Deblochează din nou.")
 
     raise HTTPException(401, "Lipsește X-Master-Password sau X-Vault-Session header.")

@@ -86,6 +86,14 @@ def _stat_max(*args):
     return float(max(args))
 
 
+def _safe_factorial(n):
+    """Factorial with upper bound of 170 (max that fits in float64)."""
+    n_int = int(n)
+    if n_int < 0 or n_int > 170:
+        raise ValueError("factorial: n trebuie sa fie intre 0 si 170 (limita float64)")
+    return math.factorial(n_int)
+
+
 # Functii matematice permise
 _SAFE_FUNCTIONS = {
     "sqrt": math.sqrt,
@@ -103,7 +111,7 @@ _SAFE_FUNCTIONS = {
     "round": round,
     "ceil": math.ceil,
     "floor": math.floor,
-    "factorial": math.factorial,
+    "factorial": _safe_factorial,
     "radians": math.radians,
     "degrees": math.degrees,
     # Functii statistice (Feature #4)
@@ -123,11 +131,18 @@ _SAFE_CONSTANTS = {
 }
 
 
-def _safe_eval_node(node: ast.AST) -> float:
+_MAX_AST_DEPTH = 50  # max recursion depth for AST evaluation
+
+
+def _safe_eval_node(node: ast.AST, _depth: int = 0) -> float:
     """
     Evalueaza recursiv un nod AST cu operatii matematice permise.
     NU foloseste eval() — parseaza manual arborele AST.
+    max_depth=50 previne stack overflow pe expresii adanc imbricate.
     """
+    if _depth > _MAX_AST_DEPTH:
+        raise ValueError(f"Expresie prea complexa (adancime maxima: {_MAX_AST_DEPTH})")
+
     # Numar literal (int sau float)
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return float(node.value)
@@ -137,15 +152,15 @@ def _safe_eval_node(node: ast.AST) -> float:
         op_func = _UNARY_OPS.get(type(node.op))
         if op_func is None:
             raise ValueError(f"Operator unar nepermis: {type(node.op).__name__}")
-        return op_func(_safe_eval_node(node.operand))
+        return op_func(_safe_eval_node(node.operand, _depth + 1))
 
     # Operatie binara: x + y, x * y, etc.
     if isinstance(node, ast.BinOp):
         op_func = _BINARY_OPS.get(type(node.op))
         if op_func is None:
             raise ValueError(f"Operator nepermis: {type(node.op).__name__}")
-        left = _safe_eval_node(node.left)
-        right = _safe_eval_node(node.right)
+        left = _safe_eval_node(node.left, _depth + 1)
+        right = _safe_eval_node(node.right, _depth + 1)
         if isinstance(node.op, ast.Div) and right == 0:
             raise ValueError("Impartire la zero")
         if isinstance(node.op, ast.Pow) and abs(right) > 1000:
@@ -160,7 +175,7 @@ def _safe_eval_node(node: ast.AST) -> float:
         func = _SAFE_FUNCTIONS.get(func_name)
         if func is None:
             raise ValueError(f"Functie necunoscuta: {func_name}")
-        args = [_safe_eval_node(arg) for arg in node.args]
+        args = [_safe_eval_node(arg, _depth + 1) for arg in node.args]
         if not args:
             raise ValueError(f"Functia {func_name} necesita cel putin un argument")
         return float(func(*args))

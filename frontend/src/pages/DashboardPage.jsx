@@ -89,7 +89,7 @@ function ActivityChart({ data, loading: isLoading }) {
     );
   }
 
-  const maxCount = Math.max(1, ...data.map((d) => d.count || 0));
+  const maxCount = Math.max(1, ...data.map((d) => d.count ?? d.total ?? 0));
 
   return (
     <div className="bg-gray-900 rounded-2xl shadow border border-gray-800 p-5">
@@ -102,10 +102,11 @@ function ActivityChart({ data, loading: isLoading }) {
       ) : (
         <div className="flex items-end gap-3 h-48">
           {data.map((item, idx) => {
-            const pct = ((item.count || 0) / maxCount) * 100;
+            const value = item.count ?? item.total ?? 0;
+            const pct = (value / maxCount) * 100;
             return (
               <div key={idx} className="flex-1 flex flex-col items-center justify-end h-full">
-                <span className="text-xs text-gray-400 mb-1 font-mono">{item.count || 0}</span>
+                <span className="text-xs text-gray-400 mb-1 font-mono">{value}</span>
                 <div
                   className="w-full rounded-t-lg bg-gradient-to-t from-blue-600 to-blue-400 transition-all duration-500 min-h-[4px]"
                   style={{ height: `${Math.max(pct, 3)}%` }}
@@ -285,76 +286,53 @@ export default function DashboardPage() {
 
     try {
       const results = await Promise.allSettled([
-        // 0 - invoices
-        api.get('/api/invoice/list').catch(() => ({ data: [] })),
-        // 1 - translations (activity log)
-        api.get('/api/activity-log', { params: { limit: 1000, action: 'translator' } }).catch(() => ({ data: { entries: [] } })),
-        // 2 - ITP
-        api.get('/api/itp/list').catch(() => ({ data: [] })),
-        // 3 - system info (uptime)
+        // 0 - quick-stats (replaces: invoice/list, activity-log?translator, itp/list)
+        api.get('/api/reports/dashboard/quick-stats').catch(() => ({ data: {} })),
+        // 1 - system info (uptime)
         api.get('/api/reports/system-info').catch(() => ({ data: {} })),
-        // 4 - timeline (chart)
+        // 2 - timeline (chart)
         api.get('/api/reports/timeline/stats', { params: { group_by: 'day', days: 7 } }).catch(() => ({ data: [] })),
-        // 5 - AI providers
+        // 3 - AI providers
         api.get('/api/ai/providers').catch(() => ({ data: [] })),
-        // 6 - recent activity
+        // 4 - recent activity
         api.get('/api/activity-log', { params: { limit: 5 } }).catch(() => ({ data: { entries: [] } })),
       ]);
 
-      // 0 - Invoices
+      // 0 - Quick stats (invoices, translations, ITP — single call)
       if (results[0].status === 'fulfilled') {
         const d = results[0].value?.data;
-        const items = Array.isArray(d) ? d : (d?.invoices || d?.items || []);
-        setInvoiceCount(items.length);
+        setInvoiceCount(d?.invoices_this_month ?? 0);
+        setTranslationCount(d?.translations_this_month ?? 0);
+        setItpActiveCount(d?.itp_this_month ?? 0);
       }
 
-      // 1 - Translations
+      // 1 - Uptime
       if (results[1].status === 'fulfilled') {
         const d = results[1].value?.data;
-        const entries = d?.entries || (Array.isArray(d) ? d : []);
-        setTranslationCount(entries.length);
-      }
-
-      // 2 - ITP active
-      if (results[2].status === 'fulfilled') {
-        const d = results[2].value?.data;
-        const items = Array.isArray(d) ? d : (d?.inspections || d?.items || []);
-        const now = new Date();
-        const active = items.filter((item) => {
-          if (!item.expiry_date && !item.data_expirare) return true;
-          const exp = new Date(item.expiry_date || item.data_expirare);
-          return exp > now;
-        });
-        setItpActiveCount(active.length);
-      }
-
-      // 3 - Uptime
-      if (results[3].status === 'fulfilled') {
-        const d = results[3].value?.data;
         const up = d?.uptime || d?.system_uptime || d?.uptime_string || '-';
         setUptimeStr(typeof up === 'string' ? up : '-');
       }
 
-      // 4 - Chart
+      // 2 - Chart
       setChartLoading(false);
-      if (results[4].status === 'fulfilled') {
-        const d = results[4].value?.data;
+      if (results[2].status === 'fulfilled') {
+        const d = results[2].value?.data;
         const timeline = Array.isArray(d) ? d : (d?.stats || d?.timeline || d?.data || []);
         setChartData(timeline);
       }
 
-      // 5 - Providers
+      // 3 - Providers
       setProvidersLoading(false);
-      if (results[5].status === 'fulfilled') {
-        const d = results[5].value?.data;
+      if (results[3].status === 'fulfilled') {
+        const d = results[3].value?.data;
         const list = Array.isArray(d) ? d : (d?.providers || []);
         setProviders(list);
       }
 
-      // 6 - Recent
+      // 4 - Recent
       setRecentLoading(false);
-      if (results[6].status === 'fulfilled') {
-        const d = results[6].value?.data;
+      if (results[4].status === 'fulfilled') {
+        const d = results[4].value?.data;
         const entries = d?.entries || (Array.isArray(d) ? d : []);
         setRecentEntries(entries);
       }
@@ -368,6 +346,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchAll();
+    const interval = setInterval(() => fetchAll(), 300000); // auto-refresh every 5 minutes
+    return () => clearInterval(interval);
   }, [fetchAll]);
 
   // ---------- Render ----------

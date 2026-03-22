@@ -282,6 +282,8 @@ _prompt_cache: dict[str, tuple[float, dict]] = {}
 _prompt_lock = _asyncio.Lock()
 _CACHE_TTL = 3600  # 1 hour
 _CACHE_MAX = 200   # max entries
+_last_cache_cleanup = 0.0  # timestamp of last full sweep
+_CLEANUP_INTERVAL = 600    # sweep expired entries every 10 minutes
 
 
 def _cache_key(prompt: str, system_prompt: str | None) -> str:
@@ -289,11 +291,27 @@ def _cache_key(prompt: str, system_prompt: str | None) -> str:
     return h
 
 
+def _sweep_expired_cache() -> None:
+    """Remove all expired entries from prompt cache. Must be called under _prompt_lock."""
+    global _last_cache_cleanup
+    now = time.time()
+    if now - _last_cache_cleanup < _CLEANUP_INTERVAL:
+        return
+    expired_keys = [k for k, (ts, _) in _prompt_cache.items() if now - ts >= _CACHE_TTL]
+    for k in expired_keys:
+        del _prompt_cache[k]
+    _last_cache_cleanup = now
+    if expired_keys:
+        logger.debug("Prompt cache sweep: removed %d expired entries, %d remaining", len(expired_keys), len(_prompt_cache))
+
+
 async def ai_generate(prompt: str, system_prompt: str | None = None, preferred_provider: str | None = None) -> dict:
     """Generate response using first available provider. Caches identical prompts for 1h."""
     # Check cache (lock protects concurrent access)
     ck = _cache_key(prompt, system_prompt)
     async with _prompt_lock:
+        # Periodic sweep of expired entries to prevent unbounded growth
+        _sweep_expired_cache()
         if ck in _prompt_cache:
             cached_at, cached_result = _prompt_cache[ck]
             if time.time() - cached_at < _CACHE_TTL:

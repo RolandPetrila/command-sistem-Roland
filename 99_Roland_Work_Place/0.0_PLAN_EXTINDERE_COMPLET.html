@@ -78,7 +78,7 @@
 <div class="container">
   <h1>Roland - Command Center</h1>
   <p class="project-name">Selector Funcții — Plan Extindere</p>
-  <p class="subtitle">Bifează funcțiile pe care le dorești ACUM, apoi apasă "Generează Plan" pentru a separa în ACTIV și PENDING. Copiază lista și transmite-o în Claude Code. <em style="color:#f87171">Actualizat 2026-03-22 — Faza 27 Module Extensions (78 features).</em></p>
+  <p class="subtitle">Bifează funcțiile pe care le dorești ACUM, apoi apasă "Generează Plan" pentru a separa în ACTIV și PENDING. Copiază lista și transmite-o în Claude Code. <em style="color:#f87171">Actualizat 2026-03-22 — Faza 28 Runda 2 QA (39 bugfix-uri + 78 features = 117 total).</em></p>
 
   <div class="stats-bar">
     <div class="stat-card"><div class="stat-label">Faze</div><div class="stat-value" id="statPhases">22</div></div>
@@ -534,6 +534,51 @@ const PHASES = [
       { id: "27.77", name: "✅ Integrations: Drive upload content (2026-03-22)", tech: "Upload cu continut direct", cost: "Gratuit", done: true },
       { id: "27.78", name: "✅ Integrations: Calendar update (2026-03-22)", tech: "PUT pe evenimente calendar", cost: "Gratuit", done: true },
       { id: "27.79", name: "✅ Integrations: GitHub branch (2026-03-22)", tech: "Selectare branch la commits", cost: "Gratuit", done: true },
+    ]
+  },
+  {
+    id: 28, name: "Runda 2 — Calitate, Edge Cases & Bugfix-uri (39 fix-uri / 14 module)", prio: "inalta",
+    note: "✅ ALL 39/39 DONE (2026-03-22). 12 BUG + 6 SEC + 7 PERF + 14 QUALITY. Path traversal, cascading delete, pagination, async IMAP, dashboard chart fix, factorial DOS, hash session, recurring drift.",
+    features: [
+      { id: "28.01", name: "✅ Vault: Hash password in session [SEC] (2026-03-22)", tech: "hashlib.sha256 pe parola sesiune", cost: "Gratuit", done: true },
+      { id: "28.02", name: "✅ Convertor: Max dimension 4096px [SEC] (2026-03-22)", tech: "Cap width/height la image resize", cost: "Gratuit", done: true },
+      { id: "28.03", name: "✅ Convertor: Temp file cleanup in finally (2026-03-22)", tech: "try/finally pe fisiere temporare", cost: "Gratuit", done: true },
+      { id: "28.04", name: "✅ FM: Cascading delete orphaned entries (2026-03-22)", tech: "Cleanup tags/favorites/FTS la stergere", cost: "Gratuit", done: true },
+      { id: "28.05", name: "✅ QT Extra: Factorial bound 170 [SEC] (2026-03-22)", tech: "math.factorial capped la 170", cost: "Gratuit", done: true },
+      { id: "28.06", name: "✅ QT Extra: AST depth limit 50 [SEC] (2026-03-22)", tech: "Prevenire stack overflow expresii", cost: "Gratuit", done: true },
+      { id: "28.07", name: "✅ QT Notepad: Input max_length (2026-03-22)", tech: "Pydantic Field(max_length) pe titlu/continut", cost: "Gratuit", done: true },
+      { id: "28.08", name: "✅ Reports: BNR XML None guard [BUG] (2026-03-22)", tech: "Guard pe rate_el.text None", cost: "Gratuit", done: true },
+      { id: "28.09", name: "✅ Reports: Journal tag JSON match [BUG] (2026-03-22)", tech: "json_each() in loc de LIKE", cost: "Gratuit", done: true },
+      { id: "28.10", name: "✅ Reports: Journal max_length (2026-03-22)", tech: "max_length pe titlu si continut", cost: "Gratuit", done: true },
+      { id: "28.11", name: "✅ Reports: Bookmark URL validation (2026-03-22)", tech: "Validare URL format", cost: "Gratuit", done: true },
+      { id: "28.12", name: "✅ Reports: Export LIMIT 10000 [PERF] (2026-03-22)", tech: "Default LIMIT pe SELECT *", cost: "Gratuit", done: true },
+      { id: "28.13", name: "✅ Calc Pret: Path traversal fix [SEC] (2026-03-22)", tech: "Validare cale contra DATA_DIR", cost: "Gratuit", done: true },
+      { id: "28.14", name: "✅ Calc Pret: Async extract_features [PERF] (2026-03-22)", tech: "asyncio.to_thread() pe PyMuPDF", cost: "Gratuit", done: true },
+      { id: "28.15", name: "✅ Calc Pret: PDF doc close finally [BUG] (2026-03-22)", tech: "try/finally pe fitz.open()", cost: "Gratuit", done: true },
+      { id: "28.16", name: "✅ Calc Pret: Image count fix [BUG] (2026-03-22)", tech: "Fix image_count*page_count dublu", cost: "Gratuit", done: true },
+      { id: "28.17", name: "✅ Calc Pret: Shared calibration cache [BUG] (2026-03-22)", tech: "Modul calibration_cache.py comun", cost: "Gratuit", done: true },
+      { id: "28.18", name: "✅ Calc Pret: Cache invalidation [BUG] (2026-03-22)", tech: "Invalidare la validate_price", cost: "Gratuit", done: true },
+      { id: "28.19", name: "✅ Calc Pret: File size limit 50MB [PERF] (2026-03-22)", tech: "Check marime inainte de analiza", cost: "Gratuit", done: true },
+      { id: "28.20", name: "✅ Calc Pret: invoice_percent bounds (2026-03-22)", tech: "Field(gt=0, le=100) pe Pydantic", cost: "Gratuit", done: true },
+      { id: "28.21", name: "✅ Translator: Migration SQL cache (2026-03-22)", tech: "Tabel translation_cache in migrations/", cost: "Gratuit", done: true },
+      { id: "28.22", name: "✅ Translator: Language ISO 639-1 (2026-03-22)", tech: "Whitelist coduri limba", cost: "Gratuit", done: true },
+      { id: "28.23", name: "✅ Translator: Domain validation (2026-03-22)", tech: "Validare parametru domain", cost: "Gratuit", done: true },
+      { id: "28.24", name: "✅ AI: Full file hash [BUG] (2026-03-22)", tech: "Hash pe continut complet, nu 64KB", cost: "Gratuit", done: true },
+      { id: "28.25", name: "✅ AI: Insights cache TTL [PERF] (2026-03-22)", tech: "Timestamp + cleanup la 1h", cost: "Gratuit", done: true },
+      { id: "28.26", name: "✅ Integrations: Async IMAP/SMTP [PERF] (2026-03-22)", tech: "asyncio.to_thread() pe IMAP/SMTP", cost: "Gratuit", done: true },
+      { id: "28.27", name: "✅ Integrations: IMAP connection close [BUG] (2026-03-22)", tech: "try/finally pe IMAP login", cost: "Gratuit", done: true },
+      { id: "28.28", name: "✅ Integrations: Drive query escape [SEC] (2026-03-22)", tech: "Escape apostrofe in search query", cost: "Gratuit", done: true },
+      { id: "28.29", name: "✅ Integrations: Email validation (2026-03-22)", tech: "Validare format email", cost: "Gratuit", done: true },
+      { id: "28.30", name: "✅ Integrations: Calendar date validation (2026-03-22)", tech: "ISO 8601 + end >= start", cost: "Gratuit", done: true },
+      { id: "28.31", name: "✅ Facturare: Recurring month boundary [BUG] (2026-03-22)", tech: "Pastrare original_day cu clamp", cost: "Gratuit", done: true },
+      { id: "28.32", name: "✅ Facturare: Invoice pagination [PERF] (2026-03-22)", tech: "page/per_page cu default 50", cost: "Gratuit", done: true },
+      { id: "28.33", name: "✅ ITP: linked_invoice_id bidirectional (2026-03-22)", tech: "SYNC bidirectional cu Facturare", cost: "Gratuit", done: true },
+      { id: "28.34", name: "✅ Automations: Recovery cooldown [BUG] (2026-03-22)", tech: "Stare tranzitie + cooldown 30min", cost: "Gratuit", done: true },
+      { id: "28.35", name: "✅ Automations: Error logging [BUG] (2026-03-22)", tech: "log_activity la eroare task", cost: "Gratuit", done: true },
+      { id: "28.36", name: "✅ Dashboard: Chart field mismatch [BUG] (2026-03-22)", tech: "Map period→date, total→count", cost: "Gratuit", done: true },
+      { id: "28.37", name: "✅ Dashboard: Use existing endpoints [PERF] (2026-03-22)", tech: "9 calls → 4-5 calls optimizat", cost: "Gratuit", done: true },
+      { id: "28.38", name: "✅ Dashboard: Auto-refresh 5min (2026-03-22)", tech: "setInterval 300s", cost: "Gratuit", done: true },
+      { id: "28.39", name: "✅ AI Providers: Cerebras fallback (2026-03-22)", tech: "Provider health + fallback chain", cost: "Gratuit", done: true },
     ]
   }
 ];

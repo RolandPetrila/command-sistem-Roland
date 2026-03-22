@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
@@ -49,15 +49,15 @@ async def _ensure_category_column():
 
 
 class NoteCreate(BaseModel):
-    title: str = "Notă nouă"
-    content: str = ""
-    category: str = "general"
+    title: str = Field("Notă nouă", max_length=500)
+    content: str = Field("", max_length=100_000)
+    category: str = Field("general", max_length=100)
 
 
 class NoteUpdate(BaseModel):
-    title: str | None = None
-    content: str | None = None
-    category: str | None = None
+    title: str | None = Field(None, max_length=500)
+    content: str | None = Field(None, max_length=100_000)
+    category: str | None = Field(None, max_length=100)
 
 
 @router.get("/notes")

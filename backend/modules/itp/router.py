@@ -315,8 +315,21 @@ async def get_rejection_reasons():
 
 @router.post("/inspections/{inspection_id}/create-invoice")
 async def create_invoice_from_inspection(inspection_id: int):
-    """Return pre-filled invoice data from an inspection record."""
+    """Return pre-filled invoice data from an inspection record.
+
+    Also stores the link back: updates the inspection with linked_invoice_id
+    so the relationship is bidirectional (ITP -> Invoice).
+    """
     async with get_db() as db:
+        # Ensure linked_invoice_id column exists (ALTER TABLE IF NOT EXISTS pattern)
+        try:
+            await db.execute(
+                "ALTER TABLE itp_inspections ADD COLUMN linked_invoice_id INTEGER"
+            )
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+
         cursor = await db.execute(
             "SELECT * FROM itp_inspections WHERE id = ?", (inspection_id,)
         )
@@ -349,6 +362,7 @@ async def create_invoice_from_inspection(inspection_id: int):
         "notes": f"Vehicul: {inspection.get('brand', '')} {inspection.get('model', '')} ({inspection.get('year', '')}) - {plate}",
         "source": "itp",
         "source_id": inspection_id,
+        "linked_inspection_id": inspection_id,
     }
 
     await log_activity(
@@ -358,6 +372,47 @@ async def create_invoice_from_inspection(inspection_id: int):
     )
 
     return invoice_data
+
+
+@router.put("/inspections/{inspection_id}/link-invoice")
+async def link_invoice_to_inspection(inspection_id: int, invoice_id: int):
+    """Store the bidirectional link: set linked_invoice_id on the ITP inspection.
+
+    Called after the invoice is actually created from the pre-filled data,
+    so the inspection record knows which invoice was generated from it.
+    """
+    async with get_db() as db:
+        # Ensure column exists
+        try:
+            await db.execute(
+                "ALTER TABLE itp_inspections ADD COLUMN linked_invoice_id INTEGER"
+            )
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+
+        cursor = await db.execute(
+            "SELECT id FROM itp_inspections WHERE id = ?", (inspection_id,)
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(404, "Inspectia nu a fost gasita")
+
+        await db.execute(
+            "UPDATE itp_inspections SET linked_invoice_id = ? WHERE id = ?",
+            (invoice_id, inspection_id),
+        )
+        await db.commit()
+
+    await log_activity(
+        action="itp.link_invoice",
+        summary=f"ITP #{inspection_id} linkuit la factura #{invoice_id}",
+        details={"inspection_id": inspection_id, "invoice_id": invoice_id},
+    )
+    return {
+        "message": f"Inspectia #{inspection_id} linkuita la factura #{invoice_id}.",
+        "inspection_id": inspection_id,
+        "invoice_id": invoice_id,
+    }
 
 
 # ────────── Import CSV/Excel ──────────

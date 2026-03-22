@@ -1,6 +1,6 @@
 # Roland Command Center — Project Status (auto-generated)
 
-Generated: 2026-03-22 11:57
+Generated: 2026-03-22 12:40
 
 ## Project Status
 
@@ -38,6 +38,7 @@ Generated: 2026-03-22 11:57
 | Faza F Cross-Module | DONE | Voice input, prompt templates, serii facturi, scadente, programari ITP, notificari, preview docs, calibrare interactiva, oferte PDF, glosar per client (2026-03-21) |
 | Faza 26A-G Deep Research | DONE | Security (CVE fix), Performance (5x cold start), Code Quality (N+1, SQL param), AI Prompts (anti-hallucination), Testing (68 tests), Refactorizare (3 fisiere mari split), Hardening (DB indexes, async I/O) (2026-03-21) |
 | Faza 27 Module Ext | DONE | 78 features across 14 modules: vault security, converter limits, FM batch ops, notepad search, cron scheduler, dashboard alerts, translation cache, ITP vehicle history, invoice recurring, passphrase gen (2026-03-22) |
+| Faza 28 Runda 2 QA | DONE | 39 fixes across 14 modules: 12 BUG, 6 SEC, 7 PERF, 14 QUALITY — path traversal, cascading delete, pagination, async IMAP, dashboard chart fix, factorial DOS, hash session, recurring drift (2026-03-22) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`

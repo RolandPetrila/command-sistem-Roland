@@ -74,10 +74,16 @@ async def auto_classify(req: AutoClassifyRequest):
     if not text.strip():
         raise HTTPException(400, "Nu s-a putut extrage text din fișier")
 
-    # Compute file hash for cache check
+    # Compute file hash for cache check (full content for correctness)
     try:
+        h = hashlib.md5()
         with open(req.file_path, "rb") as f:
-            file_hash = hashlib.md5(f.read(65536)).hexdigest()
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+        file_hash = h.hexdigest()
     except Exception:
         file_hash = None
 

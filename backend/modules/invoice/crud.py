@@ -347,17 +347,50 @@ async def list_overdue():
 # ═══════════════════════════════════════════
 
 @crud_router.get("/list")
-async def list_invoices():
-    """Lista toate facturile cu numele clientului."""
+async def list_invoices(
+    page: int = 1,
+    per_page: int = 50,
+):
+    """Lista facturile cu numele clientului (paginat).
+
+    Args:
+        page: Numarul paginii (default 1, minim 1).
+        per_page: Facturi per pagina (default 50, max 200).
+    """
+    from fastapi import Query as _Q  # noqa: local import to avoid top-level conflict
+
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 50
+    if per_page > 200:
+        per_page = 200
+    offset = (page - 1) * per_page
+
     async with get_db() as db:
+        # Total count
+        cursor = await db.execute("SELECT COUNT(*) as cnt FROM invoices")
+        total = (await cursor.fetchone())["cnt"]
+
+        # Paginated results
         cursor = await db.execute(
             """SELECT i.*, c.name as client_name
                FROM invoices i
                LEFT JOIN clients c ON i.client_id = c.id
-               ORDER BY i.date DESC, i.id DESC"""
+               ORDER BY i.date DESC, i.id DESC
+               LIMIT ? OFFSET ?""",
+            (per_page, offset),
         )
         rows = await cursor.fetchall()
-    return [_row_to_dict(row) for row in rows]
+
+    items = [_row_to_dict(row) for row in rows]
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page if per_page > 0 else 1,
+    }
 
 
 @crud_router.post("/create", status_code=201)
@@ -846,7 +879,7 @@ async def delete_item_preset(preset_id: int):
 # ═══════════════════════════════════════════
 
 async def _ensure_recurring_table():
-    """Create recurring_invoices table if it doesn't exist."""
+    """Create recurring_invoices table if it doesn't exist, with original_day column."""
     async with get_db() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS recurring_invoices (
@@ -854,24 +887,43 @@ async def _ensure_recurring_table():
                 invoice_id  INTEGER NOT NULL REFERENCES invoices(id),
                 frequency   TEXT DEFAULT 'monthly',
                 next_due    TEXT,
+                original_day INTEGER,
                 enabled     INTEGER DEFAULT 1,
                 created_at  TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Add original_day column if table already existed without it
+        try:
+            await db.execute(
+                "ALTER TABLE recurring_invoices ADD COLUMN original_day INTEGER"
+            )
+        except Exception:
+            pass  # Column already exists
         await db.commit()
 
 
-def _calc_next_due(frequency: str, from_date: str | None = None) -> str:
-    """Calculate next due date based on frequency from a given date."""
+def _calc_next_due(frequency: str, from_date: str | None = None, original_day: int | None = None) -> str:
+    """Calculate next due date based on frequency from a given date.
+
+    Uses original_day to preserve the day-of-month from when recurring was set up.
+    E.g., Jan 31 -> Feb 28 -> Mar 31 (not Mar 28) because original_day=31.
+    Falls back to min(original_day, days_in_target_month) for short months.
+    """
+    import calendar
+
     base = date.fromisoformat(from_date) if from_date else date.today()
+    # Preserve the original day from the first invoice date
+    if original_day is None:
+        original_day = base.day
+
     if frequency == "monthly":
-        # Move forward one month
         month = base.month + 1
         year = base.year
         if month > 12:
             month = 1
             year += 1
-        day = min(base.day, 28)  # Safe for all months
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(original_day, max_day)
         return date(year, month, day).isoformat()
     elif frequency == "quarterly":
         month = base.month + 3
@@ -879,10 +931,14 @@ def _calc_next_due(frequency: str, from_date: str | None = None) -> str:
         while month > 12:
             month -= 12
             year += 1
-        day = min(base.day, 28)
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(original_day, max_day)
         return date(year, month, day).isoformat()
     elif frequency == "yearly":
-        return date(base.year + 1, base.month, min(base.day, 28)).isoformat()
+        year = base.year + 1
+        max_day = calendar.monthrange(year, base.month)[1]
+        day = min(original_day, max_day)
+        return date(year, base.month, day).isoformat()
     else:
         # Default to monthly
         month = base.month + 1
@@ -890,7 +946,9 @@ def _calc_next_due(frequency: str, from_date: str | None = None) -> str:
         if month > 12:
             month = 1
             year += 1
-        return date(year, month, min(base.day, 28)).isoformat()
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(original_day, max_day)
+        return date(year, month, day).isoformat()
 
 
 @crud_router.post("/{invoice_id}/set-recurring")
@@ -910,24 +968,30 @@ async def set_recurring(invoice_id: int, data: RecurringSet):
         if not inv_row:
             raise HTTPException(404, "Factura negasita.")
 
-        next_due = data.next_due or _calc_next_due(data.frequency, inv_row["date"])
+        # Preserve the original day-of-month from the invoice date for correct clamping
+        inv_date = date.fromisoformat(inv_row["date"]) if inv_row["date"] else date.today()
+        original_day = inv_date.day
+
+        next_due = data.next_due or _calc_next_due(data.frequency, inv_row["date"], original_day=original_day)
 
         # Check if already set as recurring
         cursor = await db.execute(
-            "SELECT id FROM recurring_invoices WHERE invoice_id = ?", (invoice_id,)
+            "SELECT id, original_day FROM recurring_invoices WHERE invoice_id = ?", (invoice_id,)
         )
         existing = await cursor.fetchone()
 
         if existing:
+            # Keep original_day from when it was first set, unless it was NULL
+            stored_day = existing["original_day"] if existing["original_day"] else original_day
             await db.execute(
-                "UPDATE recurring_invoices SET frequency = ?, next_due = ?, enabled = 1 WHERE invoice_id = ?",
-                (data.frequency, next_due, invoice_id),
+                "UPDATE recurring_invoices SET frequency = ?, next_due = ?, original_day = ?, enabled = 1 WHERE invoice_id = ?",
+                (data.frequency, next_due, stored_day, invoice_id),
             )
         else:
             await db.execute(
-                """INSERT INTO recurring_invoices (invoice_id, frequency, next_due, enabled)
-                   VALUES (?, ?, ?, 1)""",
-                (invoice_id, data.frequency, next_due),
+                """INSERT INTO recurring_invoices (invoice_id, frequency, next_due, original_day, enabled)
+                   VALUES (?, ?, ?, ?, 1)""",
+                (invoice_id, data.frequency, next_due, original_day),
             )
         await db.commit()
 
@@ -954,6 +1018,7 @@ async def list_recurring():
     async with get_db() as db:
         cursor = await db.execute(
             """SELECT r.id as recurring_id, r.frequency, r.next_due, r.enabled,
+                      r.original_day,
                       i.id as invoice_id, i.invoice_number, i.total, i.status,
                       i.date as invoice_date, i.client_id,
                       c.name as client_name

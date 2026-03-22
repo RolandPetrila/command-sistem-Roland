@@ -54,47 +54,49 @@ def _extract_pdf_features(path: Path) -> dict[str, Any]:
     features: dict[str, Any] = {}
 
     # --- PyMuPDF: text, imagini, pagini ---
+    # R2-3: try/finally to guarantee doc.close() even on error (prevents Windows file lock)
     doc = fitz.open(str(path))
-    page_count = len(doc)
-    features["page_count"] = page_count
+    try:
+        page_count = len(doc)
+        features["page_count"] = page_count
 
-    total_words = 0
-    total_images = 0
-    total_chars = 0
-    words_per_page_list: list[int] = []
-    has_multi_column = False
-    has_mixed_orientation = False
-    prev_rotation = None
+        total_words = 0
+        total_images = 0
+        total_chars = 0
+        words_per_page_list: list[int] = []
+        has_multi_column = False
+        has_mixed_orientation = False
+        prev_rotation = None
 
-    for page in doc:
-        text = page.get_text("text")
-        words = text.split()
-        page_word_count = len(words)
-        total_words += page_word_count
-        total_chars += len(text)
-        words_per_page_list.append(page_word_count)
+        for page in doc:
+            text = page.get_text("text")
+            words = text.split()
+            page_word_count = len(words)
+            total_words += page_word_count
+            total_chars += len(text)
+            words_per_page_list.append(page_word_count)
 
-        # Imagini pe pagină
-        image_list = page.get_images(full=True)
-        total_images += len(image_list)
+            # Imagini pe pagina
+            image_list = page.get_images(full=True)
+            total_images += len(image_list)
 
-        # Detectare coloane multiple: verificăm blocurile de text
-        blocks = page.get_text("blocks")
-        text_blocks = [b for b in blocks if b[6] == 0]  # tip 0 = text
-        if len(text_blocks) > 1:
-            x_positions = sorted(set(round(b[0], -1) for b in text_blocks))
-            if len(x_positions) >= 2:
-                # Dacă blocurile încep la x-uri semnificativ diferite
-                if x_positions[-1] - x_positions[0] > page.rect.width * 0.3:
-                    has_multi_column = True
+            # Detectare coloane multiple: verificam blocurile de text
+            blocks = page.get_text("blocks")
+            text_blocks = [b for b in blocks if b[6] == 0]  # tip 0 = text
+            if len(text_blocks) > 1:
+                x_positions = sorted(set(round(b[0], -1) for b in text_blocks))
+                if len(x_positions) >= 2:
+                    # Daca blocurile incep la x-uri semnificativ diferite
+                    if x_positions[-1] - x_positions[0] > page.rect.width * 0.3:
+                        has_multi_column = True
 
-        # Detectare orientare mixtă
-        rotation = page.rotation
-        if prev_rotation is not None and rotation != prev_rotation:
-            has_mixed_orientation = True
-        prev_rotation = rotation
-
-    doc.close()
+            # Detectare orientare mixta
+            rotation = page.rotation
+            if prev_rotation is not None and rotation != prev_rotation:
+                has_mixed_orientation = True
+            prev_rotation = rotation
+    finally:
+        doc.close()
 
     features["word_count"] = total_words
     features["words_per_page"] = (

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core.activity_log import log_activity
+from app.core.calibration_cache import load_calibration_data
 from app.core.pricing.ensemble import calculate_ensemble_price
 from app.core.self_learning import get_all_references
 from app.core.validation import validate_price
@@ -176,26 +177,9 @@ def _load_reference_data() -> list[dict[str, Any]]:
         return []
 
 
-_calibration_cache: dict = {"data": None, "mtime": 0.0}
-
-
 def _load_calibration_data() -> dict[str, Any] | None:
-    """Incarca datele de calibrare din fisierul JSON, daca exista."""
-    cal_file = settings.calibration_file
-    if not cal_file.exists():
-        return None
-    try:
-        current_mtime = cal_file.stat().st_mtime
-        if _calibration_cache["data"] is not None and current_mtime == _calibration_cache["mtime"]:
-            return _calibration_cache["data"]
-        with open(cal_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        result = data.get("calibration", data)
-        _calibration_cache["data"] = result
-        _calibration_cache["mtime"] = current_mtime
-        return result
-    except (json.JSONDecodeError, OSError):
-        return None
+    """Shared calibration loader — delegates to calibration_cache module."""
+    return load_calibration_data()
 
 
 async def _get_invoice_percent() -> float:
@@ -237,7 +221,9 @@ def _build_synthetic_features(
         "page_count": page_count,
         "word_count": word_count,
         "words_per_page": words_per_page,
-        "image_count": type_defaults["image_count"] * page_count,
+        # R2-4: image_count from defaults is per-page estimate; scale
+        # proportionally but cap to avoid overpricing on long documents
+        "image_count": type_defaults["image_count"] * min(page_count, 5),
         "table_count": type_defaults["table_count"],
         "has_complex_tables": type_defaults["has_complex_tables"],
         "chart_count": type_defaults["chart_count"],
@@ -269,7 +255,9 @@ class QuickQuoteRequest(BaseModel):
     target_lang: str = Field("ro", description="Limba tinta (cod ISO 2 litere)")
     invoice_percent: float | None = Field(
         None,
-        description="Procentul de facturare (implicit din setari)",
+        gt=0,
+        le=100,
+        description="Procentul de facturare (implicit din setari, 0-100%)",
     )
 
 
