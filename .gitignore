@@ -53,3 +53,16 @@ backend/calibration_backup_*.json
 
 # Claude Code transcripts
 *.jsonl
+
+# Runtime data directories
+backend/data/backups/
+backend/data/invoices/
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Test artifacts
+test_dashboard.png
+
+# Root-level session logs (Claude Code exported)
+/2026-*.txt
