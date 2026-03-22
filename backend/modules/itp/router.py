@@ -2,20 +2,24 @@
 API endpoints for ITP (Inspectie Tehnica Periodica) module.
 
 Endpoints:
-  GET    /api/itp/inspections          — list all (paginated, searchable)
-  POST   /api/itp/inspections          — create new inspection
-  GET    /api/itp/inspections/{id}     — get single inspection
-  PUT    /api/itp/inspections/{id}     — update inspection
-  DELETE /api/itp/inspections/{id}     — delete inspection
-  POST   /api/itp/import               — import CSV/Excel file
-  GET    /api/itp/stats/overview       — total, admis/respins, avg price, this month
-  GET    /api/itp/stats/monthly        — inspections per month (bar chart)
-  GET    /api/itp/stats/brands         — top brands (pie chart)
-  GET    /api/itp/stats/revenue        — monthly revenue (line chart)
-  GET    /api/itp/stats/fuel-types     — distribution by fuel type
-  GET    /api/itp/expiring             — vehicles with ITP expiring soon
-  GET    /api/itp/export/csv           — export all as CSV
-  GET    /api/itp/export/excel         — export all as Excel
+  GET    /api/itp/inspections                          — list all (paginated, searchable)
+  POST   /api/itp/inspections                          — create new inspection
+  GET    /api/itp/inspections/{id}                     — get single inspection
+  PUT    /api/itp/inspections/{id}                     — update inspection
+  DELETE /api/itp/inspections/{id}                     — delete inspection
+  GET    /api/itp/vehicle/{plate}/history              — all inspections for a plate
+  GET    /api/itp/rejection-reasons                    — standard ITP rejection reasons list
+  POST   /api/itp/inspections/{id}/create-invoice      — pre-filled invoice data from inspection
+  POST   /api/itp/import                               — import CSV/Excel file (with duplicate detection)
+  GET    /api/itp/stats/overview                        — total, admis/respins, avg price, this month
+  GET    /api/itp/stats/monthly                         — inspections per month (bar chart)
+  GET    /api/itp/stats/brands                          — top brands (pie chart)
+  GET    /api/itp/stats/revenue                         — monthly revenue (line chart)
+  GET    /api/itp/stats/fuel-types                      — distribution by fuel type
+  GET    /api/itp/stats/inspectors                      — stats per inspector
+  GET    /api/itp/expiring                              — vehicles with ITP expiring soon
+  GET    /api/itp/export/csv                            — export all as CSV
+  GET    /api/itp/export/excel                          — export all as Excel
 """
 
 from __future__ import annotations
@@ -251,6 +255,111 @@ async def delete_inspection(inspection_id: int):
     return {"message": "Inspectie stearsa cu succes"}
 
 
+# ────────── Vehicle History ──────────
+
+@router.get("/vehicle/{plate}/history")
+async def vehicle_history(plate: str):
+    """All inspections for a specific plate number, ordered by date DESC."""
+    plate_upper = plate.strip().upper()
+    if not plate_upper:
+        raise HTTPException(400, "Numarul de inmatriculare este obligatoriu")
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            """SELECT * FROM itp_inspections
+               WHERE UPPER(plate_number) = ?
+               ORDER BY inspection_date DESC""",
+            (plate_upper,),
+        )
+        rows = await cursor.fetchall()
+
+    items = [dict(row) for row in rows]
+    total = len(items)
+    admis = sum(1 for item in items if item.get("result") == "admis")
+    respins = sum(1 for item in items if item.get("result") == "respins")
+    pass_rate = round((admis / total * 100), 1) if total > 0 else 0
+
+    return {
+        "plate_number": plate_upper,
+        "total": total,
+        "admis": admis,
+        "respins": respins,
+        "pass_rate": pass_rate,
+        "inspections": items,
+    }
+
+
+# ────────── Rejection Reasons ──────────
+
+STANDARD_REJECTION_REASONS = [
+    {"id": 1, "code": "EMISII", "description": "Emisii peste limita"},
+    {"id": 2, "code": "FRANARE", "description": "Sistem de franare defect"},
+    {"id": 3, "code": "DIRECTIE", "description": "Directie cu joc excesiv"},
+    {"id": 4, "code": "SUSPENSIE", "description": "Suspensie deteriorata"},
+    {"id": 5, "code": "ANVELOPE", "description": "Anvelope uzate/neconforme"},
+    {"id": 6, "code": "LUMINI", "description": "Faruri/lumini defecte"},
+    {"id": 7, "code": "CAROSERIE", "description": "Caroserie corodata"},
+    {"id": 8, "code": "SCURGERI", "description": "Scurgeri ulei/lichid frana"},
+    {"id": 9, "code": "OGLINZI", "description": "Oglinzi lipsa/deteriorate"},
+    {"id": 10, "code": "CENTURI", "description": "Centuri de siguranta defecte"},
+]
+
+
+@router.get("/rejection-reasons")
+async def get_rejection_reasons():
+    """Standard ITP rejection reasons list."""
+    return STANDARD_REJECTION_REASONS
+
+
+# ────────── Generate Invoice from Inspection ──────────
+
+@router.post("/inspections/{inspection_id}/create-invoice")
+async def create_invoice_from_inspection(inspection_id: int):
+    """Return pre-filled invoice data from an inspection record."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT * FROM itp_inspections WHERE id = ?", (inspection_id,)
+        )
+        row = await cursor.fetchone()
+
+    if not row:
+        raise HTTPException(404, "Inspectia nu a fost gasita")
+
+    inspection = dict(row)
+    plate = inspection.get("plate_number", "")
+    owner = inspection.get("owner_name", "")
+    price = inspection.get("price", 0) or 0
+    result = inspection.get("result", "")
+    insp_date = inspection.get("inspection_date", "")
+
+    invoice_data = {
+        "client_name": owner or f"Proprietar {plate}",
+        "client_phone": inspection.get("owner_phone", ""),
+        "date": insp_date,
+        "items": [
+            {
+                "description": f"Inspectie ITP - {plate} ({result})",
+                "quantity": 1,
+                "unit": "buc",
+                "price": price,
+                "total": price,
+            }
+        ],
+        "total": price,
+        "notes": f"Vehicul: {inspection.get('brand', '')} {inspection.get('model', '')} ({inspection.get('year', '')}) - {plate}",
+        "source": "itp",
+        "source_id": inspection_id,
+    }
+
+    await log_activity(
+        action="itp.create_invoice",
+        summary=f"Generare factura din ITP: {plate} — {price} RON",
+        details={"inspection_id": inspection_id, "plate": plate, "price": price},
+    )
+
+    return invoice_data
+
+
 # ────────── Import CSV/Excel ──────────
 
 @router.post("/import")
@@ -276,6 +385,7 @@ async def import_inspections(file: UploadFile = File(...)):
 
     imported = 0
     skipped = 0
+    duplicates = []
     errors = []
 
     async with get_db() as db:
@@ -307,6 +417,24 @@ async def import_inspections(file: UploadFile = File(...)):
                 except (ValueError, TypeError):
                     year = None
 
+                # Duplicate detection: same plate + same date
+                if insp_date:
+                    dup_cursor = await db.execute(
+                        """SELECT id FROM itp_inspections
+                           WHERE UPPER(plate_number) = ? AND inspection_date = ?
+                           LIMIT 1""",
+                        (plate, insp_date),
+                    )
+                    existing = await dup_cursor.fetchone()
+                    if existing:
+                        duplicates.append({
+                            "row": i,
+                            "plate_number": plate,
+                            "inspection_date": insp_date,
+                            "existing_id": existing[0],
+                        })
+                        continue
+
                 await db.execute(
                     """INSERT INTO itp_inspections
                        (plate_number, brand, model, year, fuel_type,
@@ -334,15 +462,22 @@ async def import_inspections(file: UploadFile = File(...)):
 
     await log_activity(
         action="itp.import",
-        summary=f"Import ITP: {imported} importate, {skipped} sarite, {len(errors)} erori",
-        details={"file": file.filename, "imported": imported, "skipped": skipped},
+        summary=f"Import ITP: {imported} importate, {len(duplicates)} duplicate, {skipped} sarite, {len(errors)} erori",
+        details={
+            "file": file.filename,
+            "imported": imported,
+            "duplicates": len(duplicates),
+            "skipped": skipped,
+        },
     )
 
     return {
         "imported": imported,
         "skipped": skipped,
+        "duplicates": duplicates[:50],  # Limit duplicate list
         "errors": errors[:20],  # Limit error list
-        "message": f"{imported} inspectii importate cu succes",
+        "message": f"{imported} inspectii importate cu succes"
+        + (f", {len(duplicates)} duplicate sarite" if duplicates else ""),
     }
 
 
@@ -554,6 +689,40 @@ async def stats_fuel_types():
     return [{"fuel_type": row[0], "count": row[1]} for row in rows]
 
 
+@router.get("/stats/inspectors")
+async def stats_inspectors():
+    """Statistics per inspector: total, admis, respins, rate, revenue."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """SELECT
+                 inspector_name,
+                 COUNT(*) as total,
+                 SUM(CASE WHEN result = 'admis' THEN 1 ELSE 0 END) as admis,
+                 SUM(CASE WHEN result = 'respins' THEN 1 ELSE 0 END) as respins,
+                 SUM(price) as revenue
+               FROM itp_inspections
+               WHERE inspector_name IS NOT NULL AND inspector_name != ''
+               GROUP BY inspector_name
+               ORDER BY total DESC""",
+        )
+        rows = await cursor.fetchall()
+
+    result = []
+    for row in rows:
+        total = row[1]
+        admis = row[2]
+        result.append({
+            "inspector_name": row[0],
+            "total": total,
+            "admis": admis,
+            "respins": row[3],
+            "admis_rate": round((admis / total * 100), 1) if total > 0 else 0,
+            "revenue": round(row[4] or 0, 2),
+        })
+
+    return result
+
+
 # ────────── Expiring ──────────
 
 @router.get("/expiring")
@@ -742,24 +911,82 @@ async def list_appointments(
 
 
 @router.post("/appointments", status_code=201)
-async def create_appointment(data: AppointmentCreate):
-    """Create a new ITP appointment."""
+async def create_appointment(data: AppointmentCreate, force: bool = Query(False)):
+    """Create a new ITP appointment. Checks for time conflicts unless force=True."""
+    plate_upper = data.plate_number.upper().strip()
+    conflict = None
+
     async with get_db() as db:
+        # Check for overlapping appointments on the same date
+        cursor = await db.execute(
+            """SELECT id, plate_number, scheduled_time, duration_min
+               FROM itp_appointments
+               WHERE scheduled_date = ? AND status != 'cancelled'""",
+            (data.scheduled_date,),
+        )
+        existing_appts = await cursor.fetchall()
+
+        # Parse new appointment time range
+        try:
+            new_start_parts = data.scheduled_time.split(":")
+            new_start_min = int(new_start_parts[0]) * 60 + int(new_start_parts[1])
+            new_end_min = new_start_min + data.duration_min
+        except (ValueError, IndexError):
+            new_start_min = 0
+            new_end_min = data.duration_min
+
+        for appt in existing_appts:
+            appt_dict = dict(appt)
+            try:
+                ex_parts = appt_dict["scheduled_time"].split(":")
+                ex_start = int(ex_parts[0]) * 60 + int(ex_parts[1])
+                ex_end = ex_start + (appt_dict["duration_min"] or 30)
+            except (ValueError, IndexError):
+                continue
+
+            # Overlap check: two intervals [a,b) and [c,d) overlap if a < d and c < b
+            if new_start_min < ex_end and ex_start < new_end_min:
+                conflict = {
+                    "existing_id": appt_dict["id"],
+                    "existing_plate": appt_dict["plate_number"],
+                    "existing_time": appt_dict["scheduled_time"],
+                    "existing_duration": appt_dict["duration_min"],
+                }
+                break
+
+        if conflict and not force:
+            return {
+                "warning": "Conflict de programare detectat",
+                "conflict": conflict,
+                "message": f"Exista deja o programare la {conflict['existing_time']} "
+                           f"({conflict['existing_plate']}) in aceeasi zi. "
+                           f"Folositi force=true pentru a crea oricum.",
+                "created": False,
+            }
+
         cursor = await db.execute(
             """INSERT INTO itp_appointments
                (plate_number, owner_name, owner_phone, scheduled_date, scheduled_time, duration_min, notes)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (data.plate_number.upper().strip(), data.owner_name, data.owner_phone,
+            (plate_upper, data.owner_name, data.owner_phone,
              data.scheduled_date, data.scheduled_time, data.duration_min, data.notes),
         )
         await db.commit()
         appt_id = cursor.lastrowid
+
     await log_activity(
         action="itp.appointment_create",
-        summary=f"Programare ITP: {data.plate_number} pe {data.scheduled_date} la {data.scheduled_time}",
-        details={"id": appt_id, "plate": data.plate_number, "date": data.scheduled_date},
+        summary=f"Programare ITP: {plate_upper} pe {data.scheduled_date} la {data.scheduled_time}"
+                + (" (conflict fortat)" if conflict else ""),
+        details={"id": appt_id, "plate": plate_upper, "date": data.scheduled_date,
+                 "conflict": conflict},
     )
-    return {"id": appt_id, "message": "Programare creata cu succes."}
+
+    result = {"id": appt_id, "message": "Programare creata cu succes.", "created": True}
+    if conflict:
+        result["warning"] = "Programare creata cu conflict de timp"
+        result["conflict"] = conflict
+    return result
 
 
 @router.put("/appointments/{appt_id}")

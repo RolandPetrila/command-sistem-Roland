@@ -10,6 +10,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import xml.etree.ElementTree as ET
@@ -33,20 +34,35 @@ _BNR_CACHE_TTL = 3600  # 1 hour
 
 
 async def _fetch_bnr_rates() -> dict:
-    """Fetch and parse BNR XML, return structured rates dict."""
+    """Fetch and parse BNR XML, return structured rates dict.
+
+    Fallback offline: daca BNR nu raspunde, returneaza ultima valoare din cache.
+    Ridica HTTPException 502 doar daca NU exista date in cache.
+    """
     now = time.time()
     if _bnr_cache["data"] and (now - _bnr_cache["ts"]) < _BNR_CACHE_TTL:
         return _bnr_cache["data"]
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(_BNR_URL)
-        resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(_BNR_URL)
+            resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("BNR fetch error: %s — se foloseste cache-ul existent", exc)
+        if _bnr_cache["data"]:
+            return _bnr_cache["data"]
+        raise HTTPException(
+            502,
+            "Nu s-a putut accesa BNR si nu exista date in cache.",
+        ) from exc
 
     root = ET.fromstring(resp.text)
 
     # Extract date from <Cube date="YYYY-MM-DD">
     cube = root.find(".//bnr:Body/bnr:Cube", _BNR_NS)
     if cube is None:
+        if _bnr_cache["data"]:
+            return _bnr_cache["data"]
         raise HTTPException(502, "BNR XML: nu s-a gasit elementul Cube")
 
     rate_date = cube.attrib.get("date", str(date.today()))
@@ -78,12 +94,8 @@ async def _fetch_bnr_rates() -> dict:
 
 @router.get("/exchange-rate")
 async def get_exchange_rate():
-    """Curs valutar BNR curent (cache 1 ora)."""
-    try:
-        return await _fetch_bnr_rates()
-    except httpx.HTTPError as exc:
-        logger.error("BNR fetch error: %s", exc)
-        raise HTTPException(502, f"Nu s-a putut accesa BNR: {exc}") from exc
+    """Curs valutar BNR curent (cache 1 ora). Fallback pe cache daca BNR nu raspunde."""
+    return await _fetch_bnr_rates()
 
 
 @router.get("/exchange-rate/convert")
@@ -93,12 +105,7 @@ async def convert_currency(
     to_currency: str = Query(..., alias="to", description="Moneda destinatie (ex: RON)"),
 ):
     """Conversie valuta folosind cursul BNR."""
-    try:
-        data = await _fetch_bnr_rates()
-    except httpx.HTTPError as exc:
-        logger.error("BNR fetch error: %s", exc)
-        raise HTTPException(502, f"Nu s-a putut accesa BNR: {exc}") from exc
-
+    data = await _fetch_bnr_rates()
     rates = data["rates"]
     fr = from_currency.upper().strip()
     to = to_currency.upper().strip()
@@ -158,17 +165,33 @@ async def check_company(cui: str):
     today_str = date.today().strftime("%Y-%m-%d")
     payload = [{"cui": cui_int, "data": today_str}]
 
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(_ANAF_URL, json=payload)
-            resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        logger.error("ANAF request error: %s", exc)
-        raise HTTPException(
-            502,
-            "Serviciul ANAF nu este disponibil momentan. "
-            "Incercati din nou mai tarziu.",
-        ) from exc
+    # Retry: 1 incercare initiala + 1 retry dupa 5s la timeout/connection error
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(_ANAF_URL, json=payload)
+                resp.raise_for_status()
+            break
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt == 0:
+                logger.warning("ANAF timeout/connection error, retry in 5s: %s", exc)
+                await asyncio.sleep(5)
+            else:
+                logger.error("ANAF request error dupa retry: %s", exc)
+                raise HTTPException(
+                    502,
+                    "Serviciul ANAF nu este disponibil momentan. "
+                    "Incercati din nou mai tarziu.",
+                ) from exc
+        except httpx.HTTPError as exc:
+            logger.error("ANAF request error: %s", exc)
+            raise HTTPException(
+                502,
+                "Serviciul ANAF nu este disponibil momentan. "
+                "Incercati din nou mai tarziu.",
+            ) from exc
 
     try:
         body = resp.json()

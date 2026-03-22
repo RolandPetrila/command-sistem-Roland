@@ -22,6 +22,7 @@ from app.core.pricing.ensemble import calculate_ensemble_price
 from app.core.validation import validate_price
 from app.core.self_learning import get_all_references, add_validated_price as sl_add_validated_price
 from app.db.database import get_db, get_setting
+from app.api.routes_quick_quote import get_language_coefficient
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,14 @@ class CalculateRequest(BaseModel):
         None,
         description="Procentul de facturare (implicit din setări)",
     )
+    source_lang: str | None = Field(
+        None,
+        description="Limba sursă (cod ISO 2 litere) — pentru coeficient limbă",
+    )
+    target_lang: str | None = Field(
+        None,
+        description="Limba țintă (cod ISO 2 litere) — pentru coeficient limbă",
+    )
 
 
 class CalculateResponse(BaseModel):
@@ -71,6 +80,7 @@ class CalculateResponse(BaseModel):
     method_prices: dict[str, float]
     warnings: list[str]
     features: dict[str, Any]
+    language_info: dict[str, Any] | None = None
 
 
 @router.post("/calculate", response_model=CalculateResponse)
@@ -136,12 +146,22 @@ async def calculate_price(request: CalculateRequest):
 
     validation = validate_price(price_result, reference_data)
 
+    # --- Coeficient limbă (dacă s-au specificat limbile) ---
+    lang_info = None
+    if request.source_lang and request.target_lang:
+        lang_info = get_language_coefficient(request.source_lang, request.target_lang)
+
     # --- Calcul preț facturat ---
     invoice_percent = request.invoice_percent
     if invoice_percent is None:
         invoice_percent = await _get_invoice_percent()
 
     market_price = price_result["market_price"]
+
+    # Aplică coeficient limbă dacă e cazul
+    if lang_info and lang_info["applied"]:
+        market_price = round(market_price * lang_info["effective_coefficient"], 2)
+
     invoice_price = round(market_price * (invoice_percent / 100.0), 2)
 
     confidence = validation.get("confidence", 0.0)
@@ -185,6 +205,7 @@ async def calculate_price(request: CalculateRequest):
                 "image_count": features.get("image_count"),
                 "table_count": features.get("table_count"),
             },
+            "language_info": lang_info,
         },
     )
 
@@ -212,6 +233,7 @@ async def calculate_price(request: CalculateRequest):
         method_prices=price_result.get("method_prices", {}),
         warnings=validation.get("warnings", []),
         features=features,
+        language_info=lang_info,
     )
 
 

@@ -1,6 +1,6 @@
 """
 Automations module endpoints: Task Scheduler, Shortcuts, Uptime Monitor,
-API Tester, Health Monitor.
+API Tester, Health Monitor, Notifications, Cron Scheduler.
 
 Endpoints:
   GET    /api/automations/tasks              — List scheduled tasks
@@ -11,10 +11,12 @@ Endpoints:
 
   GET    /api/automations/shortcuts           — List shortcuts
   POST   /api/automations/shortcuts           — Create shortcut
+  PUT    /api/automations/shortcuts/:id       — Update shortcut
   DELETE /api/automations/shortcuts/:id       — Delete shortcut
 
   GET    /api/automations/monitors            — List uptime monitors
   POST   /api/automations/monitors            — Add monitor
+  PUT    /api/automations/monitors/:id        — Update monitor
   DELETE /api/automations/monitors/:id        — Remove monitor
   GET    /api/automations/monitors/:id/history — Ping history
 
@@ -24,6 +26,16 @@ Endpoints:
   GET    /api/automations/api-test/saved        — List saved templates
 
   GET    /api/automations/health              — Comprehensive health check
+
+  GET    /api/automations/scheduler/status    — Cron scheduler status
+  POST   /api/automations/cleanup             — Cleanup old history records
+
+  GET    /api/automations/notifications       — List notifications
+  POST   /api/automations/notifications       — Create notification (internal)
+  PUT    /api/automations/notifications/:id/read — Mark notification read
+  PUT    /api/automations/notifications/read-all — Mark all read
+  DELETE /api/automations/notifications/:id   — Delete notification
+  POST   /api/automations/notify              — Internal: create notification from any module
 """
 
 from __future__ import annotations
@@ -85,11 +97,34 @@ class ShortcutCreate(BaseModel):
     sort_order: int = 0
 
 
+class ShortcutUpdate(BaseModel):
+    name: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    url_or_action: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
 class MonitorCreate(BaseModel):
     name: str
     url: str
     interval_seconds: int = 300
     enabled: bool = True
+
+
+class MonitorUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class NotifyRequest(BaseModel):
+    """Internal notification request from any module."""
+    source: str
+    title: str
+    message: str
+    severity: str = "info"  # info, warning, error, success
 
 
 class ApiTestRequest(BaseModel):
@@ -114,6 +149,246 @@ class ApiTestSave(BaseModel):
 def _row_dict(row) -> dict:
     """Convert an aiosqlite.Row to a plain dict."""
     return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Cron parser (lightweight, no dependencies)
+# ---------------------------------------------------------------------------
+
+def _cron_field_matches(field_expr: str, current_value: int) -> bool:
+    """Check if a single cron field matches the current value.
+
+    Supported patterns:
+      *      — any value
+      */N    — every N (divisible)
+      N      — exact match
+      N,M    — list of values
+      N-M    — range of values
+    """
+    field_expr = field_expr.strip()
+
+    if field_expr == "*":
+        return True
+
+    if field_expr.startswith("*/"):
+        try:
+            step = int(field_expr[2:])
+            return step > 0 and current_value % step == 0
+        except (ValueError, ZeroDivisionError):
+            return False
+
+    # Support comma-separated values: "1,15,30"
+    if "," in field_expr:
+        parts = field_expr.split(",")
+        return any(_cron_field_matches(p.strip(), current_value) for p in parts)
+
+    # Support range: "1-5"
+    if "-" in field_expr:
+        try:
+            low, high = field_expr.split("-", 1)
+            return int(low) <= current_value <= int(high)
+        except ValueError:
+            return False
+
+    # Exact number
+    try:
+        return int(field_expr) == current_value
+    except ValueError:
+        return False
+
+
+def _cron_matches(cron_expr: str, now: datetime) -> bool:
+    """Check if a cron expression matches the given datetime.
+
+    Format: 'minute hour day month weekday' (5 fields).
+    Weekday: 0=Monday ... 6=Sunday (Python convention).
+    """
+    parts = cron_expr.strip().split()
+    if len(parts) != 5:
+        return False
+
+    minute, hour, day, month, weekday = parts
+    return (
+        _cron_field_matches(minute, now.minute)
+        and _cron_field_matches(hour, now.hour)
+        and _cron_field_matches(day, now.day)
+        and _cron_field_matches(month, now.month)
+        and _cron_field_matches(weekday, now.weekday())
+    )
+
+
+# ---------------------------------------------------------------------------
+# Background cron scheduler
+# ---------------------------------------------------------------------------
+
+_scheduler_task: Optional[asyncio.Task] = None
+_scheduler_status: dict[str, Any] = {
+    "running": False,
+    "last_check": None,
+    "tasks_due": 0,
+    "tasks_executed": 0,
+    "last_error": None,
+}
+
+
+async def _cron_scheduler_loop():
+    """Background loop: every 60s, check enabled tasks with cron and run due ones."""
+    global _scheduler_status
+    _scheduler_status["running"] = True
+    logger.info("Cron scheduler pornit.")
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+
+            now = datetime.now(timezone.utc)
+            _scheduler_status["last_check"] = now.isoformat()
+            tasks_due = 0
+
+            async with get_db() as db:
+                cursor = await db.execute(
+                    """SELECT id, name, schedule_cron, action_type, action_config, last_run
+                       FROM scheduled_tasks
+                       WHERE enabled = 1 AND schedule_cron IS NOT NULL AND schedule_cron != ''"""
+                )
+                tasks = [_row_dict(r) for r in await cursor.fetchall()]
+
+            for task in tasks:
+                try:
+                    if not _cron_matches(task["schedule_cron"], now):
+                        continue
+
+                    # Check last_run to avoid double-execution within the same minute
+                    if task.get("last_run"):
+                        try:
+                            last_run_str = task["last_run"]
+                            # Handle both ISO format and SQLite CURRENT_TIMESTAMP
+                            if "T" in last_run_str:
+                                last_run_dt = datetime.fromisoformat(
+                                    last_run_str.replace("Z", "+00:00")
+                                )
+                            else:
+                                last_run_dt = datetime.strptime(
+                                    last_run_str, "%Y-%m-%d %H:%M:%S"
+                                ).replace(tzinfo=timezone.utc)
+                            if (now - last_run_dt).total_seconds() < 59:
+                                continue
+                        except (ValueError, TypeError):
+                            pass  # If we can't parse last_run, run anyway
+
+                    tasks_due += 1
+
+                    # Create run record
+                    async with get_db() as db:
+                        cursor = await db.execute(
+                            "INSERT INTO task_runs (task_id, status) VALUES (?, 'running')",
+                            (task["id"],),
+                        )
+                        await db.commit()
+                        run_id = cursor.lastrowid
+
+                    # Execute the action
+                    config = None
+                    if task.get("action_config"):
+                        try:
+                            config = json.loads(task["action_config"])
+                        except (json.JSONDecodeError, TypeError):
+                            config = None
+
+                    try:
+                        output = await _run_action(task["action_type"], config)
+                        finished_at = datetime.now(timezone.utc).isoformat()
+
+                        async with get_db() as db:
+                            await db.execute(
+                                """UPDATE task_runs
+                                   SET status = 'success', output = ?, finished_at = ?
+                                   WHERE id = ?""",
+                                (output, finished_at, run_id),
+                            )
+                            await db.execute(
+                                "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
+                                (finished_at, task["id"]),
+                            )
+                            await db.commit()
+
+                        _scheduler_status["tasks_executed"] += 1
+                        logger.info(
+                            "Cron task executat: #%d '%s' - succes",
+                            task["id"], task["name"],
+                        )
+                    except Exception as exc:
+                        finished_at = datetime.now(timezone.utc).isoformat()
+                        async with get_db() as db:
+                            await db.execute(
+                                """UPDATE task_runs
+                                   SET status = 'failed', error = ?, finished_at = ?
+                                   WHERE id = ?""",
+                                (str(exc)[:1000], finished_at, run_id),
+                            )
+                            await db.execute(
+                                "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
+                                (finished_at, task["id"]),
+                            )
+                            await db.commit()
+                        logger.warning(
+                            "Cron task esuat: #%d '%s' - %s",
+                            task["id"], task["name"], exc,
+                        )
+
+                except Exception as exc:
+                    logger.warning("Eroare procesare cron task #%d: %s", task.get("id", 0), exc)
+
+            _scheduler_status["tasks_due"] = tasks_due
+
+        except asyncio.CancelledError:
+            logger.info("Cron scheduler oprit.")
+            _scheduler_status["running"] = False
+            return
+        except Exception as exc:
+            _scheduler_status["last_error"] = f"{datetime.now(timezone.utc).isoformat()}: {exc}"
+            logger.error("Eroare in cron scheduler: %s", exc)
+            # Continue running despite errors
+
+
+def start_cron_scheduler():
+    """Start the background cron scheduler task. Called from lifespan/startup."""
+    global _scheduler_task
+    if _scheduler_task is None or _scheduler_task.done():
+        _scheduler_task = asyncio.create_task(_cron_scheduler_loop())
+        logger.info("Cron scheduler task creat.")
+
+
+def stop_cron_scheduler():
+    """Stop the background cron scheduler task. Called from lifespan/shutdown."""
+    global _scheduler_task
+    if _scheduler_task and not _scheduler_task.done():
+        _scheduler_task.cancel()
+        logger.info("Cron scheduler task anulat.")
+    _scheduler_task = None
+    _scheduler_status["running"] = False
+
+
+# ---------------------------------------------------------------------------
+# Helper: create downtime notification
+# ---------------------------------------------------------------------------
+
+async def _create_downtime_notification(monitor_name: str, url: str, error: str | None):
+    """Insert a notification when a monitor transitions to down state."""
+    try:
+        msg = f"Monitorul '{monitor_name}' ({url}) este DOWN."
+        if error:
+            msg += f" Eroare: {error[:200]}"
+        async with get_db() as db:
+            await db.execute(
+                """INSERT INTO notifications (title, message, type, source, link)
+                   VALUES (?, ?, 'error', 'uptime_monitor', NULL)""",
+                (f"Downtime: {monitor_name}", msg),
+            )
+            await db.commit()
+        logger.info("Notificare downtime creata pentru: %s", monitor_name)
+    except Exception as exc:
+        logger.warning("Eroare creare notificare downtime: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +659,62 @@ async def run_task_now(task_id: int):
     return {"run_id": run_id, "status": "started"}
 
 
+@router.get("/scheduler/status")
+async def scheduler_status():
+    """Return the cron scheduler status: running, last check, tasks due."""
+    return {
+        "running": _scheduler_status.get("running", False),
+        "last_check": _scheduler_status.get("last_check"),
+        "tasks_due": _scheduler_status.get("tasks_due", 0),
+        "tasks_executed": _scheduler_status.get("tasks_executed", 0),
+        "last_error": _scheduler_status.get("last_error"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Cleanup old history records
+# ---------------------------------------------------------------------------
+
+@router.post("/cleanup")
+async def cleanup_old_records(days: int = 90):
+    """Delete old records: task_runs, uptime_history, activity_log older than N days."""
+    if days < 1:
+        raise HTTPException(status_code=400, detail="Numarul de zile trebuie sa fie minim 1")
+
+    deleted = {}
+    async with get_db() as db:
+        # task_runs older than N days
+        cursor = await db.execute(
+            "DELETE FROM task_runs WHERE started_at < datetime('now', ?)",
+            (f"-{days} days",),
+        )
+        deleted["task_runs"] = cursor.rowcount
+
+        # uptime_history older than N days
+        cursor = await db.execute(
+            "DELETE FROM uptime_history WHERE checked_at < datetime('now', ?)",
+            (f"-{days} days",),
+        )
+        deleted["uptime_history"] = cursor.rowcount
+
+        # activity_log older than N days
+        cursor = await db.execute(
+            "DELETE FROM activity_log WHERE timestamp < datetime('now', ?)",
+            (f"-{days} days",),
+        )
+        deleted["activity_log"] = cursor.rowcount
+
+        await db.commit()
+
+    total = sum(deleted.values())
+    await log_activity(
+        action="automations.cleanup",
+        summary=f"Cleanup: {total} inregistrari sterse (mai vechi de {days} zile)",
+        details=deleted,
+    )
+    return {"deleted": deleted, "total": total, "days": days}
+
+
 # ---------------------------------------------------------------------------
 # 16.3 Shortcuts
 # ---------------------------------------------------------------------------
@@ -415,6 +746,50 @@ async def create_shortcut(body: ShortcutCreate):
         summary=f"Shortcut creat: {body.name}",
     )
     return {"id": shortcut_id, "status": "created"}
+
+
+@router.put("/shortcuts/{shortcut_id}")
+async def update_shortcut(shortcut_id: int, body: ShortcutUpdate):
+    """Update an existing shortcut. Only provided fields are changed."""
+    async with get_db() as db:
+        cursor = await db.execute("SELECT id FROM shortcuts WHERE id = ?", (shortcut_id,))
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Shortcut negasit")
+
+        updates = []
+        params = []
+
+        if body.name is not None:
+            updates.append("name = ?")
+            params.append(body.name)
+        if body.icon is not None:
+            updates.append("icon = ?")
+            params.append(body.icon)
+        if body.color is not None:
+            updates.append("color = ?")
+            params.append(body.color)
+        if body.url_or_action is not None:
+            updates.append("url_or_action = ?")
+            params.append(body.url_or_action)
+        if body.sort_order is not None:
+            updates.append("sort_order = ?")
+            params.append(body.sort_order)
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="Nimic de actualizat")
+
+        params.append(shortcut_id)
+        await db.execute(
+            f"UPDATE shortcuts SET {', '.join(updates)} WHERE id = ?",
+            tuple(params),
+        )
+        await db.commit()
+
+    await log_activity(
+        action="automations.shortcut_update",
+        summary=f"Shortcut actualizat: #{shortcut_id}",
+    )
+    return {"status": "updated"}
 
 
 @router.delete("/shortcuts/{shortcut_id}")
@@ -464,11 +839,30 @@ async def _ping_url(monitor_id: int, url: str) -> dict:
 
 
 async def _monitor_loop(monitor_id: int, url: str, interval: int):
-    """Background loop that pings a URL at intervals."""
+    """Background loop that pings a URL at intervals, with downtime alerting."""
+    prev_ok = True  # Assume OK at start; detect transition to FAIL
+
+    # Load initial state from DB
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT last_status, name FROM uptime_monitors WHERE id = ?",
+                (monitor_id,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                last_status = _row_dict(row).get("last_status")
+                if last_status is not None:
+                    prev_ok = 200 <= last_status < 400
+    except Exception:
+        pass
+
     while True:
         try:
             result = await _ping_url(monitor_id, url)
             now = datetime.now(timezone.utc).isoformat()
+
+            current_ok = (200 <= result["status_code"] < 400) and result["error"] is None
 
             async with get_db() as db:
                 await db.execute(
@@ -483,6 +877,18 @@ async def _monitor_loop(monitor_id: int, url: str, interval: int):
                     (result["status_code"], result["response_ms"], now, monitor_id),
                 )
                 await db.commit()
+
+                # Detect transition OK -> FAIL: create downtime notification
+                if prev_ok and not current_ok:
+                    cursor = await db.execute(
+                        "SELECT name FROM uptime_monitors WHERE id = ?", (monitor_id,)
+                    )
+                    mon_row = await cursor.fetchone()
+                    mon_name = _row_dict(mon_row)["name"] if mon_row else f"Monitor #{monitor_id}"
+                    await _create_downtime_notification(mon_name, url, result.get("error"))
+
+            prev_ok = current_ok
+
         except Exception as exc:
             logger.warning("Monitor %d ping error: %s", monitor_id, exc)
 
@@ -542,6 +948,62 @@ async def create_monitor(body: MonitorCreate):
         summary=f"Monitor creat: {body.name} ({body.url})",
     )
     return {"id": monitor_id, "status": "created"}
+
+
+@router.put("/monitors/{monitor_id}")
+async def update_monitor(monitor_id: int, body: MonitorUpdate):
+    """Update an existing uptime monitor. Only provided fields are changed."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT * FROM uptime_monitors WHERE id = ?", (monitor_id,)
+        )
+        existing = await cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Monitor negasit")
+
+        existing_dict = _row_dict(existing)
+
+        updates = []
+        params = []
+
+        if body.name is not None:
+            updates.append("name = ?")
+            params.append(body.name)
+        if body.url is not None:
+            updates.append("url = ?")
+            params.append(body.url)
+        if body.interval_seconds is not None:
+            updates.append("interval_seconds = ?")
+            params.append(body.interval_seconds)
+        if body.enabled is not None:
+            updates.append("enabled = ?")
+            params.append(int(body.enabled))
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="Nimic de actualizat")
+
+        params.append(monitor_id)
+        await db.execute(
+            f"UPDATE uptime_monitors SET {', '.join(updates)} WHERE id = ?",
+            tuple(params),
+        )
+        await db.commit()
+
+    # Restart or stop monitor background task if needed
+    new_enabled = body.enabled if body.enabled is not None else bool(existing_dict.get("enabled", 1))
+    new_url = body.url if body.url is not None else existing_dict["url"]
+    new_interval = body.interval_seconds if body.interval_seconds is not None else existing_dict["interval_seconds"]
+
+    if new_enabled:
+        _start_monitor(monitor_id, new_url, new_interval)
+    else:
+        _stop_monitor(monitor_id)
+
+    await log_activity(
+        action="automations.monitor_update",
+        summary=f"Monitor actualizat: #{monitor_id}",
+    )
+    return {"status": "updated"}
 
 
 @router.delete("/monitors/{monitor_id}")
@@ -908,3 +1370,29 @@ async def delete_notification(notif_id: int):
         await db.execute("DELETE FROM notifications WHERE id = ?", (notif_id,))
         await db.commit()
     return {"message": "Notificare stearsa."}
+
+
+# ---------------------------------------------------------------------------
+# Internal notify endpoint (for cross-module notifications)
+# ---------------------------------------------------------------------------
+
+@router.post("/notify", status_code=201)
+async def notify_internal(data: NotifyRequest):
+    """Internal endpoint: any module can create a notification.
+
+    Accepts source, title, message, severity. Maps severity to type.
+    """
+    # Map severity to notification type for consistency
+    type_map = {"info": "info", "warning": "warning", "error": "error", "success": "success"}
+    notif_type = type_map.get(data.severity, "info")
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            """INSERT INTO notifications (title, message, type, source)
+               VALUES (?, ?, ?, ?)""",
+            (data.title, data.message, notif_type, data.source),
+        )
+        await db.commit()
+        notif_id = cursor.lastrowid
+
+    return {"id": notif_id, "message": "Notificare creata."}

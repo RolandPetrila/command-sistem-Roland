@@ -1,26 +1,31 @@
 """
 API endpoints pentru Quick Tools Extra:
-  - Calculator avansat (expresii matematice, safe parsing)
-  - Generator parole securizate
-  - Generator coduri de bare (Code128, EAN-13, Code39, QR)
+  - Calculator avansat (expresii matematice, safe parsing, SQLite history, ans, stats, preview)
+  - Generator parole securizate (history sesiune, passphrase romaneasca)
+  - Generator coduri de bare (Code128, EAN-13, Code39, QR, download, multi-preview)
 """
 
 from __future__ import annotations
 
 import ast
+import base64
 import io
 import logging
 import math
 import operator
+import random
 import secrets
 import string
 from collections import deque
 from datetime import datetime
+from statistics import median as _stdlib_median
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Form, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+from app.db.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,40 @@ _UNARY_OPS = {
     ast.USub: operator.neg,
 }
 
+# Functii statistice
+def _stat_mean(*args):
+    """Media aritmetica a argumentelor."""
+    if not args:
+        raise ValueError("mean() necesita cel putin un argument")
+    return sum(args) / len(args)
+
+
+def _stat_median(*args):
+    """Mediana argumentelor."""
+    if not args:
+        raise ValueError("median() necesita cel putin un argument")
+    return float(_stdlib_median(args))
+
+
+def _stat_sum(*args):
+    """Suma argumentelor."""
+    return float(sum(args))
+
+
+def _stat_min(*args):
+    """Minimul argumentelor."""
+    if not args:
+        raise ValueError("min() necesita cel putin un argument")
+    return float(min(args))
+
+
+def _stat_max(*args):
+    """Maximul argumentelor."""
+    if not args:
+        raise ValueError("max() necesita cel putin un argument")
+    return float(max(args))
+
+
 # Functii matematice permise
 _SAFE_FUNCTIONS = {
     "sqrt": math.sqrt,
@@ -67,13 +106,20 @@ _SAFE_FUNCTIONS = {
     "factorial": math.factorial,
     "radians": math.radians,
     "degrees": math.degrees,
+    # Functii statistice (Feature #4)
+    "mean": _stat_mean,
+    "median": _stat_median,
+    "sum": _stat_sum,
+    "min": _stat_min,
+    "max": _stat_max,
 }
 
-# Constante permise
+# Constante permise (Feature #2: ans initialized to 0)
 _SAFE_CONSTANTS = {
     "pi": math.pi,
     "e": math.e,
     "tau": math.tau,
+    "ans": 0.0,
 }
 
 
@@ -106,7 +152,7 @@ def _safe_eval_node(node: ast.AST) -> float:
             raise ValueError("Exponentul este prea mare (max 1000)")
         return op_func(left, right)
 
-    # Apel de functie: sqrt(x), sin(x), pow(x, y)
+    # Apel de functie: sqrt(x), sin(x), pow(x, y), mean(1,2,3)
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name):
             raise ValueError("Apeluri de functii complexe nu sunt permise")
@@ -119,7 +165,7 @@ def _safe_eval_node(node: ast.AST) -> float:
             raise ValueError(f"Functia {func_name} necesita cel putin un argument")
         return float(func(*args))
 
-    # Variabila (constanta): pi, e
+    # Variabila (constanta): pi, e, ans
     if isinstance(node, ast.Name):
         name = node.id.lower()
         if name in _SAFE_CONSTANTS:
@@ -164,8 +210,47 @@ def _safe_calculate(expression: str) -> float:
     return _safe_eval_node(tree.body)
 
 
-# Istoric calcule in memorie (ultimele 20)
-_calc_history: deque[dict] = deque(maxlen=20)
+def _format_result(result: float) -> str:
+    """Formateaza rezultatul: intreg daca e posibil, altfel 10 decimale semnificative."""
+    if result == float("inf") or result == float("-inf") or math.isnan(result):
+        raise ValueError("Rezultat invalid (infinit sau NaN)")
+    if result == int(result) and abs(result) < 1e15:
+        return str(int(result))
+    return f"{result:.10g}"
+
+
+# Helper: ensure calc_history table exists in SQLite (Feature #3)
+async def _ensure_calc_table():
+    """Creeaza tabelul calc_history daca nu exista."""
+    async with get_db() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS calc_history (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                expression TEXT NOT NULL,
+                processed  TEXT NOT NULL,
+                result     REAL NOT NULL,
+                formatted  TEXT NOT NULL,
+                timestamp  TEXT NOT NULL
+            )
+        """)
+        await db.commit()
+
+
+async def _save_calc_entry(entry: dict):
+    """Salveaza o intrare in calc_history si pastreaza max 100."""
+    await _ensure_calc_table()
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO calc_history (expression, processed, result, formatted, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (entry["expression"], entry["processed"], entry["result"], entry["formatted"], entry["timestamp"]),
+        )
+        # Pastreaza doar ultimele 100 intrari
+        await db.execute("""
+            DELETE FROM calc_history WHERE id NOT IN (
+                SELECT id FROM calc_history ORDER BY id DESC LIMIT 100
+            )
+        """)
+        await db.commit()
 
 
 class CalcRequest(BaseModel):
@@ -184,7 +269,8 @@ class CalcResponse(BaseModel):
 async def calculate(req: CalcRequest):
     """
     Evalueaza o expresie matematica in mod sigur (fara eval).
-    Suporta: +, -, *, /, **, %, sqrt, pow, sin, cos, tan, log, pi, e, paranteze.
+    Suporta: +, -, *, /, **, %, sqrt, pow, sin, cos, tan, log, pi, e, ans,
+    mean, median, sum, min, max, paranteze.
     """
     expression = req.expression.strip()
     processed = _preprocess_expression(expression)
@@ -196,14 +282,13 @@ async def calculate(req: CalcRequest):
     except (OverflowError, ZeroDivisionError) as exc:
         raise HTTPException(status_code=400, detail=f"Eroare de calcul: {exc}")
 
-    # Formatare rezultat: intreg daca e posibil, altfel 10 decimale semnificative
-    if result == float("inf") or result == float("-inf") or math.isnan(result):
-        raise HTTPException(status_code=400, detail="Rezultat invalid (infinit sau NaN)")
+    try:
+        formatted = _format_result(result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    if result == int(result) and abs(result) < 1e15:
-        formatted = str(int(result))
-    else:
-        formatted = f"{result:.10g}"
+    # Feature #2: Update ans with last result
+    _SAFE_CONSTANTS["ans"] = result
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     entry = {
@@ -213,28 +298,88 @@ async def calculate(req: CalcRequest):
         "formatted": formatted,
         "timestamp": timestamp,
     }
-    _calc_history.appendleft(entry)
+
+    # Feature #3: Persist to SQLite
+    try:
+        await _save_calc_entry(entry)
+    except Exception as exc:
+        logger.warning("Nu s-a putut salva in calc_history: %s", exc)
 
     logger.info("Calculator: %s = %s", expression, formatted)
     return CalcResponse(**entry)
 
 
+# Feature #1: Live preview endpoint (GET, no history save)
+@router.get("/calc-preview")
+async def calc_preview(expression: str = Query(..., min_length=1, max_length=500, description="Expresia de previzualizat")):
+    """
+    Evalueaza o expresie matematica fara a salva in istoric.
+    Folosit pentru preview live la fiecare keystroke.
+    """
+    expression = expression.strip()
+    if not expression:
+        raise HTTPException(status_code=400, detail="Expresia este goala")
+
+    processed = _preprocess_expression(expression)
+
+    try:
+        result = _safe_calculate(expression)
+    except (ValueError, OverflowError, ZeroDivisionError):
+        # La preview, returnam null pentru expresii incomplete/invalide
+        return {"expression": expression, "processed": processed, "result": None, "formatted": None, "valid": False}
+
+    try:
+        formatted = _format_result(result)
+    except ValueError:
+        return {"expression": expression, "processed": processed, "result": None, "formatted": None, "valid": False}
+
+    return {
+        "expression": expression,
+        "processed": processed,
+        "result": result,
+        "formatted": formatted,
+        "valid": True,
+    }
+
+
 @router.get("/calc-history")
 async def get_calc_history():
-    """Returneaza istoricul ultimelor 20 de calcule."""
-    return {"history": list(_calc_history)}
+    """Returneaza istoricul ultimelor 100 de calcule din SQLite."""
+    try:
+        await _ensure_calc_table()
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT expression, processed, result, formatted, timestamp FROM calc_history ORDER BY id DESC LIMIT 100"
+            )
+            rows = await cursor.fetchall()
+            history = [dict(row) for row in rows]
+    except Exception as exc:
+        logger.warning("Nu s-a putut citi calc_history: %s", exc)
+        history = []
+    return {"history": history}
 
 
 @router.delete("/calc-history")
 async def clear_calc_history():
-    """Sterge istoricul de calcule."""
-    _calc_history.clear()
+    """Sterge intregul istoric de calcule din SQLite."""
+    try:
+        await _ensure_calc_table()
+        async with get_db() as db:
+            await db.execute("DELETE FROM calc_history")
+            await db.commit()
+    except Exception as exc:
+        logger.warning("Nu s-a putut sterge calc_history: %s", exc)
+        return {"status": "error", "message": f"Eroare la stergere: {exc}"}
     return {"status": "ok", "message": "Istoric sters"}
 
 
 # ---------------------------------------------------------------------------
 # 2. GENERATOR PAROLE
 # ---------------------------------------------------------------------------
+
+# Feature #5: Password history — in-memory, session-only
+_password_history: deque[dict] = deque(maxlen=10)
+
 
 class PasswordRequest(BaseModel):
     length: int = Field(16, ge=8, le=128, description="Lungime parola (8-128)")
@@ -432,6 +577,15 @@ async def generate_password(req: PasswordRequest):
 
     strength = _check_password_strength(password)
 
+    # Feature #5: Save to session history
+    _password_history.appendleft({
+        "password": password,
+        "length": len(password),
+        "strength_label": strength["label"],
+        "character_sets": char_sets_used,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+
     logger.info("Password generated: length=%d, sets=%d", req.length, len(char_sets_used))
     return PasswordResponse(
         password=password,
@@ -448,6 +602,106 @@ async def check_password_strength(req: StrengthRequest):
     return StrengthResponse(**result)
 
 
+# Feature #5: Password history endpoint (session-only, in-memory)
+@router.get("/password-history")
+async def get_password_history():
+    """Returneaza ultimele 10 parole generate in sesiunea curenta (nu sunt persistente)."""
+    return {"history": list(_password_history)}
+
+
+# Feature #6: Memorable passphrase generator
+# 200+ common Romanian words (nouns + adjectives, easy to remember)
+_RO_WORDS = [
+    # Natura
+    "munte", "vale", "rau", "lac", "mare", "ocean", "padure", "camp", "deal",
+    "soare", "luna", "stea", "noapte", "ziua", "cer", "nori", "ploaie", "zapada",
+    "vant", "furtuna", "fulger", "tunet", "curcubeu", "rasarit", "apus",
+    # Animale
+    "lup", "urs", "vulpe", "cerb", "iepure", "bufnita", "vultur", "soim",
+    "cal", "pisica", "caine", "leu", "tigru", "dragon", "corb", "porumbel",
+    "delfin", "balena", "rechin", "somon", "lupi", "caprioara",
+    # Culori
+    "rosu", "albastru", "verde", "galben", "alb", "negru", "portocaliu",
+    "violet", "roz", "auriu", "argintiu", "maro", "gri",
+    # Obiecte / Casa
+    "casa", "masa", "scaun", "fereastra", "usa", "cheie", "lampa", "carte",
+    "pix", "ceas", "oglinda", "cutie", "punte", "turn", "pod", "drum",
+    "clopot", "lanterna", "busola", "ancora", "coroana", "scut", "sabie",
+    # Mancare
+    "paine", "mere", "struguri", "cirese", "nuci", "miere", "lapte",
+    "branza", "cascaval", "ciocolata", "cafea", "ceai", "vin", "bere",
+    "lamaie", "portocala", "banana", "capsuni", "zmeura", "piersica",
+    # Calitati / Adjective
+    "rapid", "lent", "mare", "mic", "frumos", "vesel", "trist", "cald",
+    "rece", "dulce", "amar", "sarat", "puternic", "bland", "luminos",
+    "intunecat", "tanar", "batran", "nou", "vechi", "simplu", "magic",
+    "secret", "liber", "curajos", "destept", "harnic", "cuminte",
+    # Locuri
+    "castel", "palat", "gradina", "piata", "sat", "oras", "tara",
+    "insula", "pestera", "colina", "cascada", "plaja", "port", "gara",
+    "biserica", "muzeu", "scoala", "parc", "stadion", "ferma",
+    # Actiuni / Verbe scurte ca substantive
+    "zbor", "salt", "dans", "cantec", "vis", "joc", "lupta", "pace",
+    "timp", "foc", "apa", "pamant", "aer", "spirit", "suflet",
+    "putere", "viteza", "gratie", "noroc", "destin",
+    # Meserii / Persoane
+    "rege", "regina", "cavaler", "mag", "pirat", "capitan", "pilot",
+    "maestru", "artist", "poet", "erou", "gardian", "calator", "vanator",
+    # Obiecte mitice / Fantasy
+    "cristal", "rubin", "safir", "smarald", "diamant", "otel", "fier",
+    "bronz", "cupru", "argint", "aur", "topaz", "onix", "perla",
+    # Astronomie
+    "cometa", "nebula", "galaxie", "planeta", "eclipsa", "meteor",
+    "aurora", "cosmos", "orbital", "stelar", "lunar", "solar",
+    # Extra substantive comune
+    "floare", "copac", "frunza", "radacina", "ramura", "seminta",
+    "piatra", "nisip", "stanca", "gheata", "abur", "ceata", "roua",
+    "tunel", "bariera", "far", "barca", "vapor", "tren", "avion",
+]
+
+
+@router.get("/generate-passphrase")
+async def generate_passphrase(
+    words: int = Query(4, ge=3, le=8, description="Numarul de cuvinte (3-8)"),
+    separator: str = Query("-", max_length=5, description="Separator intre cuvinte"),
+):
+    """
+    Genereaza o fraza-parola memorabila din cuvinte romanesti comune.
+    Exemplu: castel-verde-munte-7
+    """
+    if not _RO_WORDS:
+        raise HTTPException(status_code=500, detail="Lista de cuvinte nu este disponibila")
+
+    # Selecteaza cuvinte random (cu secrets pentru securitate)
+    chosen_words = [secrets.choice(_RO_WORDS) for _ in range(words)]
+    # Adauga un numar random la sfarsit (0-99)
+    random_number = str(secrets.randbelow(100))
+    parts = chosen_words + [random_number]
+    passphrase = separator.join(parts)
+
+    # Analiza forta
+    strength = _check_password_strength(passphrase)
+
+    # Salveaza si in password history
+    _password_history.appendleft({
+        "password": passphrase,
+        "length": len(passphrase),
+        "strength_label": strength["label"],
+        "character_sets": ["Cuvinte romanesti", f"{words} cuvinte + numar"],
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+
+    logger.info("Passphrase generated: %d words, separator='%s'", words, separator)
+    return {
+        "passphrase": passphrase,
+        "words": chosen_words,
+        "number": random_number,
+        "separator": separator,
+        "length": len(passphrase),
+        "strength": strength,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 3. GENERATOR CODURI DE BARE
 # ---------------------------------------------------------------------------
@@ -458,6 +712,7 @@ class BarcodeRequest(BaseModel):
     width: Optional[float] = Field(None, ge=0.1, le=5.0, description="Latimea barelor (mm)")
     height: Optional[float] = Field(None, ge=5.0, le=100.0, description="Inaltimea (mm)")
     show_text: bool = Field(True, description="Afiseaza textul sub cod")
+    download: bool = Field(False, description="Descarca fisierul in loc sa-l afiseze inline")
 
 
 _BARCODE_TYPES = {
@@ -484,6 +739,9 @@ async def generate_barcode(req: BarcodeRequest):
             detail=f"Tip necunoscut: '{req.barcode_type}'. Tipuri valide: {', '.join(_BARCODE_TYPES.keys())}",
         )
 
+    # Feature #7: Content-Disposition based on download flag
+    disposition = "attachment" if req.download else "inline"
+
     # QR code — folosim qrcode library daca exista, altfel eroare descriptiva
     if barcode_name == "qr":
         try:
@@ -500,10 +758,11 @@ async def generate_barcode(req: BarcodeRequest):
         img.save(buf, format="PNG")
         buf.seek(0)
 
+        safe_name = "".join(c if c.isalnum() else "_" for c in req.data[:20])
         return StreamingResponse(
             buf,
             media_type="image/png",
-            headers={"Content-Disposition": f'inline; filename="qr_{req.data[:20]}.png"'},
+            headers={"Content-Disposition": f'{disposition}; filename="qr_{safe_name}.png"'},
         )
 
     # Coduri de bare standard via python-barcode
@@ -558,8 +817,111 @@ async def generate_barcode(req: BarcodeRequest):
     return StreamingResponse(
         buf,
         media_type="image/png",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
+
+
+# Feature #8: Multi-preview — generate all barcode types at once as base64
+class BarcodePreviewAllRequest(BaseModel):
+    data: str = Field(..., min_length=1, max_length=500, description="Textul/codul de encodat")
+
+
+@router.post("/barcode-preview-all")
+async def barcode_preview_all(req: BarcodePreviewAllRequest):
+    """
+    Genereaza TOATE tipurile de coduri de bare simultan.
+    Returneaza JSON cu base64 PNG pentru fiecare tip.
+    Tipurile care esueaza sunt omise.
+    """
+    results = {}
+    data = req.data.strip()
+
+    if not data:
+        raise HTTPException(status_code=400, detail="Datele de intrare sunt goale")
+
+    # Code128
+    try:
+        import barcode
+        from barcode.writer import ImageWriter
+
+        bc_class = barcode.get_barcode_class("code128")
+        code = bc_class(data, writer=ImageWriter())
+        buf = io.BytesIO()
+        code.write(buf, options={"write_text": True, "quiet_zone": 6.5})
+        buf.seek(0)
+        results["code128"] = {
+            "base64": base64.b64encode(buf.getvalue()).decode("utf-8"),
+            "type": "Code 128",
+            "success": True,
+        }
+    except Exception as exc:
+        results["code128"] = {"success": False, "error": str(exc), "type": "Code 128"}
+
+    # Code39
+    try:
+        import barcode
+        from barcode.writer import ImageWriter
+
+        bc_class = barcode.get_barcode_class("code39")
+        code = bc_class(data, writer=ImageWriter())
+        buf = io.BytesIO()
+        code.write(buf, options={"write_text": True, "quiet_zone": 6.5})
+        buf.seek(0)
+        results["code39"] = {
+            "base64": base64.b64encode(buf.getvalue()).decode("utf-8"),
+            "type": "Code 39",
+            "success": True,
+        }
+    except Exception as exc:
+        results["code39"] = {"success": False, "error": str(exc), "type": "Code 39"}
+
+    # EAN-13 (only if 12-13 digits)
+    digits_only = data.strip()
+    if digits_only.isdigit() and len(digits_only) in (12, 13):
+        try:
+            import barcode
+            from barcode.writer import ImageWriter
+
+            bc_class = barcode.get_barcode_class("ean13")
+            code = bc_class(digits_only, writer=ImageWriter())
+            buf = io.BytesIO()
+            code.write(buf, options={"write_text": True, "quiet_zone": 6.5})
+            buf.seek(0)
+            results["ean13"] = {
+                "base64": base64.b64encode(buf.getvalue()).decode("utf-8"),
+                "type": "EAN-13",
+                "success": True,
+            }
+        except Exception as exc:
+            results["ean13"] = {"success": False, "error": str(exc), "type": "EAN-13"}
+
+    # QR Code
+    try:
+        import qrcode
+
+        img = qrcode.make(data)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        results["qr"] = {
+            "base64": base64.b64encode(buf.getvalue()).decode("utf-8"),
+            "type": "QR Code",
+            "success": True,
+        }
+    except ImportError:
+        results["qr"] = {"success": False, "error": "Biblioteca qrcode nu este instalata", "type": "QR Code"}
+    except Exception as exc:
+        results["qr"] = {"success": False, "error": str(exc), "type": "QR Code"}
+
+    successful = sum(1 for v in results.values() if v.get("success"))
+    logger.info("Barcode preview all: data='%s', success=%d/%d", data[:30], successful, len(results))
+
+    return {
+        "data": data,
+        "results": results,
+        "total": len(results),
+        "successful": successful,
+    }
 
 
 @router.get("/barcode-types")

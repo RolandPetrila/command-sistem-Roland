@@ -50,6 +50,7 @@ class IndexDocumentRequest(BaseModel):
 
 class RagQueryRequest(BaseModel):
     question: str
+    max_docs: int | None = None  # Override via body (1-10)
 
 
 # ==========================================
@@ -297,12 +298,20 @@ async def search_documents(
 
 
 @router_doc_ops.post("/rag-query")
-async def rag_query(req: RagQueryRequest):
+async def rag_query(
+    req: RagQueryRequest,
+    max_docs: int = Query(3, ge=1, le=10, description="Nr. maxim documente pentru context RAG"),
+):
     """
-    RAG: caută documente relevante, injectează top 3 ca context, AI răspunde.
+    RAG: caută documente relevante, injectează top N ca context, AI răspunde.
+    max_docs controlabil via query param (default 3, max 10).
     """
     if not req.question.strip():
         raise HTTPException(400, "Întrebarea este goală")
+
+    # Body field overrides query param if provided
+    doc_limit = req.max_docs if req.max_docs is not None else max_docs
+    doc_limit = max(1, min(10, doc_limit))
 
     # Search for relevant documents
     context_docs = []
@@ -314,8 +323,8 @@ async def rag_query(req: RagQueryRequest):
                 "JOIN document_index d ON d.id = document_fts.rowid "
                 "WHERE document_fts MATCH ? "
                 "ORDER BY rank "
-                "LIMIT 3",
-                (req.question,),
+                "LIMIT ?",
+                (req.question, doc_limit),
             )
             context_docs = [dict(r) for r in await cursor.fetchall()]
         except Exception as e:
@@ -324,10 +333,11 @@ async def rag_query(req: RagQueryRequest):
             search_terms = req.question.split()[:3]
             like_clause = " OR ".join(["content_text LIKE ?"] * len(search_terms))
             like_params = [f"%{t}%" for t in search_terms]
+            like_params.append(doc_limit)
             cursor = await db.execute(
                 f"SELECT file_name, content_text, classification "
                 f"FROM document_index WHERE {like_clause} "
-                f"ORDER BY indexed_at DESC LIMIT 3",
+                f"ORDER BY indexed_at DESC LIMIT ?",
                 like_params,
             )
             context_docs = [dict(r) for r in await cursor.fetchall()]

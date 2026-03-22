@@ -12,6 +12,7 @@ from app.api.routes_calibrate import router as calibrate_router
 from app.api.routes_files import router as files_router
 from app.api.routes_settings import router as settings_router
 from app.api.routes_competitors import router as competitors_router
+from app.api.routes_quick_quote import router as quick_quote_router
 
 MODULE_INFO = {
     "name": "calculator",
@@ -24,6 +25,7 @@ MODULE_INFO = {
         files_router,
         settings_router,
         competitors_router,
+        quick_quote_router,
     ],
     "category": "Traduceri",
     "icon": "Calculator",

@@ -2,29 +2,37 @@
 Translator API endpoints — traducere text/fisiere, TM, glosar, detectie limba, quality check.
 
 Endpoints:
-  POST   /api/translator/text           — Traducere text
-  POST   /api/translator/file           — Traducere fisier (PDF/DOCX/TXT)
-  POST   /api/translator/detect         — Detectie limba
-  POST   /api/translator/quality-check  — Evaluare calitate traducere (AI)
-  GET    /api/translator/tm             — Lista intrari TM
-  POST   /api/translator/tm             — Adaugare intrare TM
-  GET    /api/translator/tm/search      — Cautare in TM
-  GET    /api/translator/tm/stats       — Statistici TM
-  DELETE /api/translator/tm/{id}        — Sterge intrare TM
-  GET    /api/translator/glossary       — Lista termeni glosar
-  POST   /api/translator/glossary       — Adaugare termen
-  PUT    /api/translator/glossary/{id}  — Actualizare termen
-  DELETE /api/translator/glossary/{id}  — Stergere termen
+  POST   /api/translator/text            — Traducere text (cu cache)
+  POST   /api/translator/file            — Traducere fisier (PDF/DOCX/TXT)
+  POST   /api/translator/detect          — Detectie limba
+  POST   /api/translator/quality-check   — Evaluare calitate traducere (AI)
+  POST   /api/translator/compare         — Comparatie 2 provideri
+  GET    /api/translator/tm              — Lista intrari TM
+  POST   /api/translator/tm              — Adaugare intrare TM
+  GET    /api/translator/tm/search       — Cautare in TM
+  GET    /api/translator/tm/stats        — Statistici TM
+  DELETE /api/translator/tm/{id}         — Sterge intrare TM
+  GET    /api/translator/glossary        — Lista termeni glosar
+  POST   /api/translator/glossary        — Adaugare termen
+  PUT    /api/translator/glossary/{id}   — Actualizare termen
+  DELETE /api/translator/glossary/{id}   — Stergere termen
   POST   /api/translator/glossary/import — Import CSV
-  GET    /api/translator/usage          — Statistici utilizare provideri
-  GET    /api/translator/providers      — Lista provideri disponibili
+  GET    /api/translator/glossary/export — Export CSV glosar
+  GET    /api/translator/usage           — Statistici utilizare provideri
+  GET    /api/translator/providers       — Lista provideri disponibili
+  GET    /api/translator/history         — Istoric traduceri cu search/filtrare
 """
 
 from __future__ import annotations
 
+import asyncio
+import csv
+import hashlib
+import io
 import logging
 import os
 import tempfile
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -77,6 +85,7 @@ class TranslateTextRequest(BaseModel):
     use_tm: bool = True
     use_glossary: bool = True
     domain: str = "general"
+    auto_tm: bool = True
 
 
 class DetectRequest(BaseModel):
@@ -109,6 +118,14 @@ class GlossaryUpdateRequest(BaseModel):
     domain: str | None = None
     notes: str | None = None
     client_id: int | None = None
+
+
+class CompareRequest(BaseModel):
+    text: str = Field(..., max_length=50000)
+    source_lang: str = "en"
+    target_lang: str = "ro"
+    provider_a: str = Field(..., description="Primul provider (ex: deepl, azure, google)")
+    provider_b: str = Field(..., description="Al doilea provider (ex: deepl, azure, google)")
 
 
 # ---------------------------------------------------------------------------
@@ -145,21 +162,84 @@ async def _save_upload(file: UploadFile) -> str:
         return tmp.name
 
 
+def _compute_cache_hash(text: str, source_lang: str, target_lang: str) -> str:
+    """Compute SHA-256 hash for translation cache key."""
+    key = f"{text}|{source_lang.lower()}|{target_lang.lower()}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+async def _ensure_cache_table() -> None:
+    """Create translation_cache table if it does not exist."""
+    async with get_db() as db:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS translation_cache (
+                hash        TEXT PRIMARY KEY,
+                source_text TEXT NOT NULL,
+                target_text TEXT NOT NULL,
+                source_lang TEXT NOT NULL,
+                target_lang TEXT NOT NULL,
+                provider    TEXT NOT NULL,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.commit()
+
+
 # ---------------------------------------------------------------------------
 # POST /api/translator/text — Translate text
 # ---------------------------------------------------------------------------
 
 @router.post("/text")
 async def translate_text_endpoint(req: TranslateTextRequest):
-    """Traducere text cu suport TM si glosar."""
+    """Traducere text cu suport TM, glosar si cache."""
     if not req.text.strip():
         raise HTTPException(400, "Textul nu poate fi gol")
 
+    chars_count = len(req.text)
+    from_cache = False
+
+    # Step 0: Check translation cache
+    await _ensure_cache_table()
+    cache_hash = _compute_cache_hash(req.text, req.source_lang, req.target_lang)
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT target_text, provider FROM translation_cache WHERE hash = ?",
+            (cache_hash,),
+        )
+        cached = await cursor.fetchone()
+
+    if cached:
+        translated_text = cached["target_text"]
+        provider = cached["provider"] + " (cache)"
+        from_cache = True
+        tm_hits = 0
+        glossary_replacements = []
+
+        await log_activity(
+            action="translator.text",
+            summary=f"Traducere din cache {req.source_lang.upper()}->{req.target_lang.upper()}: {chars_count} car.",
+            details={"from_cache": True, "chars_count": chars_count},
+        )
+
+        return {
+            "translated_text": translated_text,
+            "provider": provider,
+            "source_lang": req.source_lang,
+            "target_lang": req.target_lang,
+            "chars_count": chars_count,
+            "tm_hits": 0,
+            "glossary_replacements": [],
+            "from_cache": True,
+        }
+
+    # Step 1: Apply glossary if enabled
     text_to_translate = req.text
     glossary_replacements = []
     tm_hits = 0
 
-    # Step 1: Apply glossary if enabled
     if req.use_glossary:
         glossary_result = await apply_glossary(text_to_translate, req.source_lang, req.target_lang)
         if glossary_result["replacements"]:
@@ -188,9 +268,18 @@ async def translate_text_endpoint(req: TranslateTextRequest):
         except RuntimeError as e:
             raise HTTPException(503, str(e))
 
-    chars_count = len(req.text)
+    # Step 3: Store in cache
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO translation_cache (hash, source_text, target_text, source_lang, target_lang, provider)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (cache_hash, req.text, translated_text, req.source_lang, req.target_lang, provider),
+        )
+        await db.commit()
 
-    # Step 3: Log translation in history
+    # Step 4: Log translation in history
     async with get_db() as db:
         await db.execute(
             """
@@ -200,6 +289,20 @@ async def translate_text_endpoint(req: TranslateTextRequest):
             (req.text, translated_text, req.source_lang, req.target_lang, provider, chars_count),
         )
         await db.commit()
+
+    # Step 5: Auto-populate TM if enabled
+    if req.auto_tm and translated_text and len(req.text.strip()) >= 5:
+        try:
+            await add_to_tm(
+                source=req.text.strip(),
+                target=translated_text.strip(),
+                source_lang=req.source_lang,
+                target_lang=req.target_lang,
+                domain=req.domain,
+            )
+            logger.debug("Auto-TM: segment adaugat (%s->%s)", req.source_lang, req.target_lang)
+        except Exception as e:
+            logger.warning("Auto-TM: eroare la adaugare segment: %s", e)
 
     await log_activity(
         action="translator.text",
@@ -211,6 +314,8 @@ async def translate_text_endpoint(req: TranslateTextRequest):
             "chars_count": chars_count,
             "tm_hits": tm_hits,
             "glossary_replacements": len(glossary_replacements),
+            "auto_tm": req.auto_tm,
+            "from_cache": False,
         },
     )
 
@@ -222,6 +327,7 @@ async def translate_text_endpoint(req: TranslateTextRequest):
         "chars_count": chars_count,
         "tm_hits": tm_hits,
         "glossary_replacements": glossary_replacements,
+        "from_cache": False,
     }
 
 
@@ -746,6 +852,51 @@ async def import_glossary(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/translator/glossary/export — Export glossary as CSV
+# ---------------------------------------------------------------------------
+
+@router.get("/glossary/export")
+async def export_glossary_csv():
+    """Export intreg glosarul ca fisier CSV."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT term_source, term_target, source_lang, target_lang, domain, notes
+            FROM glossary_terms
+            ORDER BY domain, term_source
+            """
+        )
+        rows = await cursor.fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["source", "target", "source_lang", "target_lang", "domain", "notes"])
+
+    for row in rows:
+        writer.writerow([
+            row["term_source"],
+            row["term_target"],
+            row["source_lang"],
+            row["target_lang"],
+            row["domain"],
+            row["notes"] or "",
+        ])
+
+    output.seek(0)
+
+    await log_activity(
+        action="translator.glossary_export",
+        summary=f"Export glosar CSV: {len(rows)} termeni",
+    )
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="glossary_export.csv"'},
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /api/translator/glossary/domains — List domains
 # ---------------------------------------------------------------------------
 
@@ -808,29 +959,70 @@ async def list_translation_providers():
 
 
 # ---------------------------------------------------------------------------
-# GET /api/translator/history — Translation history
+# GET /api/translator/history — Translation history with search + filters
 # ---------------------------------------------------------------------------
 
 @router.get("/history")
 async def translation_history(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    q: str = Query("", description="Cauta in text sursa/tradus"),
+    provider: str = Query("", description="Filtreaza dupa provider"),
+    source_lang: str = Query("", description="Filtreaza dupa limba sursa"),
+    target_lang: str = Query("", description="Filtreaza dupa limba tinta"),
+    date_from: str = Query("", description="De la data (YYYY-MM-DD)"),
+    date_to: str = Query("", description="Pana la data (YYYY-MM-DD)"),
+    page: int = Query(1, ge=1, description="Numar pagina"),
+    per_page: int = Query(20, ge=1, le=100, description="Rezultate per pagina"),
 ):
-    """Istoric traduceri recente."""
+    """Istoric traduceri cu cautare, filtre si paginare."""
+    conditions: list[str] = []
+    params: list = []
+
+    if q.strip():
+        conditions.append("(source_text LIKE ? OR target_text LIKE ?)")
+        like_q = f"%{q.strip()}%"
+        params.extend([like_q, like_q])
+
+    if provider.strip():
+        conditions.append("provider LIKE ?")
+        params.append(f"%{provider.strip()}%")
+
+    if source_lang.strip():
+        conditions.append("source_lang = ?")
+        params.append(source_lang.strip().lower())
+
+    if target_lang.strip():
+        conditions.append("target_lang = ?")
+        params.append(target_lang.strip().lower())
+
+    if date_from.strip():
+        conditions.append("created_at >= ?")
+        params.append(date_from.strip())
+
+    if date_to.strip():
+        conditions.append("created_at <= ?")
+        params.append(date_to.strip() + " 23:59:59")
+
+    where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+    offset = (page - 1) * per_page
+
     async with get_db() as db:
         cursor = await db.execute(
-            """
+            f"""
             SELECT id, source_text, target_text, source_lang, target_lang,
                    provider, chars_count, file_name, created_at
             FROM translations
+            {where_clause}
             ORDER BY created_at DESC
             LIMIT ? OFFSET ?
             """,
-            (limit, skip),
+            (*params, per_page, offset),
         )
         rows = [dict(r) for r in await cursor.fetchall()]
 
-        cursor_count = await db.execute("SELECT COUNT(*) as cnt FROM translations")
+        cursor_count = await db.execute(
+            f"SELECT COUNT(*) as cnt FROM translations {where_clause}",
+            params,
+        )
         total = (await cursor_count.fetchone())["cnt"]
 
     # Truncate long texts for list view
@@ -840,7 +1032,15 @@ async def translation_history(
         if row.get("target_text") and len(row["target_text"]) > 200:
             row["target_text"] = row["target_text"][:200] + "..."
 
-    return {"items": rows, "total": total, "skip": skip, "limit": limit}
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    return {
+        "items": rows,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -946,4 +1146,72 @@ Raspunde DOAR cu JSON-ul, nimic altceva."""
         "issues": issues,
         "suggestions": suggestions,
         "provider": provider,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/translator/compare — Compare 2 providers side-by-side
+# ---------------------------------------------------------------------------
+
+@router.post("/compare")
+async def compare_providers(req: CompareRequest):
+    """Compara rezultatul traducerii de la 2 provideri diferiti, in paralel."""
+    if not req.text.strip():
+        raise HTTPException(400, "Textul nu poate fi gol")
+
+    if req.provider_a == req.provider_b:
+        raise HTTPException(400, "Alege doi provideri diferiti pentru comparatie")
+
+    async def _translate_timed(provider_name: str) -> dict:
+        """Translate with a specific provider and measure time."""
+        start = time.perf_counter()
+        try:
+            result = await translate_with_chain(
+                req.text, req.source_lang, req.target_lang, provider_name
+            )
+            elapsed = round(time.perf_counter() - start, 3)
+            return {
+                "provider": result["provider"],
+                "translated_text": result["translated_text"],
+                "time_seconds": elapsed,
+                "error": None,
+            }
+        except Exception as e:
+            elapsed = round(time.perf_counter() - start, 3)
+            return {
+                "provider": provider_name,
+                "translated_text": None,
+                "time_seconds": elapsed,
+                "error": str(e),
+            }
+
+    result_a, result_b = await asyncio.gather(
+        _translate_timed(req.provider_a),
+        _translate_timed(req.provider_b),
+    )
+
+    await log_activity(
+        action="translator.compare",
+        summary=(
+            f"Comparatie {req.provider_a} vs {req.provider_b} "
+            f"({req.source_lang.upper()}->{req.target_lang.upper()}, {len(req.text)} car.)"
+        ),
+        details={
+            "provider_a": req.provider_a,
+            "provider_b": req.provider_b,
+            "source_lang": req.source_lang,
+            "target_lang": req.target_lang,
+            "chars_count": len(req.text),
+            "time_a": result_a["time_seconds"],
+            "time_b": result_b["time_seconds"],
+        },
+    )
+
+    return {
+        "source_text": req.text,
+        "source_lang": req.source_lang,
+        "target_lang": req.target_lang,
+        "chars_count": len(req.text),
+        "provider_a": result_a,
+        "provider_b": result_b,
     }

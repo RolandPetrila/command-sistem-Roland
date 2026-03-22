@@ -112,9 +112,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Verificare directoare...")
     settings.ensure_dirs()
 
+    # Start cron scheduler background task
+    try:
+        from modules.automations.router import start_cron_scheduler
+        start_cron_scheduler()
+        logger.info("Cron scheduler pornit.")
+    except Exception as exc:
+        logger.warning("Nu s-a putut porni cron scheduler: %s", exc)
+
     logger.info("Server pornit. Uploads: %s", settings.uploads_dir)
     yield
     # --- Shutdown ---
+    try:
+        from modules.automations.router import stop_cron_scheduler
+        stop_cron_scheduler()
+        logger.info("Cron scheduler oprit.")
+    except Exception as exc:
+        logger.warning("Nu s-a putut opri cron scheduler: %s", exc)
     logger.info("Server oprit.")
 
 
@@ -272,8 +286,10 @@ async def rate_limiter(request: Request, call_next):
     now = time.time()
     window = 60  # 1 minute
 
-    # Determine limit based on path
-    is_strict = any(path.startswith(p) for p in _STRICT_RATE_PATHS)
+    # Strict limit only for mutating methods (POST/PUT/DELETE) on AI/translate paths
+    # GET requests are data fetching (providers, templates, sessions) — use global limit
+    method = request.method
+    is_strict = method in ("POST", "PUT", "DELETE") and any(path.startswith(p) for p in _STRICT_RATE_PATHS)
     limit = 10 if is_strict else 60
     bucket_key = f"{client_ip}:{'strict' if is_strict else 'global'}"
 

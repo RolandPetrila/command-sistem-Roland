@@ -460,6 +460,30 @@ async def get_dashboard_insights():
         }
 
 
+@router_tools.post("/insights/refresh")
+async def refresh_insights():
+    """
+    Invalidează cache-ul de insights și forțează regenerare.
+    Șterge intrarea din ai_insights_cache și apelează get_dashboard_insights.
+    """
+    async with get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM ai_insights_cache WHERE cache_key = 'dashboard_insights'"
+        )
+        deleted = cursor.rowcount
+        await db.commit()
+
+    await log_activity(
+        action="ai.insights_refresh",
+        summary=f"Cache insights invalidat ({deleted} intrări șterse)",
+    )
+
+    # Regenerate fresh insights
+    fresh = await get_dashboard_insights()
+    fresh["cache_cleared"] = True
+    return fresh
+
+
 # ==========================================
 # 15B.10 — COMPETITOR PRICE COMPARISON
 # ==========================================

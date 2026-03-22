@@ -127,6 +127,34 @@ class TemplateGenerateRequest(BaseModel):
     output_format: str = "docx"  # docx or pdf
 
 
+class ItemPresetCreate(BaseModel):
+    description: str
+    unit_price: float = 0.0
+    unit: str = "buc"
+    category: str = "general"
+
+
+class RecurringSet(BaseModel):
+    frequency: str = "monthly"  # monthly, quarterly, yearly
+    next_due: Optional[str] = None  # YYYY-MM-DD; auto-calculated if None
+
+
+class PartialPayment(BaseModel):
+    amount: float
+    payment_date: str = Field(default_factory=lambda: date.today().isoformat())
+    method: str = "transfer"  # transfer, cash, card
+    notes: Optional[str] = None
+
+
+class FromCalculationRequest(BaseModel):
+    word_count: int
+    price: float
+    document_type: Optional[str] = None
+    source_lang: str = "EN"
+    target_lang: str = "RO"
+    client_id: Optional[int] = None
+
+
 # ═══════════════════════════════════════════
 # Helper functions
 # ═══════════════════════════════════════════
@@ -192,6 +220,27 @@ def _row_to_dict(row) -> dict:
 # PDF builder (used by pdf_generation.py and crud.py)
 # ═══════════════════════════════════════════
 
+def _draw_watermark(canvas_obj, doc_obj, watermark_text: str) -> None:
+    """
+    Draw a large diagonal watermark on the PDF page.
+    Used for DRAFT and ANULAT statuses.
+    """
+    from reportlab.lib.pagesizes import A4
+    import math
+
+    if not watermark_text:
+        return
+
+    width, height = A4
+    canvas_obj.saveState()
+    canvas_obj.setFont("Helvetica-Bold", 72)
+    canvas_obj.setFillColorRGB(0.85, 0.2, 0.2, alpha=0.15)
+    canvas_obj.translate(width / 2, height / 2)
+    canvas_obj.rotate(45)
+    canvas_obj.drawCentredString(0, 0, watermark_text)
+    canvas_obj.restoreState()
+
+
 def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> None:
     """
     Genereaza PDF profesional pentru factura.
@@ -199,6 +248,7 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
     Header: CIP Inspection SRL / CUI 43978110
     Continut: detalii client, tabel articole, totaluri
     Footer: detalii bancare placeholder
+    Watermark: DRAFT (pentru draft) sau ANULAT (pentru cancelled)
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -212,6 +262,19 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+
+    # Determine watermark text based on status
+    status = invoice.get("status", "draft").lower()
+    watermark_text = ""
+    if status == "draft":
+        watermark_text = "DRAFT"
+    elif status == "cancelled":
+        watermark_text = "ANULAT"
+
+    def _page_callback(canvas_obj, doc_obj):
+        """Called on every page to draw watermark if needed."""
+        if watermark_text:
+            _draw_watermark(canvas_obj, doc_obj, watermark_text)
 
     doc = SimpleDocTemplate(
         output_path,
@@ -410,4 +473,4 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
         style_footer,
     ))
 
-    doc.build(elements)
+    doc.build(elements, onFirstPage=_page_callback, onLaterPages=_page_callback)

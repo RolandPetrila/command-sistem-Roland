@@ -40,6 +40,21 @@ router = APIRouter(prefix="/api/converter", tags=["converter"])
 _TMP = Path(gettempdir()) / "roland_converter"
 _TMP.mkdir(exist_ok=True)
 
+# ---------- File size limit ----------
+_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+def _check_file_size(content: bytes, filename: str | None = None):
+    """Raise HTTP 413 if content exceeds _MAX_FILE_SIZE."""
+    if len(content) > _MAX_FILE_SIZE:
+        size_mb = len(content) / (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"Fisierul depaseste limita de 50MB. "
+            f"Dimensiune: {size_mb:.1f}MB"
+            + (f" ({filename})" if filename else ""),
+        )
+
 
 def _uid() -> str:
     return uuid.uuid4().hex[:8]
@@ -113,6 +128,7 @@ async def pdf_to_docx(file: UploadFile = File(...)):
         raise HTTPException(400, f"Fisierul trebuie sa fie PDF. Primit: {file.filename!r} ({file.content_type})")
 
     content = await file.read()
+    _check_file_size(content, file.filename)
     safe = _safe_name(file.filename, ".pdf")
     out_name = f"{Path(safe).stem}.docx"
 
@@ -157,6 +173,7 @@ async def docx_to_pdf(file: UploadFile = File(...)):
         )
 
     content = await file.read()
+    _check_file_size(content, file.filename)
     logger.info("DOCX->PDF: read %d bytes", len(content))
 
     # Force .docx extension for temp file (Android may strip it)
@@ -165,7 +182,8 @@ async def docx_to_pdf(file: UploadFile = File(...)):
         safe_name += ".docx"
     out_name = f"{Path(safe_name).stem}.pdf"
 
-    def _convert(data: bytes) -> bytes:
+    def _convert_with_word(data: bytes) -> bytes:
+        """Primary path: use COM automation via docx2pdf (requires MS Word)."""
         import pythoncom
         pythoncom.CoInitialize()
         try:
@@ -175,25 +193,139 @@ async def docx_to_pdf(file: UploadFile = File(...)):
             out = _tmp(out_name)
             try:
                 inp.write_bytes(data)
-                logger.info("DOCX->PDF: converting %s -> %s", inp, out)
+                logger.info("DOCX->PDF: converting via Word %s -> %s", inp, out)
                 convert(str(inp), str(out))
                 if not out.exists():
                     raise FileNotFoundError(f"Output file not created: {out}")
                 result = out.read_bytes()
-                logger.info("DOCX->PDF: success, output %d bytes", len(result))
+                logger.info("DOCX->PDF: Word success, output %d bytes", len(result))
                 return result
             finally:
                 _cleanup(inp, out)
         finally:
             pythoncom.CoUninitialize()
 
+    def _convert_fallback(data: bytes) -> bytes:
+        """Fallback: extract text via python-docx, generate PDF via reportlab.
+
+        Produces a basic text-only PDF (no complex formatting) but works
+        without Microsoft Word installed.
+        """
+        from docx import Document
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import cm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table
+
+        logger.info("DOCX->PDF: using reportlab fallback (Word unavailable)")
+
+        doc = Document(io.BytesIO(data))
+
+        # Build PDF
+        buf = io.BytesIO()
+        pdf = SimpleDocTemplate(
+            buf,
+            pagesize=A4,
+            leftMargin=2 * cm,
+            rightMargin=2 * cm,
+            topMargin=2 * cm,
+            bottomMargin=2 * cm,
+        )
+
+        styles = getSampleStyleSheet()
+        # Create styles for headings with explicit fontName to avoid missing font errors
+        heading_styles = {}
+        for level in range(1, 4):
+            size = {1: 16, 2: 14, 3: 12}[level]
+            heading_styles[level] = ParagraphStyle(
+                f"CustomHeading{level}",
+                parent=styles["Normal"],
+                fontSize=size,
+                fontName="Helvetica-Bold",
+                spaceAfter=6,
+                spaceBefore=12,
+            )
+        normal_style = ParagraphStyle(
+            "CustomNormal",
+            parent=styles["Normal"],
+            fontSize=10,
+            fontName="Helvetica",
+            spaceAfter=4,
+        )
+
+        story = []
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                story.append(Spacer(1, 6))
+                continue
+            # Escape XML special chars for reportlab
+            text = (
+                text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            style_name = (para.style.name or "").lower()
+            if "heading 1" in style_name:
+                story.append(Paragraph(text, heading_styles[1]))
+            elif "heading 2" in style_name:
+                story.append(Paragraph(text, heading_styles[2]))
+            elif "heading 3" in style_name:
+                story.append(Paragraph(text, heading_styles[3]))
+            else:
+                story.append(Paragraph(text, normal_style))
+
+        # Extract tables
+        for table in doc.tables:
+            table_data = []
+            for row in table.rows:
+                row_data = []
+                for cell in row.cells:
+                    cell_text = cell.text.strip()
+                    cell_text = (
+                        cell_text.replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
+                    row_data.append(Paragraph(cell_text, normal_style))
+                table_data.append(row_data)
+            if table_data:
+                t = Table(table_data)
+                story.append(Spacer(1, 12))
+                story.append(t)
+                story.append(Spacer(1, 12))
+
+        if not story:
+            story.append(Paragraph("(Document gol)", normal_style))
+
+        pdf.build(story)
+        result = buf.getvalue()
+        logger.info("DOCX->PDF: fallback success, output %d bytes", len(result))
+        return result
+
+    # Try Word COM first, fallback to reportlab
+    use_fallback = False
     try:
-        result = await asyncio.to_thread(_convert, content)
+        result = await asyncio.to_thread(_convert_with_word, content)
+    except ImportError:
+        logger.warning("DOCX->PDF: pythoncom/docx2pdf not available, using fallback")
+        use_fallback = True
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("DOCX->PDF conversion failed")
-        raise HTTPException(500, f"Conversie esuata (necesita Microsoft Word): {e}")
+        logger.warning("DOCX->PDF: Word conversion failed (%s), trying fallback", e)
+        use_fallback = True
+
+    if use_fallback:
+        try:
+            result = await asyncio.to_thread(_convert_fallback, content)
+        except Exception as e:
+            logger.exception("DOCX->PDF fallback also failed")
+            raise HTTPException(
+                500,
+                f"Conversie esuata. Word indisponibil, iar conversia de baza a esuat: {e}",
+            )
 
     await log_activity(action="converter", summary=f"DOCX -> PDF: {file.filename}",
                        details={"type": "docx-to-pdf", "file": file.filename, "size": len(content)})
@@ -213,7 +345,11 @@ async def merge_pdfs(files: list[UploadFile] = File(...)):
         if not _is_pdf(f.filename, f.content_type):
             raise HTTPException(400, f"Fisierul {f.filename!r} nu este PDF ({f.content_type})")
 
-    file_data = [(_safe_name(f.filename, ".pdf"), await f.read()) for f in files]
+    file_data = []
+    for f in files:
+        data = await f.read()
+        _check_file_size(data, f.filename)
+        file_data.append((_safe_name(f.filename, ".pdf"), data))
 
     def _merge(items: list[tuple[str, bytes]]) -> bytes:
         import fitz
@@ -258,6 +394,7 @@ async def split_pdf(
         raise HTTPException(400, f"Fisierul trebuie sa fie PDF. Primit: {file.filename!r} ({file.content_type})")
 
     content = await file.read()
+    _check_file_size(content, file.filename)
     safe = _safe_name(file.filename, ".pdf")
     stem = Path(safe).stem
 
@@ -291,6 +428,8 @@ async def split_pdf(
         result = await asyncio.to_thread(_split, content, pages)
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Split esuat: {e}")
 
@@ -301,66 +440,204 @@ async def split_pdf(
 
 
 def _parse_pages(spec: str, total: int) -> list[int]:
-    """Parse page spec like '1,3,5-7' into 0-based indices."""
+    """Parse page spec like '1,3,5-7' into 0-based indices.
+
+    Raises ValueError with clear message on invalid input.
+    """
+    if not spec or not spec.strip():
+        raise ValueError("Specificatia de pagini este goala")
+
     indices = []
     for part in spec.split(","):
         part = part.strip()
+        if not part:
+            continue
         if "-" in part:
-            start, end = part.split("-", 1)
-            s = max(1, int(start.strip()))
-            e = min(total, int(end.strip()))
+            pieces = part.split("-", 1)
+            start_s, end_s = pieces[0].strip(), pieces[1].strip()
+            if not start_s or not end_s:
+                raise ValueError(
+                    f"Interval de pagini invalid: '{part}'. "
+                    f"Format corect: '1-5'"
+                )
+            try:
+                s = int(start_s)
+                e = int(end_s)
+            except ValueError:
+                raise ValueError(
+                    f"Valoare non-numerica in intervalul '{part}'. "
+                    f"Folositi doar numere intregi, ex: '1-5'"
+                )
+            if s <= 0 or e <= 0:
+                raise ValueError(
+                    f"Numere de pagina negative sau zero in '{part}'. "
+                    f"Paginile incep de la 1"
+                )
+            if s > e:
+                raise ValueError(
+                    f"Interval invalid: '{part}' — "
+                    f"pagina de start ({s}) > pagina de sfarsit ({e})"
+                )
+            if s > total:
+                raise ValueError(
+                    f"Pagina {s} depaseste totalul de {total} pagini"
+                )
+            e = min(e, total)
             indices.extend(range(s - 1, e))
         else:
-            p = int(part) - 1
-            if 0 <= p < total:
-                indices.append(p)
+            try:
+                p = int(part)
+            except ValueError:
+                raise ValueError(
+                    f"Valoare non-numerica: '{part}'. "
+                    f"Folositi doar numere intregi, ex: '1,3,5-7'"
+                )
+            if p <= 0:
+                raise ValueError(
+                    f"Numar de pagina invalid: {p}. Paginile incep de la 1"
+                )
+            if p > total:
+                raise ValueError(
+                    f"Pagina {p} depaseste totalul de {total} pagini"
+                )
+            indices.append(p - 1)
+
+    if not indices:
+        raise ValueError(
+            f"Nicio pagina valida selectata din totalul de {total} pagini"
+        )
+
     return sorted(set(indices))
 
 
 # ---------- Compress Images ----------
 
+_SUPPORTED_OUTPUT_FORMATS = {"jpeg", "webp", "png"}
+_FORMAT_EXTENSIONS = {"jpeg": ".jpg", "webp": ".webp", "png": ".png"}
+_FORMAT_MIMETYPES = {"jpeg": "image/jpeg", "webp": "image/webp", "png": "image/png"}
+
+
 @router.post("/compress-images")
 async def compress_images(
     files: list[UploadFile] = File(...),
     quality: int = Form(80),
+    output_format: str = Form("jpeg"),
+    report_only: bool = Form(False),
 ):
     quality = max(1, min(100, quality))
+    output_format = output_format.lower().strip()
+    if output_format not in _SUPPORTED_OUTPUT_FORMATS:
+        raise HTTPException(
+            400,
+            f"Format nesuportat: {output_format!r}. "
+            f"Formate acceptate: {', '.join(sorted(_SUPPORTED_OUTPUT_FORMATS))}",
+        )
 
-    file_data = [(f.filename, await f.read()) for f in files]
+    file_data = []
+    for f in files:
+        data = await f.read()
+        _check_file_size(data, f.filename)
+        file_data.append((f.filename, data))
     single = len(files) == 1
 
-    def _compress(items: list[tuple[str, bytes]], q: int) -> tuple[bytes, str]:
+    def _compress(
+        items: list[tuple[str, bytes]], q: int, fmt: str
+    ) -> tuple[bytes, str, list[dict]]:
         from PIL import Image
 
+        ext = _FORMAT_EXTENSIONS[fmt]
         results = []
+        report = []
         for name, data in items:
+            original_size = len(data)
             img = Image.open(io.BytesIO(data))
-            if img.mode == "RGBA":
+            # WebP supports RGBA, JPEG does not
+            if fmt == "jpeg" and img.mode in ("RGBA", "P", "LA"):
+                img = img.convert("RGB")
+            elif fmt == "png" and img.mode not in ("RGBA", "RGB", "L", "P"):
                 img = img.convert("RGB")
             out = io.BytesIO()
-            img.save(out, format="JPEG", quality=q, optimize=True)
-            out_name = f"{Path(name).stem}_compressed.jpg"
-            results.append((out_name, out.getvalue()))
+            save_kwargs = {"format": fmt.upper(), "optimize": True}
+            if fmt in ("jpeg", "webp"):
+                save_kwargs["quality"] = q
+            img.save(out, **save_kwargs)
+            compressed_data = out.getvalue()
+            compressed_size = len(compressed_data)
+            reduction = (
+                round((1 - compressed_size / original_size) * 100, 1)
+                if original_size > 0
+                else 0.0
+            )
+            out_name = f"{Path(name).stem}_compressed{ext}"
+            results.append((out_name, compressed_data))
+            report.append({
+                "filename": name,
+                "original_size": original_size,
+                "compressed_size": compressed_size,
+                "reduction_percent": reduction,
+            })
 
         if len(results) == 1:
-            return results[0][1], results[0][0]
+            return results[0][1], results[0][0], report
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for name, data in results:
                 zf.writestr(name, data)
-        return buf.getvalue(), "compressed_images.zip"
+        return buf.getvalue(), "compressed_images.zip", report
 
     try:
-        result, out_name = await asyncio.to_thread(_compress, file_data, quality)
+        result, out_name, report = await asyncio.to_thread(
+            _compress, file_data, quality, output_format
+        )
     except Exception as e:
         raise HTTPException(500, f"Compresie esuata: {e}")
 
-    media = "image/jpeg" if single else "application/zip"
-    await log_activity(action="converter", summary=f"Compress {len(files)} images (q={quality})",
-                       details={"type": "compress-images", "count": len(files), "quality": quality})
+    await log_activity(
+        action="converter",
+        summary=f"Compress {len(files)} images (q={quality}, fmt={output_format})",
+        details={
+            "type": "compress-images",
+            "count": len(files),
+            "quality": quality,
+            "output_format": output_format,
+            "report": report,
+        },
+    )
 
-    return _stream(result, media, out_name)
+    # Report-only mode: return JSON stats without the file
+    if report_only:
+        total_original = sum(r["original_size"] for r in report)
+        total_compressed = sum(r["compressed_size"] for r in report)
+        total_reduction = (
+            round((1 - total_compressed / total_original) * 100, 1)
+            if total_original > 0
+            else 0.0
+        )
+        return {
+            "total_original_size": total_original,
+            "total_compressed_size": total_compressed,
+            "total_reduction_percent": total_reduction,
+            "output_format": output_format,
+            "quality": quality,
+            "files": report,
+        }
+
+    # Normal mode: return file with compression headers
+    media = _FORMAT_MIMETYPES.get(output_format, "image/jpeg") if single else "application/zip"
+    response = _stream(result, media, out_name)
+    # Add compression report as custom headers
+    total_original = sum(r["original_size"] for r in report)
+    total_compressed = sum(r["compressed_size"] for r in report)
+    total_reduction = (
+        round((1 - total_compressed / total_original) * 100, 1)
+        if total_original > 0
+        else 0.0
+    )
+    response.headers["X-Original-Size"] = str(total_original)
+    response.headers["X-Compressed-Size"] = str(total_compressed)
+    response.headers["X-Reduction-Percent"] = str(total_reduction)
+    return response
 
 
 # ---------- Resize Images ----------
@@ -372,7 +649,11 @@ async def resize_images(
     height: int = Form(0),
     keep_ratio: bool = Form(True),
 ):
-    file_data = [(f.filename, await f.read()) for f in files]
+    file_data = []
+    for f in files:
+        data = await f.read()
+        _check_file_size(data, f.filename)
+        file_data.append((f.filename, data))
     single = len(files) == 1
 
     def _resize(items: list[tuple[str, bytes]], w: int, h: int, ratio: bool) -> tuple[bytes, str]:
@@ -440,6 +721,7 @@ async def csv_to_json(
         raise HTTPException(400, f"Fisierul trebuie sa fie CSV. Primit: {file.filename!r} ({file.content_type})")
 
     content = await file.read()
+    _check_file_size(content, file.filename)
     safe = _safe_name(file.filename, ".csv")
     out_name = f"{Path(safe).stem}.json"
 
@@ -469,6 +751,7 @@ async def excel_to_json(file: UploadFile = File(...)):
         raise HTTPException(400, f"Fisierul trebuie sa fie XLSX/XLS. Primit: {file.filename!r} ({file.content_type})")
 
     content = await file.read()
+    _check_file_size(content, file.filename)
     safe = _safe_name(file.filename, ".xlsx")
     out_name = f"{Path(safe).stem}.json"
 
@@ -516,7 +799,11 @@ async def create_zip(files: list[UploadFile] = File(...)):
     if not files:
         raise HTTPException(400, "Trebuie cel putin un fisier")
 
-    file_data = [(f.filename, await f.read()) for f in files]
+    file_data = []
+    for f in files:
+        data = await f.read()
+        _check_file_size(data, f.filename)
+        file_data.append((f.filename, data))
 
     def _zip(items: list[tuple[str, bytes]]) -> bytes:
         buf = io.BytesIO()
@@ -540,6 +827,7 @@ async def create_zip(files: list[UploadFile] = File(...)):
 async def extract_text(file: UploadFile = File(...)):
     logger.info("Extract text: filename=%r, content_type=%r", file.filename, file.content_type)
     content = await file.read()
+    _check_file_size(content, file.filename)
 
     def _detect_and_extract(data: bytes, filename: str | None, ct: str | None) -> str:
         fn = (filename or "").lower()

@@ -25,8 +25,12 @@ from email.mime.text import MIMEText
 from email.header import decode_header
 from typing import Any
 
+import io
+import uuid
+
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.activity_log import log_activity
@@ -97,6 +101,8 @@ class EmailSendRequest(BaseModel):
     subject: str
     body: str
     html: bool = False
+    cc: list[str] = []
+    bcc: list[str] = []
 
 
 class CalendarEventCreate(BaseModel):
@@ -104,6 +110,13 @@ class CalendarEventCreate(BaseModel):
     start: str  # ISO 8601 datetime
     end: str    # ISO 8601 datetime
     description: str = ""
+
+
+class CalendarEventUpdate(BaseModel):
+    summary: str | None = None
+    start: str | None = None   # ISO 8601 datetime
+    end: str | None = None     # ISO 8601 datetime
+    description: str | None = None
 
 
 class GitHubIssueCreate(BaseModel):
@@ -263,16 +276,27 @@ async def gmail_send(req: EmailSendRequest):
         msg["To"] = req.to
         msg["Subject"] = req.subject
 
+        # CC apare in header-ul mesajului
+        if req.cc:
+            msg["Cc"] = ", ".join(req.cc)
+
         content_type = "html" if req.html else "plain"
         msg.attach(MIMEText(req.body, content_type, "utf-8"))
 
+        # Destinatarii SMTP = To + CC + BCC (BCC NU apare in header)
+        all_recipients = [req.to]
+        all_recipients.extend(req.cc)
+        all_recipients.extend(req.bcc)
+
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(email_addr, app_password)
-            smtp.sendmail(email_addr, req.to, msg.as_string())
+            smtp.sendmail(email_addr, all_recipients, msg.as_string())
 
+        cc_info = f", CC: {', '.join(req.cc)}" if req.cc else ""
+        bcc_info = f", BCC: {len(req.bcc)} dest." if req.bcc else ""
         await log_activity(
             action="integrations.gmail.send",
-            summary=f"Email trimis către {req.to}: {req.subject[:80]}",
+            summary=f"Email trimis către {req.to}{cc_info}{bcc_info}: {req.subject[:80]}",
         )
 
         return {"status": "ok", "message": f"Email trimis cu succes către {req.to}."}
@@ -282,6 +306,77 @@ async def gmail_send(req: EmailSendRequest):
     except Exception as exc:
         logger.error("Eroare trimitere email: %s", exc)
         raise HTTPException(500, f"Eroare trimitere email: {exc}")
+
+
+@router.get("/gmail/attachment")
+async def gmail_download_attachment(
+    message_id: str = Query(..., description="ID-ul mesajului IMAP"),
+    attachment_index: int = Query(0, ge=0, description="Indexul atașamentului (pornind de la 0)"),
+):
+    """Descarcă un atașament dintr-un email via IMAP."""
+    email_addr = await _get_config_key("gmail_email")
+    app_password = await _get_config_key("gmail_app_password")
+    if not email_addr or not app_password:
+        raise HTTPException(400, "Gmail nu este configurat.")
+
+    try:
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(email_addr, app_password)
+        mail.select("INBOX", readonly=True)
+
+        status, msg_data = mail.fetch(message_id.encode(), "(RFC822)")
+        if status != "OK" or not msg_data or not msg_data[0]:
+            mail.logout()
+            raise HTTPException(404, "Email negăsit.")
+
+        raw_email = msg_data[0][1]
+        msg = email.message_from_bytes(raw_email)
+        mail.logout()
+
+        # Colectează toate atașamentele
+        attachments = []
+        if msg.is_multipart():
+            for part in msg.walk():
+                filename = part.get_filename()
+                if filename:
+                    attachments.append(part)
+
+        if not attachments:
+            raise HTTPException(404, "Emailul nu conține atașamente.")
+
+        if attachment_index >= len(attachments):
+            raise HTTPException(
+                404,
+                f"Index atașament invalid. Emailul are {len(attachments)} atașament(e) (index 0-{len(attachments) - 1}).",
+            )
+
+        target_part = attachments[attachment_index]
+        filename = _decode_mime_header(target_part.get_filename() or "attachment")
+        content_type = target_part.get_content_type() or "application/octet-stream"
+        payload = target_part.get_payload(decode=True)
+
+        if not payload:
+            raise HTTPException(404, "Atașamentul este gol.")
+
+        await log_activity(
+            action="integrations.gmail.attachment",
+            summary=f"Descărcat atașament: {filename} din email {message_id}",
+        )
+
+        return StreamingResponse(
+            io.BytesIO(payload),
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    except HTTPException:
+        raise
+    except imaplib.IMAP4.error as exc:
+        logger.error("Eroare IMAP descărcare atașament: %s", exc)
+        raise HTTPException(500, f"Eroare conectare Gmail IMAP: {exc}")
+    except Exception as exc:
+        logger.error("Eroare descărcare atașament: %s", exc)
+        raise HTTPException(500, f"Eroare descărcare atașament: {exc}")
 
 
 # ===========================================================================
@@ -401,27 +496,49 @@ async def drive_list_files(
 
 @router.post("/drive/upload")
 async def drive_upload_file(
-    file_name: str = Query(..., description="Numele fișierului"),
+    file: UploadFile = File(..., description="Fișierul de încărcat"),
     folder_id: str = Query("", description="ID folder destinație"),
-    mime_type: str = Query("application/octet-stream"),
 ):
     """
-    Încarcă un fișier pe Google Drive.
-    Notă: pentru simplitate, corpul request-ului conține fișierul raw.
+    Încarcă un fișier cu conținut pe Google Drive (multipart upload).
+    Acceptă orice tip de fișier prin form upload.
     """
     headers = await _drive_headers()
+
+    file_name = file.filename or "untitled"
+    mime_type = file.content_type or "application/octet-stream"
 
     metadata: dict[str, Any] = {"name": file_name}
     if folder_id:
         metadata["parents"] = [folder_id]
 
     try:
-        # Crează fișier gol cu metadata, apoi se poate uploada conținutul separat
-        async with httpx.AsyncClient(timeout=30) as client:
+        file_content = await file.read()
+
+        # Google Drive API v3 multipart upload:
+        # POST https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart
+        # Body: multipart/related cu metadata JSON + conținut fișier
+        boundary = f"boundary_{uuid.uuid4().hex}"
+
+        body_parts = []
+        body_parts.append(f"--{boundary}\r\n".encode())
+        body_parts.append(b"Content-Type: application/json; charset=UTF-8\r\n\r\n")
+        body_parts.append(json.dumps(metadata).encode("utf-8"))
+        body_parts.append(f"\r\n--{boundary}\r\n".encode())
+        body_parts.append(f"Content-Type: {mime_type}\r\n\r\n".encode())
+        body_parts.append(file_content)
+        body_parts.append(f"\r\n--{boundary}--".encode())
+
+        multipart_body = b"".join(body_parts)
+
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
-                f"{DRIVE_API_BASE}/files",
-                headers={**headers, "Content-Type": "application/json"},
-                json=metadata,
+                f"{DRIVE_UPLOAD_BASE}/files?uploadType=multipart",
+                headers={
+                    **headers,
+                    "Content-Type": f"multipart/related; boundary={boundary}",
+                },
+                content=multipart_body,
             )
 
         if resp.status_code == 401:
@@ -431,15 +548,16 @@ async def drive_upload_file(
 
         result = resp.json()
 
+        size_kb = len(file_content) / 1024
         await log_activity(
             action="integrations.drive.upload",
-            summary=f"Fișier creat pe Drive: {file_name}",
-            details={"file_id": result.get("id")},
+            summary=f"Fișier încărcat pe Drive: {file_name} ({size_kb:.1f} KB)",
+            details={"file_id": result.get("id"), "size_bytes": len(file_content)},
         )
 
         return {
             "status": "ok",
-            "message": f"Fișier '{file_name}' creat pe Google Drive.",
+            "message": f"Fișier '{file_name}' încărcat pe Google Drive ({size_kb:.1f} KB).",
             "file": result,
         }
 
@@ -694,6 +812,69 @@ async def calendar_delete_event(event_id: str):
         raise HTTPException(500, f"Eroare ștergere eveniment: {exc}")
 
 
+@router.put("/calendar/events/{event_id}")
+async def calendar_update_event(event_id: str, req: CalendarEventUpdate):
+    """Actualizează un eveniment existent în Google Calendar (PATCH parțial)."""
+    headers = await _calendar_headers()
+
+    # Construiește doar câmpurile trimise (non-None)
+    patch_body: dict[str, Any] = {}
+    if req.summary is not None:
+        patch_body["summary"] = req.summary
+    if req.description is not None:
+        patch_body["description"] = req.description
+    if req.start is not None:
+        patch_body["start"] = {"dateTime": req.start, "timeZone": "Europe/Bucharest"}
+    if req.end is not None:
+        patch_body["end"] = {"dateTime": req.end, "timeZone": "Europe/Bucharest"}
+
+    if not patch_body:
+        raise HTTPException(400, "Niciun câmp de actualizat. Trimite cel puțin un câmp (summary, start, end, description).")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.patch(
+                f"{CALENDAR_API_BASE}/calendars/primary/events/{event_id}",
+                headers={**headers, "Content-Type": "application/json"},
+                json=patch_body,
+            )
+
+        if resp.status_code == 401:
+            raise HTTPException(401, "Token Google Calendar expirat.")
+        if resp.status_code == 404:
+            raise HTTPException(404, f"Eveniment negăsit: {event_id}")
+        if resp.status_code not in (200, 201):
+            raise HTTPException(resp.status_code, f"Eroare actualizare eveniment: {resp.text}")
+
+        updated = resp.json()
+        changed_fields = list(patch_body.keys())
+
+        await log_activity(
+            action="integrations.calendar.update",
+            summary=f"Eveniment actualizat: {updated.get('summary', event_id)} ({', '.join(changed_fields)})",
+            details={"event_id": event_id, "changed_fields": changed_fields},
+        )
+
+        return {
+            "status": "ok",
+            "message": f"Eveniment '{updated.get('summary', event_id)}' actualizat cu succes.",
+            "event": {
+                "id": updated.get("id"),
+                "summary": updated.get("summary"),
+                "description": updated.get("description", ""),
+                "start": updated.get("start", {}).get("dateTime", ""),
+                "end": updated.get("end", {}).get("dateTime", ""),
+                "htmlLink": updated.get("htmlLink", ""),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Eroare actualizare eveniment: %s", exc)
+        raise HTTPException(500, f"Eroare actualizare eveniment: {exc}")
+
+
 # ===========================================================================
 # GITHUB
 # ===========================================================================
@@ -819,8 +1000,9 @@ async def github_repo_commits(
     owner: str,
     repo: str,
     max_results: int = Query(20, ge=1, le=100),
+    branch: str = Query("main", description="Branch-ul din care se listează commit-urile"),
 ):
-    """Listează ultimele commit-uri dintr-un repo GitHub."""
+    """Listează ultimele commit-uri dintr-un repo GitHub (pe un branch specificat)."""
     headers = await _github_headers()
 
     try:
@@ -828,13 +1010,15 @@ async def github_repo_commits(
             resp = await client.get(
                 f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits",
                 headers=headers,
-                params={"per_page": max_results},
+                params={"per_page": max_results, "sha": branch},
             )
 
         if resp.status_code == 401:
             raise HTTPException(401, "Token GitHub invalid.")
         if resp.status_code == 404:
             raise HTTPException(404, f"Repo {owner}/{repo} negăsit.")
+        if resp.status_code == 409:
+            raise HTTPException(404, f"Branch-ul '{branch}' nu există în {owner}/{repo}.")
         if resp.status_code != 200:
             raise HTTPException(resp.status_code, f"Eroare GitHub API: {resp.text}")
 
@@ -852,10 +1036,10 @@ async def github_repo_commits(
 
         await log_activity(
             action="integrations.github.commits",
-            summary=f"Listat {len(commits)} commit-uri: {owner}/{repo}",
+            summary=f"Listat {len(commits)} commit-uri: {owner}/{repo} (branch: {branch})",
         )
 
-        return {"commits": commits, "total": len(commits), "repo": f"{owner}/{repo}"}
+        return {"commits": commits, "total": len(commits), "repo": f"{owner}/{repo}", "branch": branch}
 
     except HTTPException:
         raise

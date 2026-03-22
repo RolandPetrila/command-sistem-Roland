@@ -52,6 +52,7 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 | Faza 25E Testare | DONE | pytest + 18 teste (health, translate, AI, invoice CRUD, ITP) — toate PASSED (2026-03-21) |
 | Faza F Cross-Module | DONE | Voice input, prompt templates, serii facturi, scadente, programari ITP, notificari, preview docs, calibrare interactiva, oferte PDF, glosar per client (2026-03-21) |
 | Faza 26A-G Deep Research | DONE | Security (CVE fix), Performance (5x cold start), Code Quality (N+1, SQL param), AI Prompts (anti-hallucination), Testing (68 tests), Refactorizare (3 fisiere mari split), Hardening (DB indexes, async I/O) (2026-03-21) |
+| Faza 27 Module Ext | DONE | 78 features across 14 modules: vault security, converter limits, FM batch ops, notepad search, cron scheduler, dashboard alerts, translation cache, ITP vehicle history, invoice recurring, passphrase gen (2026-03-22) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`
@@ -106,8 +107,8 @@ cd backend && set PYTHONIOENCODING=utf-8 && python calibrate.py --verbose
 - **TTS Providers**: edge-tts (Microsoft Neural, RO, unlimited) → Web Speech API (browser fallback)
 - **OCR Providers**: Tesseract + EasyOCR local → OCR.space cloud
 - **Notification Providers**: Web Push VAPID → Telegram Bot → ntfy.sh → Email digest
-- **Modules** (13+): calculator, ai, translator, invoice, itp, quick_tools, quick_tools_extra, converter, filemanager, vault, automations, integrations, reports
-- **DB Tables**: 57, **Migrations**: 16, **Tests**: 68 (pytest)
+- **Modules** (14): calculator, ai, translator, invoice, itp, quick_tools, quick_tools_extra, converter, filemanager, vault, automations, integrations, reports, calculator_pret
+- **DB Tables**: 57+, **Migrations**: 16, **Tests**: 68+ (pytest), **Endpoints**: 310+
 - **Business APIs**: BNR curs valutar (XML, free), ANAF Verificare CUI (REST, free)
 
 ## Key Files

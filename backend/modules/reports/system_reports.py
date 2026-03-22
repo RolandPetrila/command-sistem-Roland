@@ -1,6 +1,6 @@
 """
 System Reports — disk stats, system info, file analysis,
-dashboard summary, BNR exchange rates, backup ZIP.
+dashboard summary, BNR exchange rates, backup ZIP, dashboard widgets.
 
 Endpoints:
   GET /api/reports/disk-stats
@@ -10,6 +10,11 @@ Endpoints:
   GET /api/reports/dashboard-summary
   GET /api/reports/exchange-rates
   GET /api/reports/backup/zip
+  GET /api/reports/dashboard/receivable
+  GET /api/reports/dashboard/alerts
+  GET /api/reports/dashboard/quick-stats
+  GET /api/reports/dashboard/revenue-comparison
+  GET /api/reports/dashboard/itp-trend
 """
 
 from __future__ import annotations
@@ -464,3 +469,270 @@ async def backup_zip():
     except Exception as exc:
         logger.error("Eroare backup ZIP: %s", exc)
         raise HTTPException(500, f"Eroare creare backup: {exc}")
+
+
+# ===========================================================================
+# DASHBOARD WIDGETS — Receivable, Alerts, Quick Stats, Revenue, ITP Trend
+# ===========================================================================
+
+@router.get("/dashboard/receivable")
+async def dashboard_receivable():
+    """Total RON de incasat — facturi trimise/restante, neanulate si neplatite."""
+    result = {"total_receivable": 0.0, "count": 0, "currency": "RON"}
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT COALESCE(SUM(total), 0) AS total_sum, COUNT(*) AS cnt "
+                "FROM invoices "
+                "WHERE status NOT IN ('paid', 'cancelled', 'draft')"
+            )
+            row = await cursor.fetchone()
+            if row:
+                result["total_receivable"] = round(row["total_sum"], 2)
+                result["count"] = row["cnt"]
+    except Exception as exc:
+        logger.error("Eroare dashboard receivable: %s", exc)
+    return result
+
+
+@router.get("/dashboard/alerts")
+async def dashboard_alerts():
+    """Alerte combinate: ITP ce expira in 30 zile + facturi restante."""
+    result = {"itp_expiring": 0, "invoices_overdue": 0, "alerts": []}
+    try:
+        async with get_db() as db:
+            # ITP-uri ce expira in urmatoarele 30 de zile
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM itp_inspections "
+                    "WHERE expiry_date <= date('now', '+30 days') "
+                    "AND expiry_date >= date('now')"
+                )
+                row = await cursor.fetchone()
+                result["itp_expiring"] = row["cnt"] if row else 0
+
+                # Detalii ITP-uri ce expira
+                cursor = await db.execute(
+                    "SELECT plate_number, brand, model, expiry_date "
+                    "FROM itp_inspections "
+                    "WHERE expiry_date <= date('now', '+30 days') "
+                    "AND expiry_date >= date('now') "
+                    "ORDER BY expiry_date ASC LIMIT 20"
+                )
+                rows = await cursor.fetchall()
+                for r in rows:
+                    result["alerts"].append({
+                        "type": "itp_expiring",
+                        "message": f"ITP expira: {r['plate_number']} ({r['brand'] or ''} {r['model'] or ''}) — {r['expiry_date']}",
+                        "date": r["expiry_date"],
+                        "plate_number": r["plate_number"],
+                    })
+            except Exception:
+                pass
+
+            # Facturi restante (due_date trecut, neplatite, neanulate)
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM invoices "
+                    "WHERE due_date < date('now') "
+                    "AND status NOT IN ('paid', 'cancelled')"
+                )
+                row = await cursor.fetchone()
+                result["invoices_overdue"] = row["cnt"] if row else 0
+
+                # Detalii facturi restante
+                cursor = await db.execute(
+                    "SELECT invoice_number, total, due_date, currency "
+                    "FROM invoices "
+                    "WHERE due_date < date('now') "
+                    "AND status NOT IN ('paid', 'cancelled') "
+                    "ORDER BY due_date ASC LIMIT 20"
+                )
+                rows = await cursor.fetchall()
+                for r in rows:
+                    result["alerts"].append({
+                        "type": "invoice_overdue",
+                        "message": f"Factura restanta: {r['invoice_number']} — {r['total']} {r['currency'] or 'RON'} (scadenta {r['due_date']})",
+                        "date": r["due_date"],
+                        "invoice_number": r["invoice_number"],
+                        "total": r["total"],
+                    })
+            except Exception:
+                pass
+
+            # Sorteaza alertele dupa data (cele mai urgente primele)
+            result["alerts"].sort(key=lambda a: a.get("date", ""))
+
+    except Exception as exc:
+        logger.error("Eroare dashboard alerts: %s", exc)
+    return result
+
+
+@router.get("/dashboard/quick-stats")
+async def dashboard_quick_stats():
+    """Statistici rapide: total clienti, facturi/ITP/traduceri luna curenta."""
+    result = {
+        "total_clients": 0,
+        "invoices_this_month": 0,
+        "itp_this_month": 0,
+        "translations_this_month": 0,
+    }
+    try:
+        async with get_db() as db:
+            # Total clienti
+            try:
+                cursor = await db.execute("SELECT COUNT(*) AS cnt FROM clients")
+                row = await cursor.fetchone()
+                result["total_clients"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            # Facturi luna curenta
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM invoices "
+                    "WHERE created_at >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["invoices_this_month"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            # ITP luna curenta
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM itp_inspections "
+                    "WHERE inspection_date >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["itp_this_month"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            # Traduceri luna curenta (din activity_log)
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM activity_log "
+                    "WHERE action LIKE 'translator%' "
+                    "AND timestamp >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["translations_this_month"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+    except Exception as exc:
+        logger.error("Eroare dashboard quick-stats: %s", exc)
+    return result
+
+
+@router.get("/dashboard/revenue-comparison")
+async def dashboard_revenue_comparison():
+    """Comparatie venituri: luna curenta vs luna precedenta."""
+    result = {
+        "current_month": 0.0,
+        "previous_month": 0.0,
+        "change_percent": 0.0,
+        "current_month_label": "",
+        "previous_month_label": "",
+    }
+    try:
+        async with get_db() as db:
+            # Venituri luna curenta (facturi platite)
+            try:
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(total), 0) AS total_sum "
+                    "FROM invoices "
+                    "WHERE status = 'paid' "
+                    "AND date >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["current_month"] = round(row["total_sum"], 2) if row else 0.0
+            except Exception:
+                pass
+
+            # Venituri luna precedenta (facturi platite)
+            try:
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(total), 0) AS total_sum "
+                    "FROM invoices "
+                    "WHERE status = 'paid' "
+                    "AND date >= date('now', 'start of month', '-1 month') "
+                    "AND date < date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["previous_month"] = round(row["total_sum"], 2) if row else 0.0
+            except Exception:
+                pass
+
+            # Calculeaza procentul de schimbare
+            if result["previous_month"] > 0:
+                change = (
+                    (result["current_month"] - result["previous_month"])
+                    / result["previous_month"]
+                    * 100
+                )
+                result["change_percent"] = round(change, 1)
+            elif result["current_month"] > 0:
+                result["change_percent"] = 100.0
+
+            # Etichete luna
+            try:
+                cursor = await db.execute(
+                    "SELECT strftime('%Y-%m', 'now') AS current_m, "
+                    "strftime('%Y-%m', 'now', '-1 month') AS prev_m"
+                )
+                row = await cursor.fetchone()
+                if row:
+                    result["current_month_label"] = row["current_m"]
+                    result["previous_month_label"] = row["prev_m"]
+            except Exception:
+                pass
+
+    except Exception as exc:
+        logger.error("Eroare dashboard revenue-comparison: %s", exc)
+    return result
+
+
+@router.get("/dashboard/itp-trend")
+async def dashboard_itp_trend():
+    """Trend ITP saptamanal — inspectii pe saptamana, ultimele 4 saptamani."""
+    result = {"weeks": []}
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT strftime('%Y-W%W', inspection_date) AS week, "
+                "COUNT(*) AS cnt "
+                "FROM itp_inspections "
+                "WHERE inspection_date >= date('now', '-28 days') "
+                "GROUP BY week "
+                "ORDER BY week ASC"
+            )
+            rows = await cursor.fetchall()
+            result["weeks"] = [
+                {"week": r["week"], "count": r["cnt"]} for r in rows
+            ]
+
+            # Daca nu sunt date, returneaza 4 saptamani cu 0
+            if not result["weeks"]:
+                try:
+                    cursor = await db.execute(
+                        "SELECT strftime('%Y-W%W', date('now', '-21 days')) AS w1, "
+                        "strftime('%Y-W%W', date('now', '-14 days')) AS w2, "
+                        "strftime('%Y-W%W', date('now', '-7 days')) AS w3, "
+                        "strftime('%Y-W%W', date('now')) AS w4"
+                    )
+                    row = await cursor.fetchone()
+                    if row:
+                        result["weeks"] = [
+                            {"week": row["w1"], "count": 0},
+                            {"week": row["w2"], "count": 0},
+                            {"week": row["w3"], "count": 0},
+                            {"week": row["w4"], "count": 0},
+                        ]
+                except Exception:
+                    pass
+
+    except Exception as exc:
+        logger.error("Eroare dashboard itp-trend: %s", exc)
+    return result

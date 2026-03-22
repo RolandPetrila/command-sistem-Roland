@@ -9,6 +9,8 @@ Endpoints:
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 from collections import defaultdict
@@ -16,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from starlette.responses import StreamingResponse
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
@@ -161,19 +164,91 @@ async def activity_timeline_stats(
         raise HTTPException(500, f"Eroare statistici timeline: {exc}")
 
 
+@router.get("/timeline/export")
+async def timeline_export(
+    format: str = Query("json", description="Format export: json sau csv"),
+    date_from: str = Query("", description="Data inceput (YYYY-MM-DD)"),
+    date_to: str = Query("", description="Data sfarsit (YYYY-MM-DD)"),
+    action_filter: str = Query("", description="Filtreaza pe actiune"),
+):
+    """Export timeline ca JSON sau CSV."""
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if date_from:
+        conditions.append("timestamp >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("timestamp <= ?")
+        params.append(date_to + "T23:59:59")
+    if action_filter:
+        conditions.append("action = ?")
+        params.append(action_filter)
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                f"SELECT timestamp, action, status, summary FROM activity_log {where_clause} ORDER BY timestamp DESC",
+                tuple(params),
+            )
+            rows = await cursor.fetchall()
+
+        entries = [dict(row) for row in rows]
+
+        if format.lower() == "csv":
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=["timestamp", "action", "status", "summary"])
+            writer.writeheader()
+            writer.writerows(entries)
+            output.seek(0)
+
+            await log_activity(
+                action="reports.timeline.export_csv",
+                summary=f"Export timeline CSV: {len(entries)} inregistrari",
+            )
+
+            return StreamingResponse(
+                iter([output.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=timeline_export.csv"},
+            )
+
+        # Default: JSON
+        await log_activity(
+            action="reports.timeline.export_json",
+            summary=f"Export timeline JSON: {len(entries)} inregistrari",
+        )
+
+        return {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "total": len(entries),
+            "entries": entries,
+        }
+
+    except Exception as exc:
+        logger.error("Eroare export timeline: %s", exc)
+        raise HTTPException(500, f"Eroare export timeline: {exc}")
+
+
 # ===========================================================================
 # FULL EXPORT
 # ===========================================================================
 
 @router.get("/export/full")
-async def export_full():
+async def export_full(
+    tables: str = Query("", description="Tabele selectate (comma-separated), gol = toate"),
+):
     """Export complet al tuturor datelor ca JSON — clienti, facturi, activitate, jurnal, bookmark-uri."""
     export_data: dict[str, Any] = {
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "tables": {},
     }
 
-    tables_to_export = [
+    all_tables = [
         "activity_log",
         "uploads",
         "settings",
@@ -185,6 +260,14 @@ async def export_full():
         "itp_inspections",
         "notepad_entries",
     ]
+
+    if tables:
+        requested = [t.strip() for t in tables.split(",") if t.strip()]
+        tables_to_export = [t for t in requested if t in all_tables]
+        if not tables_to_export:
+            raise HTTPException(400, f"Nicio tabela valida. Disponibile: {', '.join(all_tables)}")
+    else:
+        tables_to_export = all_tables
 
     try:
         async with get_db() as db:
@@ -204,7 +287,7 @@ async def export_full():
 
         await log_activity(
             action="reports.export",
-            summary=f"Export complet: {total_records} inregistrari din {len(export_data['tables'])} tabele",
+            summary=f"Export {'selectiv' if tables else 'complet'}: {total_records} inregistrari din {len(export_data['tables'])} tabele",
         )
 
         return export_data

@@ -11,9 +11,10 @@ Invoice CRUD sub-router:
 
 from __future__ import annotations
 
+import json
 import logging
 import smtplib
-from datetime import date
+from datetime import date, timedelta
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -28,11 +29,15 @@ from app.db.database import get_db
 from .router import (
     ClientCreate,
     ClientUpdate,
+    FromCalculationRequest,
     InvoiceCreate,
     InvoiceItem,
     InvoiceSeriesCreate,
     InvoiceSeriesUpdate,
     InvoiceUpdate,
+    ItemPresetCreate,
+    PartialPayment,
+    RecurringSet,
     SendEmailRequest,
     StatusUpdate,
     INVOICES_DIR,
@@ -753,3 +758,534 @@ async def verify_cui(cui: str):
     except httpx.HTTPError as exc:
         logger.error("Eroare ANAF API: %s", exc)
         raise HTTPException(502, f"Nu s-a putut verifica CUI la ANAF: {exc}")
+
+
+# ═══════════════════════════════════════════
+# Feature 1: Articole favorite / predefinite
+# ═══════════════════════════════════════════
+
+async def _ensure_presets_table():
+    """Create invoice_item_presets table if it doesn't exist."""
+    async with get_db() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS invoice_item_presets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                description TEXT NOT NULL,
+                unit_price  REAL NOT NULL DEFAULT 0,
+                unit        TEXT DEFAULT 'buc',
+                category    TEXT DEFAULT 'general',
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
+
+
+@crud_router.get("/items/presets")
+async def list_item_presets():
+    """Lista toate articolele predefinite."""
+    await _ensure_presets_table()
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT * FROM invoice_item_presets ORDER BY category, description"
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+@crud_router.post("/items/presets", status_code=201)
+async def create_item_preset(data: ItemPresetCreate):
+    """Salvare articol predefinit pentru reutilizare in facturi."""
+    await _ensure_presets_table()
+    if not data.description.strip():
+        raise HTTPException(400, "Descrierea este obligatorie.")
+    if data.unit_price < 0:
+        raise HTTPException(400, "Pretul nu poate fi negativ.")
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            """INSERT INTO invoice_item_presets (description, unit_price, unit, category)
+               VALUES (?, ?, ?, ?)""",
+            (data.description.strip(), data.unit_price, data.unit, data.category),
+        )
+        await db.commit()
+        preset_id = cursor.lastrowid
+
+    await log_activity(
+        action="invoice.preset_create",
+        summary=f"Articol predefinit creat: {data.description}",
+        details={"preset_id": preset_id, "unit_price": data.unit_price, "category": data.category},
+    )
+    return {"id": preset_id, "message": f"Articol predefinit '{data.description}' salvat cu succes."}
+
+
+@crud_router.delete("/items/presets/{preset_id}")
+async def delete_item_preset(preset_id: int):
+    """Stergere articol predefinit."""
+    await _ensure_presets_table()
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT description FROM invoice_item_presets WHERE id = ?", (preset_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Articol predefinit negasit.")
+        desc = row["description"]
+        await db.execute("DELETE FROM invoice_item_presets WHERE id = ?", (preset_id,))
+        await db.commit()
+
+    await log_activity(
+        action="invoice.preset_delete",
+        summary=f"Articol predefinit sters: {desc}",
+        details={"preset_id": preset_id},
+    )
+    return {"message": f"Articol predefinit '{desc}' sters cu succes."}
+
+
+# ═══════════════════════════════════════════
+# Feature 2: Facturi recurente
+# ═══════════════════════════════════════════
+
+async def _ensure_recurring_table():
+    """Create recurring_invoices table if it doesn't exist."""
+    async with get_db() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS recurring_invoices (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_id  INTEGER NOT NULL REFERENCES invoices(id),
+                frequency   TEXT DEFAULT 'monthly',
+                next_due    TEXT,
+                enabled     INTEGER DEFAULT 1,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
+
+
+def _calc_next_due(frequency: str, from_date: str | None = None) -> str:
+    """Calculate next due date based on frequency from a given date."""
+    base = date.fromisoformat(from_date) if from_date else date.today()
+    if frequency == "monthly":
+        # Move forward one month
+        month = base.month + 1
+        year = base.year
+        if month > 12:
+            month = 1
+            year += 1
+        day = min(base.day, 28)  # Safe for all months
+        return date(year, month, day).isoformat()
+    elif frequency == "quarterly":
+        month = base.month + 3
+        year = base.year
+        while month > 12:
+            month -= 12
+            year += 1
+        day = min(base.day, 28)
+        return date(year, month, day).isoformat()
+    elif frequency == "yearly":
+        return date(base.year + 1, base.month, min(base.day, 28)).isoformat()
+    else:
+        # Default to monthly
+        month = base.month + 1
+        year = base.year
+        if month > 12:
+            month = 1
+            year += 1
+        return date(year, month, min(base.day, 28)).isoformat()
+
+
+@crud_router.post("/{invoice_id}/set-recurring")
+async def set_recurring(invoice_id: int, data: RecurringSet):
+    """Marcheaza o factura ca recurenta (lunar/trimestrial/anual)."""
+    await _ensure_recurring_table()
+
+    valid_frequencies = ("monthly", "quarterly", "yearly")
+    if data.frequency not in valid_frequencies:
+        raise HTTPException(400, f"Frecventa invalida. Optiuni: {', '.join(valid_frequencies)}")
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT invoice_number, date FROM invoices WHERE id = ?", (invoice_id,)
+        )
+        inv_row = await cursor.fetchone()
+        if not inv_row:
+            raise HTTPException(404, "Factura negasita.")
+
+        next_due = data.next_due or _calc_next_due(data.frequency, inv_row["date"])
+
+        # Check if already set as recurring
+        cursor = await db.execute(
+            "SELECT id FROM recurring_invoices WHERE invoice_id = ?", (invoice_id,)
+        )
+        existing = await cursor.fetchone()
+
+        if existing:
+            await db.execute(
+                "UPDATE recurring_invoices SET frequency = ?, next_due = ?, enabled = 1 WHERE invoice_id = ?",
+                (data.frequency, next_due, invoice_id),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO recurring_invoices (invoice_id, frequency, next_due, enabled)
+                   VALUES (?, ?, ?, 1)""",
+                (invoice_id, data.frequency, next_due),
+            )
+        await db.commit()
+
+    await log_activity(
+        action="invoice.set_recurring",
+        summary=f"Factura {inv_row['invoice_number']} setata ca recurenta ({data.frequency})",
+        details={
+            "invoice_id": invoice_id,
+            "frequency": data.frequency,
+            "next_due": next_due,
+        },
+    )
+    return {
+        "message": f"Factura {inv_row['invoice_number']} setata ca recurenta ({data.frequency}).",
+        "next_due": next_due,
+        "frequency": data.frequency,
+    }
+
+
+@crud_router.get("/recurring/list")
+async def list_recurring():
+    """Lista toate facturile recurente cu datele urmatoarei scadente."""
+    await _ensure_recurring_table()
+    async with get_db() as db:
+        cursor = await db.execute(
+            """SELECT r.id as recurring_id, r.frequency, r.next_due, r.enabled,
+                      i.id as invoice_id, i.invoice_number, i.total, i.status,
+                      i.date as invoice_date, i.client_id,
+                      c.name as client_name
+               FROM recurring_invoices r
+               JOIN invoices i ON r.invoice_id = i.id
+               LEFT JOIN clients c ON i.client_id = c.id
+               ORDER BY r.next_due ASC"""
+        )
+        rows = await cursor.fetchall()
+
+    result = []
+    today_str = date.today().isoformat()
+    for row in rows:
+        d = dict(row)
+        d["is_overdue"] = bool(d.get("next_due") and d["next_due"] < today_str and d["enabled"])
+        result.append(d)
+    return result
+
+
+# ═══════════════════════════════════════════
+# Feature 4: Plati partiale
+# ═══════════════════════════════════════════
+
+async def _ensure_payments_table():
+    """Create invoice_payments table if it doesn't exist."""
+    async with get_db() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS invoice_payments (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_id    INTEGER NOT NULL REFERENCES invoices(id),
+                amount        REAL NOT NULL,
+                payment_date  TEXT NOT NULL,
+                method        TEXT DEFAULT 'transfer',
+                notes         TEXT,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
+
+
+@crud_router.post("/{invoice_id}/payments")
+async def add_partial_payment(invoice_id: int, data: PartialPayment):
+    """Inregistrare plata partiala pentru o factura."""
+    await _ensure_payments_table()
+
+    if data.amount <= 0:
+        raise HTTPException(400, "Suma platii trebuie sa fie pozitiva.")
+
+    valid_methods = ("transfer", "cash", "card")
+    if data.method not in valid_methods:
+        raise HTTPException(400, f"Metoda de plata invalida. Optiuni: {', '.join(valid_methods)}")
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT invoice_number, total, status FROM invoices WHERE id = ?", (invoice_id,)
+        )
+        inv_row = await cursor.fetchone()
+        if not inv_row:
+            raise HTTPException(404, "Factura negasita.")
+
+        if inv_row["status"] == "cancelled":
+            raise HTTPException(409, "Nu se pot inregistra plati pentru o factura anulata.")
+
+        # Calculate already paid amount
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(amount), 0) as paid FROM invoice_payments WHERE invoice_id = ?",
+            (invoice_id,),
+        )
+        paid_row = await cursor.fetchone()
+        already_paid = paid_row["paid"]
+        remaining = round(inv_row["total"] - already_paid, 2)
+
+        if data.amount > remaining + 0.01:  # small tolerance for rounding
+            raise HTTPException(
+                400,
+                f"Suma depaseste restul de plata. Total factura: {inv_row['total']:.2f} RON, "
+                f"deja platit: {already_paid:.2f} RON, rest: {remaining:.2f} RON.",
+            )
+
+        cursor = await db.execute(
+            """INSERT INTO invoice_payments (invoice_id, amount, payment_date, method, notes)
+               VALUES (?, ?, ?, ?, ?)""",
+            (invoice_id, data.amount, data.payment_date, data.method, data.notes),
+        )
+        payment_id = cursor.lastrowid
+
+        new_paid = round(already_paid + data.amount, 2)
+        new_remaining = round(inv_row["total"] - new_paid, 2)
+
+        # Auto-mark as paid if fully paid
+        if new_remaining <= 0.01:
+            await db.execute(
+                "UPDATE invoices SET status = 'paid', payment_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (data.payment_date, invoice_id),
+            )
+
+        await db.commit()
+
+    await log_activity(
+        action="invoice.partial_payment",
+        summary=f"Plata {data.amount:.2f} RON inregistrata pentru {inv_row['invoice_number']}",
+        details={
+            "invoice_id": invoice_id,
+            "payment_id": payment_id,
+            "amount": data.amount,
+            "method": data.method,
+            "total_paid": new_paid,
+            "remaining": new_remaining,
+        },
+    )
+    return {
+        "payment_id": payment_id,
+        "message": f"Plata de {data.amount:.2f} RON inregistrata cu succes.",
+        "total_paid": new_paid,
+        "remaining": new_remaining,
+        "fully_paid": new_remaining <= 0.01,
+    }
+
+
+@crud_router.get("/{invoice_id}/payments")
+async def list_payments(invoice_id: int):
+    """Lista toate platile pentru o factura cu sumar."""
+    await _ensure_payments_table()
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT invoice_number, total, status FROM invoices WHERE id = ?", (invoice_id,)
+        )
+        inv_row = await cursor.fetchone()
+        if not inv_row:
+            raise HTTPException(404, "Factura negasita.")
+
+        cursor = await db.execute(
+            "SELECT * FROM invoice_payments WHERE invoice_id = ? ORDER BY payment_date ASC, id ASC",
+            (invoice_id,),
+        )
+        payments = await cursor.fetchall()
+
+    total_paid = sum(p["amount"] for p in payments)
+    remaining = round(inv_row["total"] - total_paid, 2)
+
+    return {
+        "invoice_number": inv_row["invoice_number"],
+        "invoice_total": inv_row["total"],
+        "total_paid": round(total_paid, 2),
+        "remaining": max(remaining, 0),
+        "fully_paid": remaining <= 0.01,
+        "payments": [dict(p) for p in payments],
+    }
+
+
+# ═══════════════════════════════════════════
+# Feature 5: Factura din inspectie ITP
+# ═══════════════════════════════════════════
+
+@crud_router.post("/from-itp/{inspection_id}")
+async def create_from_itp(inspection_id: int):
+    """
+    Creeaza factura draft pre-completata din datele unei inspectii ITP.
+    [SYNC: ITP -> Invoice]
+    """
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT * FROM itp_inspections WHERE id = ?", (inspection_id,)
+        )
+        inspection = await cursor.fetchone()
+        if not inspection:
+            raise HTTPException(404, "Inspectia ITP negasita.")
+
+        inspection = dict(inspection)
+        owner_name = inspection.get("owner_name") or "Client ITP"
+        plate = inspection.get("plate_number", "N/A")
+        price = inspection.get("price", 0) or 0
+        brand = inspection.get("brand") or ""
+        model = inspection.get("model") or ""
+
+        vehicle_desc = f"{brand} {model}".strip()
+        if vehicle_desc:
+            vehicle_desc = f" ({vehicle_desc})"
+
+        # Find or create client by owner_name
+        cursor = await db.execute(
+            "SELECT id, name FROM clients WHERE name = ? COLLATE NOCASE LIMIT 1",
+            (owner_name,),
+        )
+        client_row = await cursor.fetchone()
+
+        if client_row:
+            client_id = client_row["id"]
+        else:
+            cursor = await db.execute(
+                """INSERT INTO clients (name, phone, notes)
+                   VALUES (?, ?, ?)""",
+                (owner_name, inspection.get("owner_phone"), f"Client creat automat din ITP - {plate}"),
+            )
+            await db.commit()
+            client_id = cursor.lastrowid
+
+        # Build invoice items
+        items = [{
+            "description": f"Inspectie ITP - {plate}{vehicle_desc}",
+            "quantity": 1,
+            "unit_price": round(float(price), 2),
+            "total": round(float(price), 2),
+        }]
+        items_json = json.dumps(items, ensure_ascii=False)
+        subtotal = round(float(price), 2)
+
+        invoice_number = await _next_invoice_number()
+        inv_date = inspection.get("inspection_date") or date.today().isoformat()
+
+        cursor = await db.execute(
+            """INSERT INTO invoices
+               (client_id, invoice_number, date, items_json,
+                subtotal, vat_percent, vat_amount, total, notes, status)
+               VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 'draft')""",
+            (
+                client_id, invoice_number, inv_date, items_json,
+                subtotal, subtotal,
+                f"Generat automat din inspectia ITP #{inspection_id} - {plate}",
+            ),
+        )
+        await db.commit()
+        invoice_id = cursor.lastrowid
+
+    await log_activity(
+        action="invoice.from_itp",
+        summary=f"Factura {invoice_number} creata din ITP #{inspection_id} ({plate})",
+        details={
+            "invoice_id": invoice_id,
+            "inspection_id": inspection_id,
+            "plate": plate,
+            "total": subtotal,
+        },
+    )
+    return {
+        "id": invoice_id,
+        "invoice_number": invoice_number,
+        "client_id": client_id,
+        "total": subtotal,
+        "message": f"Factura {invoice_number} creata din inspectia ITP pentru {plate}.",
+    }
+
+
+# ═══════════════════════════════════════════
+# Feature 6: Factura din calcul pret traducere
+# ═══════════════════════════════════════════
+
+@crud_router.post("/from-calculation")
+async def create_from_calculation(data: FromCalculationRequest):
+    """
+    Creeaza factura draft pre-completata din datele unui calcul de pret traducere.
+    Accepta word_count, price, document_type, source_lang, target_lang, client_id optional.
+    """
+    if data.price <= 0:
+        raise HTTPException(400, "Pretul trebuie sa fie pozitiv.")
+    if data.word_count <= 0:
+        raise HTTPException(400, "Numarul de cuvinte trebuie sa fie pozitiv.")
+
+    async with get_db() as db:
+        # Validate client if provided
+        client_id = data.client_id
+        if client_id:
+            cursor = await db.execute(
+                "SELECT id, name FROM clients WHERE id = ?", (client_id,)
+            )
+            client_row = await cursor.fetchone()
+            if not client_row:
+                raise HTTPException(404, "Client negasit.")
+
+        if not client_id:
+            # Create/find a generic translation client
+            cursor = await db.execute(
+                "SELECT id FROM clients WHERE name = 'Client traducere' COLLATE NOCASE LIMIT 1"
+            )
+            generic = await cursor.fetchone()
+            if generic:
+                client_id = generic["id"]
+            else:
+                cursor = await db.execute(
+                    "INSERT INTO clients (name, notes) VALUES (?, ?)",
+                    ("Client traducere", "Client generic creat automat pentru facturi din calcul pret"),
+                )
+                await db.commit()
+                client_id = cursor.lastrowid
+
+        doc_type = data.document_type or "document"
+        description = (
+            f"Traducere {doc_type} {data.source_lang} -> {data.target_lang} "
+            f"({data.word_count} cuvinte)"
+        )
+
+        items = [{
+            "description": description,
+            "quantity": 1,
+            "unit_price": round(data.price, 2),
+            "total": round(data.price, 2),
+        }]
+        items_json = json.dumps(items, ensure_ascii=False)
+        subtotal = round(data.price, 2)
+
+        invoice_number = await _next_invoice_number()
+
+        cursor = await db.execute(
+            """INSERT INTO invoices
+               (client_id, invoice_number, date, items_json,
+                subtotal, vat_percent, vat_amount, total, notes, status)
+               VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 'draft')""",
+            (
+                client_id, invoice_number, date.today().isoformat(), items_json,
+                subtotal, subtotal,
+                f"Generat din calcul pret: {data.word_count} cuvinte, {data.source_lang}->{data.target_lang}",
+            ),
+        )
+        await db.commit()
+        invoice_id = cursor.lastrowid
+
+    await log_activity(
+        action="invoice.from_calculation",
+        summary=f"Factura {invoice_number} creata din calcul pret ({data.word_count} cuv, {subtotal} RON)",
+        details={
+            "invoice_id": invoice_id,
+            "word_count": data.word_count,
+            "price": subtotal,
+            "source_lang": data.source_lang,
+            "target_lang": data.target_lang,
+        },
+    )
+    return {
+        "id": invoice_id,
+        "invoice_number": invoice_number,
+        "client_id": client_id,
+        "total": subtotal,
+        "message": f"Factura {invoice_number} creata din calcul pret ({data.word_count} cuvinte).",
+    }

@@ -1,18 +1,20 @@
 """
 File Manager API — browse, preview, CRUD, upload, download, duplicate finder,
-fulltext search, tags, favorites, auto-organize.
+fulltext search, tags, favorites, auto-organize, batch operations.
 
 Endpoints:
-  GET    /api/fm/browse               — list directory contents
+  GET    /api/fm/browse               — list directory contents (with total_size, file_count, dir_count)
   GET    /api/fm/serve                — serve file for inline preview (PDF, images)
+  GET    /api/fm/preview              — preview DOCX/TXT inline as text, redirect PDF/images to /serve
   GET    /api/fm/download             — serve file as download attachment
-  POST   /api/fm/upload               — upload files to directory
+  POST   /api/fm/upload               — upload files to directory (MIME validation)
   POST   /api/fm/mkdir                — create directory
   POST   /api/fm/rename               — rename file/directory
   POST   /api/fm/move                 — move file/directory
   DELETE /api/fm/delete               — delete file/directory
+  POST   /api/fm/batch                — batch delete/move/tag operations
   POST   /api/fm/duplicates           — find duplicate files by hash
-  GET    /api/fm/search/fulltext      — search file contents using FTS5
+  GET    /api/fm/search/fulltext      — search file contents using FTS5 (recursive)
   POST   /api/fm/tags                 — add tag to file
   DELETE /api/fm/tags                 — remove tag from file
   GET    /api/fm/tags                 — list all tags with file count
@@ -32,8 +34,10 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from typing import Literal, Optional
+
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.core.activity_log import log_activity
@@ -53,6 +57,16 @@ IGNORED_DIRS = {
 
 # Max file size for hashing in duplicate finder (50 MB)
 _MAX_HASH_SIZE = 50 * 1024 * 1024
+
+# Allowed upload extensions (whitelist)
+_ALLOWED_UPLOAD_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".txt", ".csv", ".xlsx", ".xls",
+    ".json", ".xml", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".bmp", ".tiff", ".zip", ".md", ".html",
+}
+
+# Max preview file size (1 MB)
+_MAX_PREVIEW_SIZE = 1 * 1024 * 1024
 
 
 def _resolve(rel_path: str) -> Path:
@@ -102,13 +116,22 @@ async def browse(
         raise HTTPException(400, "Nu este director")
 
     entries = []
+    total_size = 0
+    file_count = 0
+    dir_count = 0
     try:
         for entry in sorted(target.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
             if entry.name.startswith("."):
                 continue
             if entry.is_dir() and entry.name in IGNORED_DIRS:
                 continue
-            entries.append(_file_info(entry))
+            info = _file_info(entry)
+            entries.append(info)
+            if entry.is_file():
+                file_count += 1
+                total_size += info.get("size") or 0
+            elif entry.is_dir():
+                dir_count += 1
     except PermissionError:
         raise HTTPException(403, "Acces interzis la director")
 
@@ -118,6 +141,9 @@ async def browse(
         "path": path or ".",
         "parent": parent,
         "entries": entries,
+        "total_size": total_size,
+        "file_count": file_count,
+        "dir_count": dir_count,
     }
 
 
@@ -135,6 +161,54 @@ async def serve_file(path: str = Query(...)):
         media_type=mime,
         headers={"Content-Disposition": f'inline; filename="{target.name}"'},
     )
+
+
+# ---------- Preview (DOCX, TXT inline) ----------
+
+@router.get("/preview")
+async def preview_file(path: str = Query(..., description="Cale relativa catre fisier")):
+    """Preview inline pentru TXT, DOCX. PDF si imagini redirecteaza la /serve."""
+    target = _resolve(path)
+    if not target.is_file():
+        raise HTTPException(404, "Fisierul nu exista")
+
+    ext = target.suffix.lower()
+
+    # PDF and images — redirect to existing /serve endpoint
+    if ext in {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg"}:
+        return RedirectResponse(url=f"/api/fm/serve?path={path}", status_code=307)
+
+    # Check file size limit (1 MB)
+    if target.stat().st_size > _MAX_PREVIEW_SIZE:
+        raise HTTPException(400, "Fisierul este prea mare pentru preview (max 1MB)")
+
+    # TXT and similar text files
+    if ext in {".txt", ".md", ".csv", ".log", ".json", ".xml", ".html", ".ini", ".cfg",
+               ".yaml", ".yml", ".toml"}:
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+        except (PermissionError, OSError) as e:
+            raise HTTPException(500, f"Nu se poate citi fisierul: {e}")
+        return PlainTextResponse(content)
+
+    # DOCX — extract text from paragraphs using python-docx
+    if ext == ".docx":
+        try:
+            from docx import Document
+        except ImportError:
+            raise HTTPException(500, "python-docx nu este instalat — nu se poate previzualiza DOCX")
+        try:
+            doc = Document(str(target))
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            content = "\n\n".join(paragraphs)
+            if not content:
+                content = "(Document gol sau fara text extractibil)"
+        except Exception as e:
+            raise HTTPException(500, f"Eroare la citirea DOCX: {e}")
+        return PlainTextResponse(content)
+
+    # Unsupported type
+    raise HTTPException(400, f"Tip de fisier nepermis pentru preview: {ext}")
 
 
 # ---------- Download ----------
@@ -171,6 +245,13 @@ async def upload_files(
     uploaded = []
     for f in files:
         safe_name = Path(f.filename).name  # strip any path components
+        file_ext = Path(safe_name).suffix.lower()
+        if file_ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+            raise HTTPException(
+                400,
+                f"Tip de fisier nepermis: '{file_ext}' ({safe_name}). "
+                f"Extensii permise: {', '.join(sorted(_ALLOWED_UPLOAD_EXTENSIONS))}",
+            )
         dest = target_dir / safe_name
 
         # Don't overwrite without suffix
@@ -297,6 +378,111 @@ async def delete_item(path: str = Query(...)):
     return {"deleted": path}
 
 
+# ---------- Batch Operations ----------
+
+class BatchRequest(BaseModel):
+    action: Literal["delete", "move", "tag"]
+    paths: list[str]
+    destination: Optional[str] = None  # required for move
+    tag: Optional[str] = None  # required for tag
+
+
+@router.post("/batch")
+async def batch_operations(req: BatchRequest):
+    """Operatii in lot: delete, move sau tag pe mai multe fisiere."""
+    if not req.paths:
+        raise HTTPException(400, "Lista de cai este goala")
+
+    if req.action == "move" and not req.destination:
+        raise HTTPException(400, "Destinatia este obligatorie pentru actiunea 'move'")
+    if req.action == "tag" and not req.tag:
+        raise HTTPException(400, "Tag-ul este obligatoriu pentru actiunea 'tag'")
+
+    success = []
+    errors = []
+
+    if req.action == "delete":
+        for p in req.paths:
+            try:
+                target = _resolve(p)
+                if not target.exists():
+                    errors.append({"path": p, "error": "Nu exista"})
+                    continue
+                if target == _PROJECT_ROOT.resolve():
+                    errors.append({"path": p, "error": "Nu se poate sterge directorul radacina"})
+                    continue
+                name = target.name
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+                success.append({"path": p, "name": name})
+            except Exception as e:
+                errors.append({"path": p, "error": str(e)})
+
+    elif req.action == "move":
+        dest_dir = _resolve(req.destination)
+        if not dest_dir.is_dir():
+            raise HTTPException(400, f"Destinatia nu este director: {req.destination}")
+        for p in req.paths:
+            try:
+                source = _resolve(p)
+                if not source.exists():
+                    errors.append({"path": p, "error": "Sursa nu exista"})
+                    continue
+                new_path = dest_dir / source.name
+                if new_path.exists():
+                    errors.append({"path": p, "error": f"Exista deja in destinatie: {source.name}"})
+                    continue
+                shutil.move(str(source), str(new_path))
+                success.append({"path": p, "new_path": _rel(new_path), "name": source.name})
+            except Exception as e:
+                errors.append({"path": p, "error": str(e)})
+
+    elif req.action == "tag":
+        tag = req.tag.strip().lower()
+        if not tag:
+            raise HTTPException(400, "Tag-ul nu poate fi gol")
+        async with get_db() as db:
+            for p in req.paths:
+                try:
+                    target = _resolve(p)
+                    if not target.exists():
+                        errors.append({"path": p, "error": "Fisierul nu exista"})
+                        continue
+                    try:
+                        await db.execute(
+                            "INSERT INTO file_tags (file_path, tag) VALUES (?, ?)",
+                            (p, tag),
+                        )
+                        success.append({"path": p, "tag": tag})
+                    except Exception as e:
+                        if "UNIQUE constraint" in str(e):
+                            errors.append({"path": p, "error": f"Tag-ul '{tag}' exista deja"})
+                        else:
+                            errors.append({"path": p, "error": str(e)})
+                except Exception as e:
+                    errors.append({"path": p, "error": str(e)})
+            await db.commit()
+
+    await log_activity(
+        action=f"filemanager.batch_{req.action}",
+        summary=f"Batch {req.action}: {len(success)} reusit, {len(errors)} erori din {len(req.paths)} total",
+        details={
+            "action": req.action,
+            "total": len(req.paths),
+            "success_count": len(success),
+            "error_count": len(errors),
+        },
+    )
+
+    return {
+        "success": success,
+        "errors": errors,
+        "total": len(req.paths),
+    }
+
+
 # ---------- Duplicate Finder ----------
 
 class DuplicateRequest(BaseModel):
@@ -406,17 +592,25 @@ async def fulltext_search(
     q: str = Query(..., min_length=2, description="Termen de cautare"),
     path: str = Query("", description="Cale relativa (optional, limiteaza cautarea)"),
     limit: int = Query(50, ge=1, le=200),
+    max_files: int = Query(500, ge=1, le=5000, description="Numar maxim de fisiere de indexat"),
 ):
-    """Cautare fulltext in continutul fisierelor (FTS5)."""
+    """Cautare fulltext in continutul fisierelor (FTS5) — recursiv prin subdirectoare."""
     # First, index files in the target directory if not already indexed
     target = _resolve(path)
     if not target.is_dir():
         raise HTTPException(400, "Calea trebuie sa fie un director")
 
-    # Index files in the directory (shallow — only current dir level for speed)
+    # Index files recursively through subdirectories, skip IGNORED_DIRS
     indexed_count = 0
-    for entry in target.iterdir():
+    scanned_count = 0
+    for entry in target.rglob("*"):
+        if scanned_count >= max_files:
+            break
+        # Skip files inside ignored directories
+        if any(part in IGNORED_DIRS for part in entry.parts):
+            continue
         if entry.is_file() and entry.suffix.lower() in _INDEXABLE_EXTENSIONS:
+            scanned_count += 1
             if await _index_file(entry):
                 indexed_count += 1
 

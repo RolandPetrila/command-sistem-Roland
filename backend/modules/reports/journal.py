@@ -53,6 +53,7 @@ class BookmarkCreate(BaseModel):
     url: str
     category: str = "general"
     description: str = ""
+    tags: list[str] = []
 
 
 class BookmarkUpdate(BaseModel):
@@ -60,6 +61,7 @@ class BookmarkUpdate(BaseModel):
     url: str | None = None
     category: str | None = None
     description: str | None = None
+    tags: list[str] | None = None
 
 
 # ===========================================================================
@@ -70,23 +72,44 @@ class BookmarkUpdate(BaseModel):
 async def journal_list(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    q: str = Query("", description="Cautare text in titlu/continut"),
+    mood: str = Query("", description="Filtreaza pe mood"),
+    tag: str = Query("", description="Filtreaza pe tag"),
 ):
-    """Listeaza intrarile din jurnal, paginat."""
+    """Listeaza intrarile din jurnal, paginat, cu cautare si filtre."""
     offset = (page - 1) * per_page
+
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if q:
+        conditions.append("(title LIKE ? OR content LIKE ?)")
+        params.extend([f"%{q}%", f"%{q}%"])
+    if mood:
+        conditions.append("mood = ?")
+        params.append(mood)
+    if tag:
+        conditions.append("tags LIKE ?")
+        params.append(f"%{tag}%")
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
 
     try:
         async with get_db() as db:
             cursor = await db.execute(
-                "SELECT COUNT(*) as cnt FROM journal_entries"
+                f"SELECT COUNT(*) as cnt FROM journal_entries {where_clause}",
+                tuple(params),
             )
             count_row = await cursor.fetchone()
             total = count_row["cnt"] if count_row else 0
 
             cursor = await db.execute(
-                """SELECT * FROM journal_entries
+                f"""SELECT * FROM journal_entries {where_clause}
                    ORDER BY created_at DESC
                    LIMIT ? OFFSET ?""",
-                (per_page, offset),
+                tuple(params) + (per_page, offset),
             )
             rows = await cursor.fetchall()
 
@@ -239,29 +262,57 @@ async def journal_delete(entry_id: int):
 @router.get("/bookmarks")
 async def bookmarks_list(
     category: str = Query("", description="Filtreaza pe categorie"),
+    tags: str = Query("", description="Filtreaza pe tag"),
 ):
     """Listeaza toate bookmark-urile."""
     try:
         async with get_db() as db:
+            conditions: list[str] = []
+            params: list[Any] = []
+
             if category:
+                conditions.append("category = ?")
+                params.append(category)
+            if tags:
+                conditions.append("tags LIKE ?")
+                params.append(f"%{tags}%")
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            try:
                 cursor = await db.execute(
-                    "SELECT * FROM bookmarks WHERE category = ? ORDER BY created_at DESC",
-                    (category,),
+                    f"SELECT * FROM bookmarks {where_clause} ORDER BY created_at DESC",
+                    tuple(params),
                 )
-            else:
+            except Exception:
+                # tags column might not exist yet — add it and retry
+                await db.execute("ALTER TABLE bookmarks ADD COLUMN tags TEXT DEFAULT '[]'")
+                await db.commit()
                 cursor = await db.execute(
-                    "SELECT * FROM bookmarks ORDER BY created_at DESC"
+                    f"SELECT * FROM bookmarks {where_clause} ORDER BY created_at DESC",
+                    tuple(params),
                 )
+
             rows = await cursor.fetchall()
 
             bookmarks = []
             for row in rows:
+                row_tags = []
+                try:
+                    raw = row["tags"] if "tags" in row.keys() else "[]"
+                    row_tags = json.loads(raw) if raw else []
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
                 bookmarks.append({
                     "id": row["id"],
                     "title": row["title"],
                     "url": row["url"],
                     "category": row["category"],
                     "description": row["description"],
+                    "tags": row_tags,
                     "created_at": row["created_at"],
                 })
 
@@ -276,21 +327,32 @@ async def bookmarks_list(
 async def bookmarks_create(req: BookmarkCreate):
     """Adauga un bookmark nou."""
     now = datetime.now(timezone.utc).isoformat()
+    tags_json = json.dumps(req.tags, ensure_ascii=False)
 
     try:
         async with get_db() as db:
-            cursor = await db.execute(
-                """INSERT INTO bookmarks (title, url, category, description, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (req.title, req.url, req.category, req.description, now),
-            )
+            try:
+                cursor = await db.execute(
+                    """INSERT INTO bookmarks (title, url, category, description, tags, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (req.title, req.url, req.category, req.description, tags_json, now),
+                )
+            except Exception:
+                # tags column might not exist yet — add it and retry
+                await db.execute("ALTER TABLE bookmarks ADD COLUMN tags TEXT DEFAULT '[]'")
+                await db.commit()
+                cursor = await db.execute(
+                    """INSERT INTO bookmarks (title, url, category, description, tags, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (req.title, req.url, req.category, req.description, tags_json, now),
+                )
             await db.commit()
             bookmark_id = cursor.lastrowid
 
         await log_activity(
             action="reports.bookmark.create",
             summary=f"Bookmark adaugat: {req.title}",
-            details={"id": bookmark_id, "url": req.url},
+            details={"id": bookmark_id, "url": req.url, "tags": req.tags},
         )
 
         return {
@@ -322,6 +384,9 @@ async def bookmarks_update(bookmark_id: int, req: BookmarkUpdate):
     if req.description is not None:
         updates.append("description = ?")
         params.append(req.description)
+    if req.tags is not None:
+        updates.append("tags = ?")
+        params.append(json.dumps(req.tags, ensure_ascii=False))
 
     if not updates:
         raise HTTPException(400, "Niciun camp de actualizat.")
@@ -330,10 +395,19 @@ async def bookmarks_update(bookmark_id: int, req: BookmarkUpdate):
 
     try:
         async with get_db() as db:
-            cursor = await db.execute(
-                f"UPDATE bookmarks SET {', '.join(updates)} WHERE id = ?",
-                tuple(params),
-            )
+            try:
+                cursor = await db.execute(
+                    f"UPDATE bookmarks SET {', '.join(updates)} WHERE id = ?",
+                    tuple(params),
+                )
+            except Exception:
+                # tags column might not exist yet — add it and retry
+                await db.execute("ALTER TABLE bookmarks ADD COLUMN tags TEXT DEFAULT '[]'")
+                await db.commit()
+                cursor = await db.execute(
+                    f"UPDATE bookmarks SET {', '.join(updates)} WHERE id = ?",
+                    tuple(params),
+                )
             await db.commit()
 
             if cursor.rowcount == 0:

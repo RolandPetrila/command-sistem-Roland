@@ -2,13 +2,14 @@
 API endpoints pentru API Key Vault — stocare criptată chei API.
 
 Endpoints:
-  POST   /api/vault/setup        — setează master password (prima dată)
-  POST   /api/vault/unlock       — verifică master password
-  GET    /api/vault/keys         — lista chei (nume, provider, dată) — fără valori
-  POST   /api/vault/keys         — adaugă cheie nouă
-  GET    /api/vault/keys/:name   — decriptează și returnează valoarea
-  DELETE /api/vault/keys/:name   — șterge o cheie
-  GET    /api/vault/status       — verifică dacă vault-ul e configurat
+  POST   /api/vault/setup            — setează master password (prima dată)
+  POST   /api/vault/unlock           — verifică master password, returnează session token
+  GET    /api/vault/keys             — lista chei (nume, provider, dată) — fără valori
+  POST   /api/vault/keys             — adaugă cheie nouă
+  GET    /api/vault/keys/:name       — decriptează și returnează valoarea
+  POST   /api/vault/keys/:name/test  — testează validitatea cheii la provider
+  DELETE /api/vault/keys/:name       — șterge o cheie (necesită confirm=true)
+  GET    /api/vault/status           — verifică dacă vault-ul e configurat
 """
 
 from __future__ import annotations
@@ -18,9 +19,13 @@ import hashlib
 import logging
 import os
 import re
+import time
+import uuid
+from typing import Optional
 
+import httpx
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel
 
 from app.core.activity_log import log_activity
@@ -68,6 +73,117 @@ _KEY_PATTERNS: dict[str, tuple[str, str]] = {
 _logger = logging.getLogger(__name__)
 
 
+# --- Rate limiter for /unlock (max 5 attempts per 60s per IP) ---
+
+_unlock_attempts: dict[str, list[float]] = {}
+_RATE_LIMIT_MAX = 5
+_RATE_LIMIT_WINDOW = 60  # seconds
+
+
+def _check_rate_limit(client_ip: str) -> None:
+    """Verifică rate limit pe /unlock. Aruncă 429 dacă depășit."""
+    now = time.time()
+    if client_ip not in _unlock_attempts:
+        _unlock_attempts[client_ip] = []
+
+    # Remove expired entries
+    _unlock_attempts[client_ip] = [
+        t for t in _unlock_attempts[client_ip] if now - t < _RATE_LIMIT_WINDOW
+    ]
+
+    if len(_unlock_attempts[client_ip]) >= _RATE_LIMIT_MAX:
+        raise HTTPException(
+            429,
+            f"Prea multe încercări de deblocare. Așteaptă {_RATE_LIMIT_WINDOW}s."
+        )
+
+
+def _record_attempt(client_ip: str) -> None:
+    """Înregistrează o încercare de unlock."""
+    if client_ip not in _unlock_attempts:
+        _unlock_attempts[client_ip] = []
+    _unlock_attempts[client_ip].append(time.time())
+
+
+# --- Session management (30 min TTL) ---
+
+_sessions: dict[str, dict] = {}  # token -> {"master_password": str, "expires": float}
+_SESSION_TTL = 30 * 60  # 30 minutes in seconds
+
+
+def _create_session(master_password: str) -> str:
+    """Creează o sesiune nouă și returnează token-ul."""
+    _cleanup_expired_sessions()
+    token = str(uuid.uuid4())
+    _sessions[token] = {
+        "master_password": master_password,
+        "expires": time.time() + _SESSION_TTL,
+    }
+    return token
+
+
+def _cleanup_expired_sessions() -> None:
+    """Șterge sesiunile expirate."""
+    now = time.time()
+    expired = [t for t, s in _sessions.items() if s["expires"] < now]
+    for t in expired:
+        del _sessions[t]
+
+
+def _resolve_master_password(
+    x_master_password: Optional[str] = None,
+    x_vault_session: Optional[str] = None,
+) -> str:
+    """Rezolvă master password din header direct sau din session token.
+
+    Prioritate: X-Master-Password > X-Vault-Session.
+    Aruncă HTTPException dacă niciuna nu e validă.
+    """
+    if x_master_password:
+        return x_master_password
+
+    if x_vault_session:
+        _cleanup_expired_sessions()
+        session = _sessions.get(x_vault_session)
+        if session and session["expires"] > time.time():
+            return session["master_password"]
+        raise HTTPException(401, "Sesiune expirată sau invalidă. Deblochează din nou.")
+
+    raise HTTPException(401, "Lipsește X-Master-Password sau X-Vault-Session header.")
+
+
+# --- Key test URLs per provider ---
+
+_KEY_TEST_URLS: dict[str, dict] = {
+    "gemini": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "auth_type": "query_param",
+        "param_name": "key",
+    },
+    "openai": {
+        "url": "https://api.openai.com/v1/models",
+        "auth_type": "bearer",
+    },
+    "deepl": {
+        "url": "https://api-free.deepl.com/v2/usage",
+        "auth_type": "header",
+        "header_name": "DeepL-Auth-Key",
+    },
+    "groq": {
+        "url": "https://api.groq.com/openai/v1/models",
+        "auth_type": "bearer",
+    },
+    "cerebras": {
+        "url": "https://api.cerebras.ai/v1/models",
+        "auth_type": "bearer",
+    },
+    "mistral": {
+        "url": "https://api.mistral.ai/v1/models",
+        "auth_type": "bearer",
+    },
+}
+
+
 def _validate_key_format(provider: str, value: str) -> str | None:
     """Returns warning message if key format doesn't match expected pattern, None if OK."""
     provider_lower = provider.lower()
@@ -94,9 +210,9 @@ async def vault_status():
 
 @router.post("/setup")
 async def vault_setup(req: SetupRequest):
-    """Setează master password (doar prima dată)."""
-    if len(req.master_password) < 4:
-        raise HTTPException(400, "Parola trebuie să aibă minim 4 caractere")
+    """Setează master password (doar prima dată). Minim 8 caractere."""
+    if len(req.master_password) < 8:
+        raise HTTPException(400, "Parola trebuie să aibă minim 8 caractere")
 
     async with get_db() as db:
         cursor = await db.execute(
@@ -126,8 +242,16 @@ async def vault_setup(req: SetupRequest):
 
 
 @router.post("/unlock")
-async def vault_unlock(req: SetupRequest):
-    """Verifică master password."""
+async def vault_unlock(req: SetupRequest, request: Request):
+    """Verifică master password. Returnează session token (30 min TTL).
+
+    Rate limited: max 5 încercări per minut per IP.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Rate limit check BEFORE password verification
+    _check_rate_limit(client_ip)
+
     async with get_db() as db:
         cursor = await db.execute(
             "SELECT key, value FROM vault_config WHERE key IN ('master_hash', 'master_salt')"
@@ -141,9 +265,13 @@ async def vault_unlock(req: SetupRequest):
     expected_hash = rows["master_hash"]
 
     if _hash_password(req.master_password, salt) != expected_hash:
+        _record_attempt(client_ip)
         raise HTTPException(401, "Parolă incorectă")
 
-    return {"status": "unlocked"}
+    # Successful unlock — create session token
+    token = _create_session(req.master_password)
+
+    return {"status": "unlocked", "session_token": token, "ttl_minutes": 30}
 
 
 async def _verify_password(master_password: str) -> bytes:
@@ -175,11 +303,16 @@ async def list_keys():
 
 
 @router.post("/keys")
-async def add_key(req: AddKeyRequest, x_master_password: str = Header()):
-    """Adaugă o cheie criptată în vault."""
-    salt = await _verify_password(x_master_password)
+async def add_key(
+    req: AddKeyRequest,
+    x_master_password: Optional[str] = Header(default=None),
+    x_vault_session: Optional[str] = Header(default=None),
+):
+    """Adaugă o cheie criptată în vault. Autentificare prin parolă sau session token."""
+    master_pw = _resolve_master_password(x_master_password, x_vault_session)
+    salt = await _verify_password(master_pw)
 
-    fernet_key = _derive_key(x_master_password, salt)
+    fernet_key = _derive_key(master_pw, salt)
     fernet = Fernet(fernet_key)
     encrypted = fernet.encrypt(req.value.encode()).decode()
 
@@ -214,9 +347,14 @@ async def add_key(req: AddKeyRequest, x_master_password: str = Header()):
 
 
 @router.get("/keys/{name}")
-async def get_key(name: str, x_master_password: str = Header()):
-    """Decriptează și returnează valoarea unei chei."""
-    salt = await _verify_password(x_master_password)
+async def get_key(
+    name: str,
+    x_master_password: Optional[str] = Header(default=None),
+    x_vault_session: Optional[str] = Header(default=None),
+):
+    """Decriptează și returnează valoarea unei chei. Autentificare prin parolă sau session token."""
+    master_pw = _resolve_master_password(x_master_password, x_vault_session)
+    salt = await _verify_password(master_pw)
 
     async with get_db() as db:
         cursor = await db.execute(
@@ -226,7 +364,7 @@ async def get_key(name: str, x_master_password: str = Header()):
         if not row:
             raise HTTPException(404, f"Cheia '{name}' nu există")
 
-    fernet_key = _derive_key(x_master_password, salt)
+    fernet_key = _derive_key(master_pw, salt)
     fernet = Fernet(fernet_key)
 
     try:
@@ -238,9 +376,21 @@ async def get_key(name: str, x_master_password: str = Header()):
 
 
 @router.delete("/keys/{name}")
-async def delete_key(name: str, x_master_password: str = Header()):
-    """Șterge o cheie din vault."""
-    await _verify_password(x_master_password)
+async def delete_key(
+    name: str,
+    confirm: bool = Query(default=False, description="Trebuie True pentru confirmare ștergere"),
+    x_master_password: Optional[str] = Header(default=None),
+    x_vault_session: Optional[str] = Header(default=None),
+):
+    """Șterge o cheie din vault. Necesită confirm=true ca protecție la ștergeri accidentale."""
+    if not confirm:
+        raise HTTPException(
+            400,
+            "Ești sigur? Adaugă ?confirm=true pentru a confirma ștergerea cheii."
+        )
+
+    master_pw = _resolve_master_password(x_master_password, x_vault_session)
+    await _verify_password(master_pw)
 
     async with get_db() as db:
         cursor = await db.execute(
@@ -258,3 +408,89 @@ async def delete_key(name: str, x_master_password: str = Header()):
         details={"name": name},
     )
     return {"status": "deleted", "name": name}
+
+
+@router.post("/keys/{name}/test")
+async def test_key(
+    name: str,
+    x_master_password: Optional[str] = Header(default=None),
+    x_vault_session: Optional[str] = Header(default=None),
+):
+    """Testează validitatea unei chei API la provider-ul corespunzător.
+
+    Decriptează cheia și face o cerere de test (ex: listare modele) la provider.
+    Suportă: gemini, openai, deepl, groq, cerebras, mistral.
+    Returnează {"valid": true/false, "message": "..."}.
+    """
+    master_pw = _resolve_master_password(x_master_password, x_vault_session)
+    salt = await _verify_password(master_pw)
+
+    # Fetch key details (encrypted_value + provider)
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT encrypted_value, provider FROM vault_keys WHERE name = ?", (name,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, f"Cheia '{name}' nu există")
+
+    # Decrypt the key
+    fernet_key = _derive_key(master_pw, salt)
+    fernet = Fernet(fernet_key)
+    try:
+        api_key = fernet.decrypt(row["encrypted_value"].encode()).decode()
+    except InvalidToken:
+        raise HTTPException(500, "Eroare decriptare — datele pot fi corupte")
+
+    provider = row["provider"].lower()
+
+    # Find matching test config
+    test_config = None
+    for key, config in _KEY_TEST_URLS.items():
+        if key in provider:
+            test_config = config
+            break
+
+    if not test_config:
+        return {
+            "valid": False,
+            "message": f"Provider '{row['provider']}' nu are test configurabil. "
+                       f"Suportați: {', '.join(_KEY_TEST_URLS.keys())}",
+        }
+
+    # Build request
+    url = test_config["url"]
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+
+    auth_type = test_config["auth_type"]
+    if auth_type == "bearer":
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif auth_type == "header":
+        headers[test_config["header_name"]] = api_key
+    elif auth_type == "query_param":
+        params[test_config["param_name"]] = api_key
+
+    # Make test request
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers, params=params)
+
+        if resp.status_code == 200:
+            await log_activity(
+                action="vault_test_key",
+                summary=f"Cheie API testată OK: {name} ({row['provider']})",
+                details={"name": name, "provider": row["provider"], "valid": True},
+            )
+            return {"valid": True, "message": f"Cheia '{name}' este validă ({row['provider']})."}
+        elif resp.status_code in (401, 403):
+            return {"valid": False, "message": f"Cheie invalidă sau expirată (HTTP {resp.status_code})."}
+        else:
+            return {
+                "valid": False,
+                "message": f"Răspuns neașteptat de la {row['provider']}: HTTP {resp.status_code}.",
+            }
+    except httpx.TimeoutException:
+        return {"valid": False, "message": f"Timeout (10s) la testarea cheii cu {row['provider']}."}
+    except httpx.RequestError as exc:
+        return {"valid": False, "message": f"Eroare conexiune la {row['provider']}: {exc}"}

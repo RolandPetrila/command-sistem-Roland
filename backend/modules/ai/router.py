@@ -2,12 +2,13 @@
 AI module endpoints: chat (streaming SSE), document analysis, diff, config.
 
 Endpoints:
-  POST   /api/ai/chat                — Chat message (streaming SSE response)
-  GET    /api/ai/chat/sessions       — List chat sessions
-  POST   /api/ai/chat/sessions       — Create new session
-  GET    /api/ai/chat/sessions/:id   — Get session messages
-  DELETE /api/ai/chat/sessions/:id   — Delete session
-  POST   /api/ai/summarize           — Summarize document
+  POST   /api/ai/chat                        — Chat message (streaming SSE response)
+  GET    /api/ai/chat/sessions               — List chat sessions
+  POST   /api/ai/chat/sessions               — Create new session (optional title)
+  GET    /api/ai/chat/sessions/:id           — Get session messages
+  DELETE /api/ai/chat/sessions/:id           — Delete session
+  GET    /api/ai/chat/sessions/:id/export    — Export conversation as Markdown
+  POST   /api/ai/summarize                   — Summarize document
   POST   /api/ai/qa                  — Q&A on document
   POST   /api/ai/classify            — Classify document type
   POST   /api/ai/extract             — Extract structured data
@@ -31,7 +32,7 @@ import uuid
 from pathlib import Path
 
 # fitz, docx — lazy imported inside functions to cut cold-start time
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -140,13 +141,22 @@ async def chat(req: ChatRequest):
     # Ensure session exists
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT id FROM chat_sessions WHERE id = ?", (session_id,)
+            "SELECT id, title FROM chat_sessions WHERE id = ?", (session_id,)
         )
-        if not await cursor.fetchone():
+        existing = await cursor.fetchone()
+        if not existing:
             title = req.message[:50] + ("..." if len(req.message) > 50 else "")
             await db.execute(
                 "INSERT INTO chat_sessions (id, title) VALUES (?, ?)",
                 (session_id, title),
+            )
+            await db.commit()
+        elif existing["title"] == "Chat nou":
+            # Feature 1: Auto-update title from first real message
+            auto_title = req.message[:50] + ("..." if len(req.message) > 50 else "")
+            await db.execute(
+                "UPDATE chat_sessions SET title = ? WHERE id = ?",
+                (auto_title, session_id),
             )
             await db.commit()
 
@@ -247,17 +257,23 @@ async def list_sessions():
         return [dict(r) for r in await cursor.fetchall()]
 
 
+class CreateSessionRequest(BaseModel):
+    title: str | None = None
+
+
 @router.post("/chat/sessions")
-async def create_session():
-    """Create a new empty chat session."""
+async def create_session(req: CreateSessionRequest = None):
+    """Create a new empty chat session. Optional title parameter."""
     session_id = str(uuid.uuid4())
+    # Use provided title or default to "Chat nou"
+    title = (req.title.strip() if req and req.title and req.title.strip() else "Chat nou")
     async with get_db() as db:
         await db.execute(
-            "INSERT INTO chat_sessions (id, title) VALUES (?, 'Chat nou')",
-            (session_id,),
+            "INSERT INTO chat_sessions (id, title) VALUES (?, ?)",
+            (session_id, title),
         )
         await db.commit()
-    return {"id": session_id, "title": "Chat nou"}
+    return {"id": session_id, "title": title}
 
 
 @router.delete("/chat/sessions/all")
@@ -302,6 +318,68 @@ async def delete_session(session_id: str):
         await db.commit()
     await log_activity(action="ai.delete_session", summary=f"Sesiune chat ștearsă")
     return {"status": "deleted"}
+
+
+@router.get("/chat/sessions/{session_id}/export")
+async def export_session(session_id: str):
+    """Export entire conversation as a Markdown file."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id, title, created_at FROM chat_sessions WHERE id = ?",
+            (session_id,),
+        )
+        session = await cursor.fetchone()
+        if not session:
+            raise HTTPException(404, "Sesiunea nu există")
+
+        cursor = await db.execute(
+            "SELECT role, content, provider, model, created_at "
+            "FROM chat_messages WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        )
+        messages = [dict(r) for r in await cursor.fetchall()]
+
+    if not messages:
+        raise HTTPException(404, "Sesiunea nu conține mesaje")
+
+    title = session["title"] or "Chat"
+    created = session["created_at"] or ""
+
+    # Build Markdown content
+    md_parts = [f"# Chat Session - {title}\n"]
+    if created:
+        md_parts.append(f"*Creat: {created}*\n")
+    md_parts.append("")
+
+    for msg in messages:
+        if msg["role"] == "user":
+            md_parts.append(f"## User\n\n{msg['content']}\n")
+        else:
+            provider_info = msg.get("provider") or "AI"
+            md_parts.append(f"## AI ({provider_info})\n\n{msg['content']}\n")
+        md_parts.append("---\n")
+
+    md_content = "\n".join(md_parts)
+
+    # Sanitize title for filename
+    safe_title = "".join(c if c.isalnum() or c in (" ", "-", "_") else "" for c in title)
+    safe_title = safe_title.strip().replace(" ", "_")[:60] or "chat_export"
+    filename = f"{safe_title}.md"
+
+    await log_activity(
+        action="ai.export_session",
+        summary=f"Conversație exportată: {title}",
+        details={"session_id": session_id, "messages": len(messages)},
+    )
+
+    def iter_content():
+        yield md_content.encode("utf-8")
+
+    return StreamingResponse(
+        iter_content(),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # === DOCUMENT ANALYSIS ENDPOINTS ===
