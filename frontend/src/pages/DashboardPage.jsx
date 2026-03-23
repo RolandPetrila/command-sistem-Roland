@@ -16,6 +16,12 @@ import {
   RefreshCw,
   AlertTriangle,
   DollarSign,
+  TrendingUp,
+  CalendarCheck,
+  Plus,
+  Sun,
+  Moon,
+  Sunrise,
 } from 'lucide-react';
 import api from '../api/client';
 import ExchangeRateCard from '../components/Dashboard/ExchangeRateCard';
@@ -220,6 +226,205 @@ function QuickActions() {
 }
 
 // ---------------------------------------------------------------------------
+// "Ziua Mea" (My Day) Section
+// ---------------------------------------------------------------------------
+
+function GreetingIcon({ hour }) {
+  if (hour >= 5 && hour < 12) return <Sunrise size={28} className="text-amber-400" />;
+  if (hour >= 12 && hour < 18) return <Sun size={28} className="text-yellow-400" />;
+  return <Moon size={28} className="text-indigo-400" />;
+}
+
+function MyDaySection({ data, loading: isLoading, onNavigate }) {
+  if (isLoading) {
+    return (
+      <div className="bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 rounded-2xl shadow border border-gray-700 p-6">
+        <div className="flex items-center justify-center py-8">
+          <Loader2 size={28} className="animate-spin text-gray-500" />
+          <span className="ml-3 text-gray-400">Se incarca rezumatul zilei...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const currentHour = new Date().getHours();
+  const dateFormatted = new Date().toLocaleDateString('ro-RO', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  const overdueInvoices = data.invoices?.overdue?.length || 0;
+  const itpOverdue = data.itp?.overdue_count || 0;
+  const appointmentsToday = data.itp?.appointments_today?.length || 0;
+  const itpExpiring7d = data.itp?.expiring_7_days || 0;
+  const dueThisWeek = data.invoices?.due_this_week?.length || 0;
+  const hasAlerts = overdueInvoices > 0 || itpOverdue > 0 || appointmentsToday > 0;
+
+  const stats = data.quick_stats || {};
+
+  return (
+    <div className="space-y-4">
+      {/* --- Greeting Banner --- */}
+      <div className="bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 rounded-2xl shadow border border-gray-700 p-6">
+        <div className="flex items-center gap-4">
+          <GreetingIcon hour={currentHour} />
+          <div>
+            <h2 className="text-2xl font-bold text-gray-100">{data.greeting}</h2>
+            <p className="text-sm text-gray-400 capitalize">{dateFormatted}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* --- Urgent Alerts Row --- */}
+      {hasAlerts && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {overdueInvoices > 0 && (
+            <button
+              onClick={() => onNavigate('/invoices')}
+              className="flex items-center gap-3 bg-red-950/60 border border-red-800/50 rounded-xl p-4 hover:bg-red-900/50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-lg bg-red-600/30 flex items-center justify-center shrink-0">
+                <Receipt size={20} className="text-red-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-red-300">Facturi restante</p>
+                <p className="text-xl font-bold text-red-400">{overdueInvoices}</p>
+              </div>
+            </button>
+          )}
+          {itpOverdue > 0 && (
+            <button
+              onClick={() => onNavigate('/itp')}
+              className="flex items-center gap-3 bg-orange-950/60 border border-orange-800/50 rounded-xl p-4 hover:bg-orange-900/50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-lg bg-orange-600/30 flex items-center justify-center shrink-0">
+                <Car size={20} className="text-orange-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-orange-300">ITP expirate</p>
+                <p className="text-xl font-bold text-orange-400">{itpOverdue}</p>
+              </div>
+            </button>
+          )}
+          {appointmentsToday > 0 && (
+            <button
+              onClick={() => onNavigate('/itp')}
+              className="flex items-center gap-3 bg-blue-950/60 border border-blue-800/50 rounded-xl p-4 hover:bg-blue-900/50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-lg bg-blue-600/30 flex items-center justify-center shrink-0">
+                <CalendarCheck size={20} className="text-blue-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-blue-300">Programari azi</p>
+                <p className="text-xl font-bold text-blue-400">{appointmentsToday}</p>
+              </div>
+            </button>
+          )}
+          {itpExpiring7d > 0 && (
+            <button
+              onClick={() => onNavigate('/itp')}
+              className="flex items-center gap-3 bg-amber-950/60 border border-amber-800/50 rounded-xl p-4 hover:bg-amber-900/50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-lg bg-amber-600/30 flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} className="text-amber-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-amber-300">ITP expira 7 zile</p>
+                <p className="text-xl font-bold text-amber-400">{itpExpiring7d}</p>
+              </div>
+            </button>
+          )}
+          {dueThisWeek > 0 && (
+            <button
+              onClick={() => onNavigate('/invoices')}
+              className="flex items-center gap-3 bg-yellow-950/60 border border-yellow-800/50 rounded-xl p-4 hover:bg-yellow-900/50 transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded-lg bg-yellow-600/30 flex items-center justify-center shrink-0">
+                <Clock size={20} className="text-yellow-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-yellow-300">Scadente sapt.</p>
+                <p className="text-xl font-bold text-yellow-400">{dueThisWeek}</p>
+              </div>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* --- Quick Actions Row --- */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <button
+          onClick={() => onNavigate('/invoices', { openCreate: true })}
+          className="flex items-center gap-2 bg-blue-600/20 border border-blue-700/40 rounded-xl p-3 hover:bg-blue-600/30 transition-colors"
+        >
+          <Plus size={16} className="text-blue-400" />
+          <span className="text-sm font-medium text-blue-300">Factura noua</span>
+        </button>
+        <button
+          onClick={() => onNavigate('/itp')}
+          className="flex items-center gap-2 bg-amber-600/20 border border-amber-700/40 rounded-xl p-3 hover:bg-amber-600/30 transition-colors"
+        >
+          <Plus size={16} className="text-amber-400" />
+          <span className="text-sm font-medium text-amber-300">Inspectie noua</span>
+        </button>
+        <button
+          onClick={() => onNavigate('/translator')}
+          className="flex items-center gap-2 bg-emerald-600/20 border border-emerald-700/40 rounded-xl p-3 hover:bg-emerald-600/30 transition-colors"
+        >
+          <Languages size={16} className="text-emerald-400" />
+          <span className="text-sm font-medium text-emerald-300">Traducere noua</span>
+        </button>
+        <button
+          onClick={() => onNavigate('/upload')}
+          className="flex items-center gap-2 bg-purple-600/20 border border-purple-700/40 rounded-xl p-3 hover:bg-purple-600/30 transition-colors"
+        >
+          <Calculator size={16} className="text-purple-400" />
+          <span className="text-sm font-medium text-purple-300">Calcul pret</span>
+        </button>
+      </div>
+
+      {/* --- This Month Summary --- */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Receipt size={14} className="text-blue-400" />
+            <span className="text-xs text-gray-500 uppercase">Facturi luna</span>
+          </div>
+          <p className="text-xl font-bold text-gray-100">{stats.invoices_this_month || 0}</p>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingUp size={14} className="text-emerald-400" />
+            <span className="text-xs text-gray-500 uppercase">Venit luna</span>
+          </div>
+          <p className="text-xl font-bold text-gray-100">
+            {(stats.revenue_this_month || 0).toLocaleString('ro-RO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} RON
+          </p>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Languages size={14} className="text-cyan-400" />
+            <span className="text-xs text-gray-500 uppercase">Traduceri luna</span>
+          </div>
+          <p className="text-xl font-bold text-gray-100">{stats.translations_this_month || 0}</p>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Car size={14} className="text-amber-400" />
+            <span className="text-xs text-gray-500 uppercase">ITP luna</span>
+          </div>
+          <p className="text-xl font-bold text-gray-100">{stats.itp_this_month || 0}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Recent Activity (last 5 entries from activity-log)
 // ---------------------------------------------------------------------------
 
@@ -346,6 +551,12 @@ export default function DashboardPage() {
   const [alerts, setAlerts] = useState([]);
   const [alertsLoading, setAlertsLoading] = useState(true);
 
+  // AXA E: "Ziua Mea" (My Day) data
+  const [myDay, setMyDay] = useState(null);
+  const [myDayLoading, setMyDayLoading] = useState(true);
+
+  const navigate = useNavigate();
+
   const fetchAll = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
 
@@ -365,6 +576,8 @@ export default function DashboardPage() {
         api.get('/api/reports/dashboard/receivable'),
         // 6 - alerts (R3-29)
         api.get('/api/reports/dashboard/alerts'),
+        // 7 - my-day (AXA E)
+        api.get('/api/reports/dashboard/my-day'),
       ]);
 
       // 0 - Quick stats (invoices, translations, ITP — single call)
@@ -423,6 +636,12 @@ export default function DashboardPage() {
         const d = results[6].value?.data;
         setAlerts(d?.alerts || (Array.isArray(d) ? d : []));
       }
+
+      // 7 - My Day (AXA E)
+      setMyDayLoading(false);
+      if (results[7]?.status === 'fulfilled') {
+        setMyDay(results[7].value?.data || null);
+      }
     } catch {
       // toast handles it — individual cards show fallback values
     } finally {
@@ -453,6 +672,13 @@ export default function DashboardPage() {
           {refreshing ? 'Se actualizeaza...' : 'Actualizeaza'}
         </button>
       </div>
+
+      {/* ---------- Ziua Mea (My Day) ---------- */}
+      <MyDaySection
+        data={myDay}
+        loading={myDayLoading}
+        onNavigate={(path, state) => navigate(path, { state })}
+      />
 
       {/* ---------- Summary Cards ---------- */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

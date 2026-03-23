@@ -56,7 +56,8 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 | Faza 28 Runda 2 QA | DONE | 39 fixes across 14 modules: 12 BUG, 6 SEC, 7 PERF, 14 QUALITY — path traversal, cascading delete, pagination, async IMAP, dashboard chart fix, factorial DOS, hash session, recurring drift (2026-03-22) |
 | Faza 29 Runda 3 Conectare | DONE | 58 features: frontend wiring, responsive mobile, dead code cleanup, passphrase gen, barcode preview-all, password history, invoice presets/recurring/payments/reports, ITP vehicle history/rejections/appointments, FM fulltext/auto-organize, AI session search/rename/health/mobile sidebar, vault test/delete confirm, notepad categories/search/export, dashboard clickable cards (2026-03-22) |
 | Faza 30 Runda 4 Maximizare | DONE | 37 features across 14 modules: vault strength+backup+expiry, converter preview+format+report, automations timeout/retry/history/pause, translator TM-score/batch/latency, AI truncation+fallback, calculator pre-flight/batch-recovery, notepad bulk-ops, ANAF batch, EAN validation, FM batch-rename/safe-delete/copy-path, ITP followup/rejection-enforce/no-show, invoice duplicate-detect/batch-PDF/payment-terms/quick-add, Gmail labels/status-cache, dashboard error-states/activity-filter, reports grouping/revenue-by-client (2026-03-22) |
-| Faza 31 Runda 5 Hardening | DONE | 31 items: 10 BUG (vault restore re-encrypt, cron validation, SSE cleanup, FTS5 stale, batch skip, timezone, QR encoding, race condition, state machine), 4 SEC (vault session tokens, symlink escape, HTML injection), 10 FEAT (recurring auto-clone, preserve titles, TM invalidation, case-insensitive rename, export categories, 3-strike ITP, passphrase 2370 words, PDF export, converter progress), 7 QUAL (skeleton, payment badges, calendar nav, breadcrumbs, copy feedback) (2026-03-23) |
+| Faza 31 Runda 5 Hardening | DONE | 31 items: 10 BUG, 4 SEC, 10 FEAT, 7 QUAL (2026-03-23) |
+| Faza 32 Consolidare | DONE | AXA C: .env 19 vars + 15 DB keys + firma config + fix Reg Com. AXA D: backup SQLite automat zilnic + integrity check + JSON export + GDrive copy. AXA E: dashboard "Ziua mea". AXA A: +21 teste business (86 total). (2026-03-23) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`
@@ -112,7 +113,7 @@ cd backend && set PYTHONIOENCODING=utf-8 && python calibrate.py --verbose
 - **OCR Providers**: Tesseract + EasyOCR local → OCR.space cloud
 - **Notification Providers**: Web Push VAPID → Telegram Bot → ntfy.sh → Email digest
 - **Modules** (14): calculator, ai, translator, invoice, itp, quick_tools, quick_tools_extra, converter, filemanager, vault, automations, integrations, reports, calculator_pret
-- **DB Tables**: 57+, **Migrations**: 22, **Tests**: 68+ (pytest), **Endpoints**: 360+
+- **DB Tables**: 64+, **Migrations**: 22, **Tests**: 89 (pytest, 86 pass), **Endpoints**: 365+
 - **Business APIs**: BNR curs valutar (XML, free), ANAF Verificare CUI (REST, free)
 
 ## Key Files

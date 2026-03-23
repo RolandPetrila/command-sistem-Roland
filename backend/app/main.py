@@ -112,6 +112,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Verificare directoare...")
     settings.ensure_dirs()
 
+    # Register daily backup cron job (idempotent — skips if already exists)
+    try:
+        from modules.reports.system_reports import register_backup_cron_job
+        await register_backup_cron_job()
+    except Exception as exc:
+        logger.warning("Nu s-a putut inregistra cron backup: %s", exc)
+
     # Start cron scheduler background task
     try:
         from modules.automations.router import start_cron_scheduler

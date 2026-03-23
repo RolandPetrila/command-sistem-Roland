@@ -1,44 +1,51 @@
 """
 System Reports — disk stats, system info, file analysis,
-dashboard summary, BNR exchange rates, backup ZIP, dashboard widgets.
+dashboard summary, BNR exchange rates, backup ZIP, dashboard widgets,
+DB backup & integrity, critical JSON export.
 
 Endpoints:
-  GET /api/reports/disk-stats
-  GET /api/reports/system-info
-  GET /api/reports/file-stats
-  GET /api/reports/unused-files
-  GET /api/reports/dashboard-summary
-  GET /api/reports/exchange-rates
-  GET /api/reports/backup/zip
-  GET /api/reports/dashboard/receivable
-  GET /api/reports/dashboard/alerts
-  GET /api/reports/dashboard/quick-stats
-  GET /api/reports/dashboard/revenue-comparison
-  GET /api/reports/dashboard/itp-trend
-  GET /api/reports/revenue-by-client
-  GET /api/reports/export/pdf
+  GET  /api/reports/disk-stats
+  GET  /api/reports/system-info
+  GET  /api/reports/file-stats
+  GET  /api/reports/unused-files
+  GET  /api/reports/dashboard-summary
+  GET  /api/reports/exchange-rates
+  GET  /api/reports/backup/zip
+  POST /api/reports/backup
+  GET  /api/reports/db-integrity
+  GET  /api/reports/export/critical-json
+  GET  /api/reports/dashboard/receivable
+  GET  /api/reports/dashboard/alerts
+  GET  /api/reports/dashboard/quick-stats
+  GET  /api/reports/dashboard/revenue-comparison
+  GET  /api/reports/dashboard/itp-trend
+  GET  /api/reports/revenue-by-client
+  GET  /api/reports/export/pdf
+  GET  /api/reports/dashboard/my-day
 """
 
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import platform
 import shutil
+import sqlite3
 import sys
 import time
 import xml.etree.ElementTree as ET
 import zipfile
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
 from app.core.activity_log import log_activity
@@ -53,6 +60,11 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _BACKEND_DIR / "data"
 _UPLOADS_DIR = _BACKEND_DIR / "uploads"
 _PROJECT_DIR = _BACKEND_DIR.parent
+_BACKUPS_DIR = _DATA_DIR / "backups"
+_GDRIVE_BACKUP_DIR = Path(
+    r"G:\My Drive\Roly\4. Artificial Inteligence"
+    r"\1.0_Traduceri\NOU_Calculator_Pret_Traduceri\backups"
+)
 
 # Timpul de start al procesului (pentru calcul uptime)
 _START_TIME = time.time()
@@ -476,6 +488,296 @@ async def backup_zip():
     except Exception as exc:
         logger.error("Eroare backup ZIP: %s", exc)
         raise HTTPException(500, f"Eroare creare backup: {exc}")
+
+
+# ===========================================================================
+# DB BACKUP & INTEGRITY
+# ===========================================================================
+
+def _run_integrity_check(db_file: Path) -> tuple[bool, str]:
+    """Run PRAGMA integrity_check on a SQLite file (sync, separate connection)."""
+    try:
+        conn = sqlite3.connect(str(db_file))
+        cursor = conn.execute("PRAGMA integrity_check")
+        result = cursor.fetchone()[0]
+        conn.close()
+        return (result == "ok", result)
+    except Exception as exc:
+        return (False, str(exc))
+
+
+def _cleanup_old_backups(max_age_days: int = 30, max_files: int = 30) -> int:
+    """Delete backups older than max_age_days, keep at most max_files. Returns count deleted."""
+    if not _BACKUPS_DIR.exists():
+        return 0
+
+    backup_files = sorted(
+        _BACKUPS_DIR.glob("backup_*.db"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    cutoff = datetime.now() - timedelta(days=max_age_days)
+    deleted = 0
+
+    for i, f in enumerate(backup_files):
+        try:
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            if i >= max_files or mtime < cutoff:
+                f.unlink()
+                deleted += 1
+        except OSError:
+            continue
+
+    return deleted
+
+
+async def run_backup_logic() -> dict[str, Any]:
+    """Core backup logic — usable from endpoint or cron job directly.
+
+    Returns dict with backup result metadata.
+    """
+    db_path = settings.db_path
+    if not db_path.exists():
+        raise FileNotFoundError(f"Baza de date nu exista: {db_path}")
+
+    _BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    backup_name = f"backup_{timestamp}.db"
+    backup_path = _BACKUPS_DIR / backup_name
+
+    # Copy with metadata preserved
+    shutil.copy2(str(db_path), str(backup_path))
+
+    # Integrity check on the copy
+    integrity_ok, integrity_result = _run_integrity_check(backup_path)
+
+    size_bytes = backup_path.stat().st_size
+
+    # Cleanup old backups
+    deleted = _cleanup_old_backups()
+
+    # Google Drive copy (best-effort)
+    gdrive_copied = False
+    gdrive_error = None
+    try:
+        if _GDRIVE_BACKUP_DIR.parent.exists():
+            _GDRIVE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(backup_path), str(_GDRIVE_BACKUP_DIR / backup_name))
+            gdrive_copied = True
+        else:
+            gdrive_error = "Google Drive nu este montat"
+            logger.warning(
+                "Google Drive backup skip — calea nu exista: %s",
+                _GDRIVE_BACKUP_DIR.parent,
+            )
+    except Exception as exc:
+        gdrive_error = str(exc)
+        logger.warning("Google Drive backup esuat: %s", exc)
+
+    await log_activity(
+        action="reports.backup.db",
+        summary=(
+            f"Backup DB creat: {backup_name} ({_format_size(size_bytes)}), "
+            f"integritate: {'OK' if integrity_ok else 'FAIL'}"
+            f"{', GDrive: OK' if gdrive_copied else ''}"
+        ),
+        details={
+            "filename": backup_name,
+            "size_bytes": size_bytes,
+            "integrity_ok": integrity_ok,
+            "old_deleted": deleted,
+            "gdrive_copied": gdrive_copied,
+        },
+    )
+
+    return {
+        "filename": backup_name,
+        "path": str(backup_path),
+        "size_bytes": size_bytes,
+        "size_human": _format_size(size_bytes),
+        "integrity_ok": integrity_ok,
+        "integrity_result": integrity_result,
+        "timestamp": timestamp,
+        "old_backups_deleted": deleted,
+        "gdrive_copied": gdrive_copied,
+        "gdrive_error": gdrive_error,
+    }
+
+
+@router.post("/backup")
+async def create_backup():
+    """Creaza un backup al bazei de date SQLite cu verificare integritate."""
+    try:
+        result = await run_backup_logic()
+        return result
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        logger.error("Eroare backup DB: %s", exc)
+        raise HTTPException(500, f"Eroare creare backup: {exc}")
+
+
+@router.get("/db-integrity")
+async def db_integrity():
+    """Verificare integritate baza de date live + informatii dimensiune."""
+    db_path = settings.db_path
+    if not db_path.exists():
+        raise HTTPException(404, "Baza de date nu exista")
+
+    # Integrity check on live DB
+    integrity_ok, integrity_result = _run_integrity_check(db_path)
+
+    db_size = db_path.stat().st_size
+
+    # Count tables
+    tables_count = 0
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table'"
+            )
+            row = await cursor.fetchone()
+            tables_count = row["cnt"] if row else 0
+    except Exception:
+        pass
+
+    # Find last backup
+    last_backup = None
+    if _BACKUPS_DIR.exists():
+        backups = sorted(
+            _BACKUPS_DIR.glob("backup_*.db"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        if backups:
+            latest = backups[0]
+            last_backup = {
+                "filename": latest.name,
+                "timestamp": datetime.fromtimestamp(
+                    latest.stat().st_mtime
+                ).isoformat(),
+                "size_bytes": latest.stat().st_size,
+            }
+
+    return {
+        "ok": integrity_ok,
+        "result": integrity_result,
+        "db_size_bytes": db_size,
+        "db_size_human": _format_size(db_size),
+        "tables_count": tables_count,
+        "db_path": str(db_path),
+        "last_backup": last_backup,
+    }
+
+
+@router.get("/export/critical-json")
+async def export_critical_json():
+    """Export tabelele critice ca fisier JSON descarcabil."""
+    export_data: dict[str, Any] = {
+        "exported_at": datetime.now().isoformat(),
+        "tables": {},
+    }
+
+    table_configs = [
+        ("clients", "SELECT * FROM clients"),
+        ("invoices", "SELECT * FROM invoices"),
+        ("itp_inspections", "SELECT * FROM itp_inspections"),
+        (
+            "vault_entries",
+            "SELECT id, name, category, username, url, created_at, updated_at "
+            "FROM vault_entries",
+        ),
+        ("ai_config", "SELECT key FROM ai_config"),
+    ]
+
+    try:
+        async with get_db() as db:
+            for table_name, query in table_configs:
+                try:
+                    cursor = await db.execute(query)
+                    rows = await cursor.fetchall()
+                    export_data["tables"][table_name] = {
+                        "count": len(rows),
+                        "rows": [dict(row) for row in rows],
+                    }
+                except Exception:
+                    # Table doesn't exist yet — skip gracefully
+                    export_data["tables"][table_name] = {
+                        "count": 0,
+                        "rows": [],
+                        "note": "Tabelul nu exista inca",
+                    }
+    except Exception as exc:
+        logger.error("Eroare export critical JSON: %s", exc)
+        raise HTTPException(500, f"Eroare export: {exc}")
+
+    json_bytes = json.dumps(
+        export_data, ensure_ascii=False, indent=2, default=str
+    ).encode("utf-8")
+    buf = io.BytesIO(json_bytes)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"critical_export_{timestamp}.json"
+
+    await log_activity(
+        action="reports.export.critical_json",
+        summary=(
+            f"Export JSON critic: {filename} ({len(json_bytes)} bytes, "
+            f"{sum(t['count'] for t in export_data['tables'].values())} randuri)"
+        ),
+    )
+
+    return StreamingResponse(
+        buf,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# CRON: Register daily backup job at 02:00 AM
+# ---------------------------------------------------------------------------
+
+async def register_backup_cron_job() -> None:
+    """Insert a daily backup job into scheduled_tasks if not already present.
+
+    Called once at application startup (from module init or main).
+    """
+    try:
+        async with get_db() as db:
+            # Check if job already exists
+            cursor = await db.execute(
+                "SELECT id FROM scheduled_tasks WHERE name = ?",
+                ("backup_db_daily",),
+            )
+            existing = await cursor.fetchone()
+            if existing:
+                return  # Already registered
+
+            await db.execute(
+                "INSERT INTO scheduled_tasks "
+                "(name, schedule_cron, action_type, action_config, enabled) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    "backup_db_daily",
+                    "0 2 * * *",
+                    "internal",
+                    json.dumps({
+                        "function": "modules.reports.system_reports.run_backup_logic",
+                        "description": "Backup automat SQLite zilnic la 02:00",
+                    }),
+                    1,
+                ),
+            )
+            await db.commit()
+            logger.info("Cron job backup_db_daily inregistrat (0 2 * * *)")
+    except Exception as exc:
+        # Don't fail startup if scheduled_tasks table doesn't exist yet
+        logger.warning("Nu s-a putut inregistra cron backup_db_daily: %s", exc)
 
 
 # ===========================================================================
@@ -1049,3 +1351,219 @@ async def export_pdf_report():
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ===========================================================================
+# DASHBOARD "ZIUA MEA" (My Day)
+# ===========================================================================
+
+@router.get("/dashboard/my-day")
+async def dashboard_my_day():
+    """Sumar zilnic: salut, programari ITP, facturi restante, activitate recenta, statistici luna."""
+    now = datetime.now()
+    hour = now.hour
+    if 5 <= hour < 12:
+        greeting = "Buna dimineata, Roland!"
+    elif 12 <= hour < 18:
+        greeting = "Buna ziua, Roland!"
+    else:
+        greeting = "Buna seara, Roland!"
+
+    today_str = now.strftime("%Y-%m-%d")
+
+    result: dict[str, Any] = {
+        "date": today_str,
+        "greeting": greeting,
+        "itp": {
+            "appointments_today": [],
+            "expiring_7_days": 0,
+            "overdue_count": 0,
+        },
+        "invoices": {
+            "overdue": [],
+            "due_this_week": [],
+            "total_receivable": 0.0,
+        },
+        "recent_activity": [],
+        "quick_stats": {
+            "invoices_this_month": 0,
+            "revenue_this_month": 0.0,
+            "translations_this_month": 0,
+            "itp_this_month": 0,
+        },
+    }
+
+    try:
+        async with get_db() as db:
+            # --- ITP: programari azi ---
+            try:
+                cursor = await db.execute(
+                    "SELECT id, plate_number, owner_name, scheduled_time, status, notes "
+                    "FROM itp_appointments "
+                    "WHERE scheduled_date = ? "
+                    "ORDER BY scheduled_time ASC",
+                    (today_str,),
+                )
+                rows = await cursor.fetchall()
+                result["itp"]["appointments_today"] = [
+                    {
+                        "id": r["id"],
+                        "plate_number": r["plate_number"],
+                        "owner_name": r["owner_name"],
+                        "scheduled_time": r["scheduled_time"],
+                        "status": r["status"],
+                        "notes": r["notes"],
+                    }
+                    for r in rows
+                ]
+            except Exception:
+                pass
+
+            # --- ITP: expira in 7 zile ---
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM itp_inspections "
+                    "WHERE expiry_date BETWEEN date('now') AND date('now', '+7 days')"
+                )
+                row = await cursor.fetchone()
+                result["itp"]["expiring_7_days"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            # --- ITP: expirate (overdue) ---
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM itp_inspections "
+                    "WHERE expiry_date < date('now')"
+                )
+                row = await cursor.fetchone()
+                result["itp"]["overdue_count"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            # --- Facturi restante (overdue) ---
+            try:
+                cursor = await db.execute(
+                    "SELECT id, invoice_number, total, due_date, currency "
+                    "FROM invoices "
+                    "WHERE due_date < date('now') "
+                    "AND status NOT IN ('paid', 'cancelled') "
+                    "ORDER BY due_date ASC LIMIT 5"
+                )
+                rows = await cursor.fetchall()
+                result["invoices"]["overdue"] = [
+                    {
+                        "id": r["id"],
+                        "invoice_number": r["invoice_number"],
+                        "total": r["total"],
+                        "due_date": r["due_date"],
+                        "currency": r["currency"] or "RON",
+                    }
+                    for r in rows
+                ]
+            except Exception:
+                pass
+
+            # --- Facturi scadente saptamana aceasta ---
+            try:
+                cursor = await db.execute(
+                    "SELECT id, invoice_number, total, due_date, currency "
+                    "FROM invoices "
+                    "WHERE due_date BETWEEN date('now') AND date('now', '+7 days') "
+                    "AND status NOT IN ('paid', 'cancelled') "
+                    "ORDER BY due_date ASC LIMIT 5"
+                )
+                rows = await cursor.fetchall()
+                result["invoices"]["due_this_week"] = [
+                    {
+                        "id": r["id"],
+                        "invoice_number": r["invoice_number"],
+                        "total": r["total"],
+                        "due_date": r["due_date"],
+                        "currency": r["currency"] or "RON",
+                    }
+                    for r in rows
+                ]
+            except Exception:
+                pass
+
+            # --- Total de incasat ---
+            try:
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(total), 0) AS total_sum "
+                    "FROM invoices "
+                    "WHERE status NOT IN ('paid', 'cancelled', 'draft')"
+                )
+                row = await cursor.fetchone()
+                result["invoices"]["total_receivable"] = round(row["total_sum"], 2) if row else 0.0
+            except Exception:
+                pass
+
+            # --- Activitate recenta (azi) ---
+            try:
+                cursor = await db.execute(
+                    "SELECT action, summary, status, timestamp "
+                    "FROM activity_log "
+                    "WHERE date(timestamp) = date('now') "
+                    "ORDER BY timestamp DESC LIMIT 5"
+                )
+                rows = await cursor.fetchall()
+                result["recent_activity"] = [
+                    {
+                        "action": r["action"],
+                        "summary": r["summary"],
+                        "status": r["status"],
+                        "timestamp": r["timestamp"],
+                    }
+                    for r in rows
+                ]
+            except Exception:
+                pass
+
+            # --- Quick stats: luna curenta ---
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM invoices "
+                    "WHERE created_at >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["quick_stats"]["invoices_this_month"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            try:
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(total), 0) AS rev FROM invoices "
+                    "WHERE status = 'paid' "
+                    "AND date >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["quick_stats"]["revenue_this_month"] = round(row["rev"], 2) if row else 0.0
+            except Exception:
+                pass
+
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM activity_log "
+                    "WHERE action LIKE 'translator%' "
+                    "AND timestamp >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["quick_stats"]["translations_this_month"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+            try:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) AS cnt FROM itp_inspections "
+                    "WHERE inspection_date >= date('now', 'start of month')"
+                )
+                row = await cursor.fetchone()
+                result["quick_stats"]["itp_this_month"] = row["cnt"] if row else 0
+            except Exception:
+                pass
+
+    except Exception as exc:
+        logger.error("Eroare dashboard my-day: %s", exc)
+
+    return result

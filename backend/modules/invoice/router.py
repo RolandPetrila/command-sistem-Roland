@@ -344,9 +344,15 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
     elements = []
 
     # --- HEADER ---
+    _co_name = os.environ.get("COMPANY_NAME", "CIP Inspection SRL")
+    _co_cui = os.environ.get("COMPANY_CUI", "43978110")
+    _co_addr = os.environ.get("COMPANY_ADDRESS", "")
+    _co_reg = os.environ.get("COMPANY_REG", "J02/597/2021")
     elements.append(Paragraph("FACTURA", style_title))
-    elements.append(Paragraph("CIP Inspection SRL", style_company))
-    elements.append(Paragraph("CUI: 43978110", style_company))
+    elements.append(Paragraph(_co_name, style_company))
+    elements.append(Paragraph(f"CUI: {_co_cui} | {_co_reg}", style_company))
+    if _co_addr:
+        elements.append(Paragraph(_co_addr, style_company))
     elements.append(Spacer(1, 8 * mm))
 
     # --- Invoice meta info ---
@@ -477,18 +483,33 @@ def _build_invoice_pdf(invoice: dict, items: list[dict], output_path: str) -> No
     elements.append(Spacer(1, 12 * mm))
     elements.append(Paragraph("_" * 70, style_footer))
     elements.append(Spacer(1, 2 * mm))
-    # Citeste IBAN/banca din setari companie (daca exista)
+    # Citeste date companie din env vars
+    company_name = os.environ.get("COMPANY_NAME", "CIP Inspection SRL")
+    company_cui = os.environ.get("COMPANY_CUI", "43978110")
+    company_reg = os.environ.get("COMPANY_REG", "J02/597/2021")
     iban = invoice.get("company_iban") or os.environ.get("COMPANY_IBAN", "")
     bank = invoice.get("company_bank") or os.environ.get("COMPANY_BANK", "")
+    company_addr = os.environ.get("COMPANY_ADDRESS", "")
+    company_phone = os.environ.get("COMPANY_PHONE", "")
+    company_email = os.environ.get("COMPANY_EMAIL", "")
     bank_info = ""
     if iban:
         bank_info = f" | IBAN: {iban}"
         if bank:
             bank_info += f" | Banca: {bank}"
     elements.append(Paragraph(
-        f"CIP Inspection SRL | CUI: 43978110 | J15/117/2021{bank_info}",
+        f"{company_name} | CUI: {company_cui} | {company_reg}{bank_info}",
         style_footer,
     ))
+    addr_parts = []
+    if company_addr:
+        addr_parts.append(company_addr)
+    if company_phone:
+        addr_parts.append(f"Tel: {company_phone}")
+    if company_email:
+        addr_parts.append(company_email)
+    if addr_parts:
+        elements.append(Paragraph(" | ".join(addr_parts), style_footer))
     elements.append(Paragraph(
         "Factura generata automat — Roland Command Center",
         style_footer,
