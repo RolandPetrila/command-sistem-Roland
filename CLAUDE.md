@@ -58,6 +58,7 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 | Faza 30 Runda 4 Maximizare | DONE | 37 features across 14 modules: vault strength+backup+expiry, converter preview+format+report, automations timeout/retry/history/pause, translator TM-score/batch/latency, AI truncation+fallback, calculator pre-flight/batch-recovery, notepad bulk-ops, ANAF batch, EAN validation, FM batch-rename/safe-delete/copy-path, ITP followup/rejection-enforce/no-show, invoice duplicate-detect/batch-PDF/payment-terms/quick-add, Gmail labels/status-cache, dashboard error-states/activity-filter, reports grouping/revenue-by-client (2026-03-22) |
 | Faza 31 Runda 5 Hardening | DONE | 31 items: 10 BUG, 4 SEC, 10 FEAT, 7 QUAL (2026-03-23) |
 | Faza 32 Consolidare | DONE | AXA C: .env 19 vars + 15 DB keys + firma config + fix Reg Com. AXA D: backup SQLite automat zilnic + integrity check + JSON export + GDrive copy. AXA E: dashboard "Ziua mea". AXA A: +21 teste business (86 total). (2026-03-23) |
+| Faza 33 Audit + Remediere | DONE | Split 5 routere (8298→~4500 linii router), 3 security fixes (CORS, vault input, error sanitize), 14 teste frontend vitest, deps pinning, .gitignore/.gitattributes (2026-04-03) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`
@@ -113,7 +114,7 @@ cd backend && set PYTHONIOENCODING=utf-8 && python calibrate.py --verbose
 - **OCR Providers**: Tesseract + EasyOCR local → OCR.space cloud
 - **Notification Providers**: Web Push VAPID → Telegram Bot → ntfy.sh → Email digest
 - **Modules** (14): calculator, ai, translator, invoice, itp, quick_tools, quick_tools_extra, converter, filemanager, vault, automations, integrations, reports, calculator_pret
-- **DB Tables**: 64+, **Migrations**: 22, **Tests**: 89 (pytest, 86 pass), **Endpoints**: 365+
+- **DB Tables**: 64+, **Migrations**: 22, **Tests**: 89 backend (pytest) + 14 frontend (vitest), **Endpoints**: 365+
 - **Business APIs**: BNR curs valutar (XML, free), ANAF Verificare CUI (REST, free)
 
 ## Key Files

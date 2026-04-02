@@ -69,3 +69,10 @@ test_dashboard.png
 
 # Sensitive files — API keys in plaintext
 API_KEYS.md
+
+# Project artifacts and trash
+/.trash/
+
+# Dev/simulation scripts at backend root
+/backend/simulate*.py
+/backend/demo_*.py

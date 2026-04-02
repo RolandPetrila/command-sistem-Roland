@@ -1,6 +1,6 @@
 # Roland Command Center — Project Status (auto-generated)
 
-Generated: 2026-03-23 02:25
+Generated: 2026-04-03
 
 ## Project Status
 
@@ -42,7 +42,8 @@ Generated: 2026-03-23 02:25
 | Faza 29 Runda 3 Conectare | DONE | 58 features: frontend wiring, responsive mobile, dead code cleanup, passphrase gen, barcode preview-all, password history, invoice presets/recurring/payments/reports, ITP vehicle history/rejections/appointments, FM fulltext/auto-organize, AI session search/rename/health/mobile sidebar, vault test/delete confirm, notepad categories/search/export, dashboard clickable cards (2026-03-22) |
 | Faza 30 Runda 4 Maximizare | DONE | 37 features across 14 modules: vault strength+backup+expiry, converter preview+format+report, automations timeout/retry/history/pause, translator TM-score/batch/latency, AI truncation+fallback, calculator pre-flight/batch-recovery, notepad bulk-ops, ANAF batch, EAN validation, FM batch-rename/safe-delete/copy-path, ITP followup/rejection-enforce/no-show, invoice duplicate-detect/batch-PDF/payment-terms/quick-add, Gmail labels/status-cache, dashboard error-states/activity-filter, reports grouping/revenue-by-client (2026-03-22) |
 | Faza 31 Runda 5 Hardening | DONE | 31 items: 10 BUG, 4 SEC, 10 FEAT, 7 QUAL (2026-03-23) |
-| Faza 32 Consolidare | DONE | AXA C: .env 19 vars, 15 DB keys, firma config, fix Reg Com J02/597/2021. AXA D: backup automat SQLite zilnic + integrity check + JSON export + GDrive copy. AXA E: dashboard "Ziua mea" cu greeting+alerte+quick actions+monthly stats. AXA A: 21 teste business e2e (invoice lifecycle+PDF+payments, ITP→invoice+state machine, calculator quick-quote+templates, backup+integrity+my-day). Total: 86/89 tests PASS (2026-03-23) |
+| Faza 32 Consolidare | DONE | AXA C: .env 19 vars + 15 DB keys + firma config + fix Reg Com. AXA D: backup SQLite automat zilnic + integrity check + JSON export + GDrive copy. AXA E: dashboard "Ziua mea". AXA A: +21 teste business (86 total). (2026-03-23) |
+| Faza 33 Audit + Remediere | DONE | Split 5 routere (8298→~4500 linii router), 3 security fixes (CORS, vault input, error sanitize), 14 teste frontend vitest, deps pinning, .gitignore/.gitattributes (2026-04-03) |
 
 **Roadmap implementare:** `99_Roland_Work_Place/ROADMAP_IMPLEMENTARE.md`
 **Catalog API gratuite:** `99_Roland_Work_Place/CATALOG_API_GRATUITE.md`

@@ -29,101 +29,50 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import logging
-from datetime import date, datetime, timedelta
+import os
+import uuid
+from datetime import date, timedelta
+from pathlib import Path
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
 
+from .imports import parse_csv, parse_excel
+from .models import (
+    ALLOWED_IMAGE_TYPES,
+    ITP_PHOTOS_DIR,
+    MAX_PHOTO_SIZE,
+    MAX_PHOTOS_PER_INSPECTION,
+    STANDARD_REJECTION_REASONS,
+    AppointmentCreate,
+    AppointmentUpdate,
+    InspectionCreate,
+    InspectionUpdate,
+    MarkShowupRequest,
+    row_dict,
+    validate_appointment_transition,
+)
+from .statistics import (
+    compute_followup_due_soon,
+    compute_noshow_rate,
+    compute_statistics_combined,
+    compute_stats_brands,
+    compute_stats_fuel_types,
+    compute_stats_inspectors,
+    compute_stats_monthly,
+    compute_stats_overview,
+    compute_stats_revenue,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/itp", tags=["itp"])
-
-
-# ────────── Pydantic Models ──────────
-
-class InspectionCreate(BaseModel):
-    plate_number: str
-    vin: Optional[str] = None
-    brand: Optional[str] = None
-    model: Optional[str] = None
-    year: Optional[int] = None
-    fuel_type: Optional[str] = None
-    owner_name: Optional[str] = None
-    owner_phone: Optional[str] = None
-    inspection_date: str
-    expiry_date: str
-    result: str  # admis / respins
-    rejection_reasons: Optional[str] = None  # JSON array string
-    price: float = 0
-    inspector_name: Optional[str] = None
-    notes: Optional[str] = None
-
-    @model_validator(mode="after")
-    def validate_rejection_reasons(self):
-        """If result is 'Respins', rejection_reasons must be non-empty."""
-        result_lower = (self.result or "").strip().lower()
-        if result_lower == "respins":
-            rr = self.rejection_reasons
-            if not rr or rr in ("[]", "null", ""):
-                raise ValueError(
-                    "Motivele de respingere sunt obligatorii cand rezultatul este 'Respins'"
-                )
-            # Also validate if it's a JSON array
-            try:
-                parsed = json.loads(rr) if isinstance(rr, str) else rr
-                if isinstance(parsed, list) and len(parsed) == 0:
-                    raise ValueError(
-                        "Motivele de respingere sunt obligatorii cand rezultatul este 'Respins'"
-                    )
-            except (json.JSONDecodeError, TypeError):
-                pass  # Not JSON — treat as plain text, already non-empty
-        return self
-
-
-class AppointmentCreate(BaseModel):
-    plate_number: str
-    owner_name: Optional[str] = None
-    owner_phone: Optional[str] = None
-    scheduled_date: str
-    scheduled_time: str = "08:00"
-    duration_min: int = 30
-    notes: Optional[str] = None
-
-
-class AppointmentUpdate(BaseModel):
-    plate_number: Optional[str] = None
-    owner_name: Optional[str] = None
-    owner_phone: Optional[str] = None
-    scheduled_date: Optional[str] = None
-    scheduled_time: Optional[str] = None
-    duration_min: Optional[int] = None
-    status: Optional[str] = None
-    notes: Optional[str] = None
-
-
-class InspectionUpdate(BaseModel):
-    plate_number: Optional[str] = None
-    vin: Optional[str] = None
-    brand: Optional[str] = None
-    model: Optional[str] = None
-    year: Optional[int] = None
-    fuel_type: Optional[str] = None
-    owner_name: Optional[str] = None
-    owner_phone: Optional[str] = None
-    inspection_date: Optional[str] = None
-    expiry_date: Optional[str] = None
-    result: Optional[str] = None
-    rejection_reasons: Optional[str] = None
-    price: Optional[float] = None
-    inspector_name: Optional[str] = None
-    notes: Optional[str] = None
 
 
 # ────────── CRUD ──────────
@@ -176,7 +125,7 @@ async def list_inspections(
             )
 
         rows = await cursor.fetchall()
-        items = [dict(row) for row in rows]
+        items = [row_dict(row) for row in rows]
 
     total_pages = (total + limit - 1) // limit if limit > 0 else 1
     current_page = (skip // limit) + 1 if limit > 0 else 1
@@ -265,7 +214,7 @@ async def get_inspection(inspection_id: int):
 
     if not row:
         raise HTTPException(404, "Inspectia nu a fost gasita")
-    return dict(row)
+    return row_dict(row)
 
 
 @router.put("/inspections/{inspection_id}")
@@ -343,7 +292,7 @@ async def vehicle_history(plate: str):
         )
         rows = await cursor.fetchall()
 
-    items = [dict(row) for row in rows]
+    items = [row_dict(row) for row in rows]
     total = len(items)
     admis = sum(1 for item in items if item.get("result") == "admis")
     respins = sum(1 for item in items if item.get("result") == "respins")
@@ -360,20 +309,6 @@ async def vehicle_history(plate: str):
 
 
 # ────────── Rejection Reasons ──────────
-
-STANDARD_REJECTION_REASONS = [
-    {"id": 1, "code": "EMISII", "description": "Emisii peste limita"},
-    {"id": 2, "code": "FRANARE", "description": "Sistem de franare defect"},
-    {"id": 3, "code": "DIRECTIE", "description": "Directie cu joc excesiv"},
-    {"id": 4, "code": "SUSPENSIE", "description": "Suspensie deteriorata"},
-    {"id": 5, "code": "ANVELOPE", "description": "Anvelope uzate/neconforme"},
-    {"id": 6, "code": "LUMINI", "description": "Faruri/lumini defecte"},
-    {"id": 7, "code": "CAROSERIE", "description": "Caroserie corodata"},
-    {"id": 8, "code": "SCURGERI", "description": "Scurgeri ulei/lichid frana"},
-    {"id": 9, "code": "OGLINZI", "description": "Oglinzi lipsa/deteriorate"},
-    {"id": 10, "code": "CENTURI", "description": "Centuri de siguranta defecte"},
-]
-
 
 @router.get("/rejection-reasons")
 async def get_rejection_reasons():
@@ -408,7 +343,7 @@ async def create_invoice_from_inspection(inspection_id: int):
     if not row:
         raise HTTPException(404, "Inspectia nu a fost gasita")
 
-    inspection = dict(row)
+    inspection = row_dict(row)
     plate = inspection.get("plate_number", "")
     owner = inspection.get("owner_name", "")
     price = inspection.get("price", 0) or 0
@@ -495,9 +430,9 @@ async def import_inspections(file: UploadFile = File(...)):
 
     try:
         if filename.endswith((".xlsx", ".xls")):
-            rows = _parse_excel(content)
+            rows = parse_excel(content)
         elif filename.endswith(".csv") or "csv" in (file.content_type or ""):
-            rows = _parse_csv(content)
+            rows = parse_csv(content)
         else:
             raise HTTPException(
                 400,
@@ -606,360 +541,48 @@ async def import_inspections(file: UploadFile = File(...)):
     }
 
 
-def _parse_csv(content: bytes) -> list[dict]:
-    """Parse CSV content into list of dicts."""
-    text = content.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
-    return list(reader)
-
-
-def _parse_excel(content: bytes) -> list[dict]:
-    """Parse Excel content into list of dicts."""
-    from openpyxl import load_workbook
-
-    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    ws = wb.active
-    rows_iter = ws.iter_rows(values_only=True)
-
-    # First row = headers
-    headers_raw = next(rows_iter, None)
-    if not headers_raw:
-        return []
-
-    headers = [str(h).strip().lower().replace(" ", "_") if h else f"col_{i}"
-               for i, h in enumerate(headers_raw)]
-
-    result = []
-    for row in rows_iter:
-        obj = {}
-        for i, val in enumerate(row):
-            key = headers[i] if i < len(headers) else f"col_{i}"
-            if val is not None:
-                obj[key] = str(val) if hasattr(val, "isoformat") else val
-            else:
-                obj[key] = ""
-        result.append(obj)
-
-    wb.close()
-    return result
-
-
-# ────────── Combined Statistics (for frontend) ──────────
-
-@router.get("/statistics")
-async def get_statistics_combined():
-    """Combined statistics for frontend — calls individual stat queries in one endpoint."""
-    async with get_db() as db:
-        # Monthly inspection counts
-        cursor = await db.execute(
-            "SELECT strftime('%Y-%m', inspection_date) as month, COUNT(*) as count "
-            "FROM itp_inspections GROUP BY month ORDER BY month"
-        )
-        monthly = [{"month": r[0], "count": r[1]} for r in await cursor.fetchall()]
-
-        # Brand distribution (top 10)
-        cursor = await db.execute(
-            "SELECT brand, COUNT(*) as count FROM itp_inspections "
-            "WHERE brand IS NOT NULL AND brand != '' "
-            "GROUP BY brand ORDER BY count DESC LIMIT 10"
-        )
-        brands = [{"brand": r[0], "count": r[1]} for r in await cursor.fetchall()]
-
-        # Monthly revenue
-        cursor = await db.execute(
-            "SELECT strftime('%Y-%m', inspection_date) as month, "
-            "COALESCE(SUM(price), 0) as revenue "
-            "FROM itp_inspections GROUP BY month ORDER BY month"
-        )
-        revenue = [{"month": r[0], "revenue": r[1]} for r in await cursor.fetchall()]
-
-        # Fuel type distribution
-        cursor = await db.execute(
-            "SELECT fuel_type, COUNT(*) as count FROM itp_inspections "
-            "WHERE fuel_type IS NOT NULL AND fuel_type != '' "
-            "GROUP BY fuel_type ORDER BY count DESC"
-        )
-        fuel = [{"fuel_type": r[0], "count": r[1]} for r in await cursor.fetchall()]
-
-    return {
-        "monthly_inspections": monthly,
-        "top_brands": brands,
-        "monthly_revenue": revenue,
-        "fuel_distribution": fuel,
-    }
-
-
 # ────────── Statistics ──────────
-
 
 @router.get("/statistics")
 async def statistics_combined():
-    """Combined statistics endpoint for frontend dashboard.
-
-    Returns monthly_inspections, top_brands, monthly_revenue, fuel_distribution
-    in a single request (called by ITPPage StatsTab).
-    """
-    year = datetime.now().year
-    month_names = [
-        "", "Ian", "Feb", "Mar", "Apr", "Mai", "Iun",
-        "Iul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ]
-
-    async with get_db() as db:
-        # Monthly inspections
-        cursor = await db.execute(
-            """SELECT CAST(strftime('%%m', inspection_date) AS INTEGER) as month,
-                      COUNT(*) as count
-               FROM itp_inspections
-               WHERE strftime('%%Y', inspection_date) = ?
-               GROUP BY month ORDER BY month""",
-            (str(year),),
-        )
-        monthly_raw = {r[0]: r[1] for r in await cursor.fetchall()}
-        monthly_inspections = [
-            {"month": month_names[i], "count": monthly_raw.get(i, 0)}
-            for i in range(1, 13)
-        ]
-
-        # Top brands
-        cursor = await db.execute(
-            """SELECT brand, COUNT(*) as count FROM itp_inspections
-               WHERE brand IS NOT NULL AND brand != ''
-               GROUP BY brand ORDER BY count DESC LIMIT 10""",
-        )
-        top_brands = [{"brand": r[0], "count": r[1]} for r in await cursor.fetchall()]
-
-        # Monthly revenue
-        cursor = await db.execute(
-            """SELECT CAST(strftime('%%m', inspection_date) AS INTEGER) as month,
-                      SUM(price) as revenue
-               FROM itp_inspections
-               WHERE strftime('%%Y', inspection_date) = ?
-               GROUP BY month ORDER BY month""",
-            (str(year),),
-        )
-        revenue_raw = {r[0]: round(r[1] or 0, 2) for r in await cursor.fetchall()}
-        monthly_revenue = [
-            {"month": month_names[i], "revenue": revenue_raw.get(i, 0)}
-            for i in range(1, 13)
-        ]
-
-        # Fuel distribution
-        cursor = await db.execute(
-            """SELECT fuel_type, COUNT(*) as count FROM itp_inspections
-               WHERE fuel_type IS NOT NULL AND fuel_type != ''
-               GROUP BY fuel_type ORDER BY count DESC""",
-        )
-        fuel_distribution = [{"fuel_type": r[0], "count": r[1]} for r in await cursor.fetchall()]
-
-    return {
-        "monthly_inspections": monthly_inspections,
-        "top_brands": top_brands,
-        "monthly_revenue": monthly_revenue,
-        "fuel_distribution": fuel_distribution,
-    }
+    """Combined statistics endpoint for frontend dashboard."""
+    return await compute_statistics_combined()
 
 
 @router.get("/stats/overview")
 async def stats_overview():
     """Overview statistics: total, admis/respins ratio, avg price, this month."""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM itp_inspections")
-        total = (await cursor.fetchone())[0]
-
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM itp_inspections WHERE result = 'admis'"
-        )
-        admis = (await cursor.fetchone())[0]
-
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM itp_inspections WHERE result = 'respins'"
-        )
-        respins = (await cursor.fetchone())[0]
-
-        cursor = await db.execute(
-            "SELECT AVG(price) FROM itp_inspections WHERE price > 0"
-        )
-        avg_row = await cursor.fetchone()
-        avg_price = round(avg_row[0], 2) if avg_row[0] else 0
-
-        # This month
-        now = datetime.now()
-        month_start = now.strftime("%Y-%m-01")
-        month_end = now.strftime("%Y-%m-31")
-        cursor = await db.execute(
-            """SELECT COUNT(*) FROM itp_inspections
-               WHERE inspection_date >= ? AND inspection_date <= ?""",
-            (month_start, month_end),
-        )
-        this_month = (await cursor.fetchone())[0]
-
-    admis_rate = round((admis / total * 100), 1) if total > 0 else 0
-
-    return {
-        "total": total,
-        "admis": admis,
-        "respins": respins,
-        "admis_rate": admis_rate,
-        "avg_price": avg_price,
-        "this_month": this_month,
-    }
+    return await compute_stats_overview()
 
 
 @router.get("/stats/monthly")
 async def stats_monthly(year: int = Query(default=None)):
     """Inspections per month for a given year (default: current year)."""
-    if year is None:
-        year = datetime.now().year
-
-    async with get_db() as db:
-        cursor = await db.execute(
-            """SELECT
-                 CAST(strftime('%%m', inspection_date) AS INTEGER) as month,
-                 COUNT(*) as count,
-                 SUM(CASE WHEN result = 'admis' THEN 1 ELSE 0 END) as admis,
-                 SUM(CASE WHEN result = 'respins' THEN 1 ELSE 0 END) as respins
-               FROM itp_inspections
-               WHERE strftime('%%Y', inspection_date) = ?
-               GROUP BY month
-               ORDER BY month""",
-            (str(year),),
-        )
-        rows = await cursor.fetchall()
-
-    # Fill all 12 months
-    months_data = {i: {"month": i, "count": 0, "admis": 0, "respins": 0} for i in range(1, 13)}
-    for row in rows:
-        m = row[0]  # month as integer
-        if m in months_data:
-            months_data[m] = {
-                "month": m,
-                "count": row[1],
-                "admis": row[2],
-                "respins": row[3],
-            }
-
-    month_names = [
-        "", "Ian", "Feb", "Mar", "Apr", "Mai", "Iun",
-        "Iul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ]
-    result = []
-    for i in range(1, 13):
-        d = months_data[i]
-        d["name"] = month_names[i]
-        result.append(d)
-
-    return {"year": year, "data": result}
+    return await compute_stats_monthly(year)
 
 
 @router.get("/stats/brands")
 async def stats_brands():
     """Top car brands by inspection count."""
-    async with get_db() as db:
-        cursor = await db.execute(
-            """SELECT brand, COUNT(*) as count
-               FROM itp_inspections
-               WHERE brand IS NOT NULL AND brand != ''
-               GROUP BY brand
-               ORDER BY count DESC
-               LIMIT 15""",
-        )
-        rows = await cursor.fetchall()
-
-    return [{"brand": row[0], "count": row[1]} for row in rows]
+    return await compute_stats_brands()
 
 
 @router.get("/stats/revenue")
 async def stats_revenue(year: int = Query(default=None)):
     """Monthly revenue for a given year."""
-    if year is None:
-        year = datetime.now().year
-
-    async with get_db() as db:
-        cursor = await db.execute(
-            """SELECT
-                 CAST(strftime('%%m', inspection_date) AS INTEGER) as month,
-                 SUM(price) as revenue,
-                 COUNT(*) as count
-               FROM itp_inspections
-               WHERE strftime('%%Y', inspection_date) = ?
-               GROUP BY month
-               ORDER BY month""",
-            (str(year),),
-        )
-        rows = await cursor.fetchall()
-
-    months_data = {i: {"month": i, "revenue": 0, "count": 0} for i in range(1, 13)}
-    for row in rows:
-        m = row[0]
-        if m in months_data:
-            months_data[m] = {
-                "month": m,
-                "revenue": round(row[1] or 0, 2),
-                "count": row[2],
-            }
-
-    month_names = [
-        "", "Ian", "Feb", "Mar", "Apr", "Mai", "Iun",
-        "Iul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ]
-    result = []
-    for i in range(1, 13):
-        d = months_data[i]
-        d["name"] = month_names[i]
-        result.append(d)
-
-    return {"year": year, "data": result}
+    return await compute_stats_revenue(year)
 
 
 @router.get("/stats/fuel-types")
 async def stats_fuel_types():
     """Distribution by fuel type."""
-    async with get_db() as db:
-        cursor = await db.execute(
-            """SELECT fuel_type, COUNT(*) as count
-               FROM itp_inspections
-               WHERE fuel_type IS NOT NULL AND fuel_type != ''
-               GROUP BY fuel_type
-               ORDER BY count DESC""",
-        )
-        rows = await cursor.fetchall()
-
-    return [{"fuel_type": row[0], "count": row[1]} for row in rows]
+    return await compute_stats_fuel_types()
 
 
 @router.get("/stats/inspectors")
 async def stats_inspectors():
     """Statistics per inspector: total, admis, respins, rate, revenue."""
-    async with get_db() as db:
-        cursor = await db.execute(
-            """SELECT
-                 inspector_name,
-                 COUNT(*) as total,
-                 SUM(CASE WHEN result = 'admis' THEN 1 ELSE 0 END) as admis,
-                 SUM(CASE WHEN result = 'respins' THEN 1 ELSE 0 END) as respins,
-                 SUM(price) as revenue
-               FROM itp_inspections
-               WHERE inspector_name IS NOT NULL AND inspector_name != ''
-               GROUP BY inspector_name
-               ORDER BY total DESC""",
-        )
-        rows = await cursor.fetchall()
-
-    result = []
-    for row in rows:
-        total = row[1]
-        admis = row[2]
-        result.append({
-            "inspector_name": row[0],
-            "total": total,
-            "admis": admis,
-            "respins": row[3],
-            "admis_rate": round((admis / total * 100), 1) if total > 0 else 0,
-            "revenue": round(row[4] or 0, 2),
-        })
-
-    return result
+    return await compute_stats_inspectors()
 
 
 # ────────── Expiring ──────────
@@ -984,7 +607,7 @@ async def expiring_inspections(days: int = Query(30, ge=1, le=365)):
     result = []
     today_date = date.today()
     for row in rows:
-        item = dict(row)
+        item = row_dict(row)
         try:
             exp = date.fromisoformat(item["expiry_date"])
             item["days_remaining"] = (exp - today_date).days
@@ -1005,7 +628,7 @@ async def export_csv():
             "SELECT * FROM itp_inspections ORDER BY inspection_date DESC"
         )
         rows = await cursor.fetchall()
-        items = [dict(row) for row in rows]
+        items = [row_dict(row) for row in rows]
 
     if not items:
         raise HTTPException(404, "Nu exista inspectii de exportat")
@@ -1048,7 +671,7 @@ async def export_excel():
             "SELECT * FROM itp_inspections ORDER BY inspection_date DESC"
         )
         rows = await cursor.fetchall()
-        items = [dict(row) for row in rows]
+        items = [row_dict(row) for row in rows]
 
     if not items:
         raise HTTPException(404, "Nu exista inspectii de exportat")
@@ -1121,34 +744,6 @@ async def export_excel():
 
 # ────────── F5: Appointments / Calendar ──────────
 
-# Allowed appointment status transitions (state machine)
-_APPOINTMENT_TRANSITIONS: dict[str, list[str]] = {
-    "scheduled":  ["confirmed", "cancelled"],
-    "confirmed":  ["checked_in", "cancelled"],
-    "checked_in": ["completed", "no_show", "cancelled"],
-    "completed":  [],   # terminal state
-    "cancelled":  [],   # terminal state
-    "no_show":    [],   # terminal state
-}
-
-
-def _validate_appointment_transition(current: str, new: str) -> None:
-    """Raise HTTP 400 if the status transition is not allowed."""
-    allowed = _APPOINTMENT_TRANSITIONS.get(current, [])
-    if new not in allowed:
-        if allowed:
-            allowed_str = ", ".join(f"'{s}'" for s in allowed)
-            raise HTTPException(
-                400,
-                f"Tranzitie invalida: '{current}' → '{new}'. "
-                f"Din starea '{current}' sunt permise doar: {allowed_str}.",
-            )
-        else:
-            raise HTTPException(
-                400,
-                f"Programarea este in starea finala '{current}' si nu mai poate fi modificata.",
-            )
-
 @router.get("/appointments")
 async def list_appointments(
     date_from: str = Query(None),
@@ -1174,7 +769,7 @@ async def list_appointments(
             params,
         )
         rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
+    return [row_dict(r) for r in rows]
 
 
 @router.post("/appointments", status_code=201)
@@ -1203,7 +798,7 @@ async def create_appointment(data: AppointmentCreate, force: bool = Query(False)
             new_end_min = data.duration_min
 
         for appt in existing_appts:
-            appt_dict = dict(appt)
+            appt_dict = row_dict(appt)
             try:
                 ex_parts = appt_dict["scheduled_time"].split(":")
                 ex_start = int(ex_parts[0]) * 60 + int(ex_parts[1])
@@ -1273,7 +868,7 @@ async def update_appointment(appt_id: int, data: AppointmentUpdate):
             existing = await row.fetchone()
             if existing is None:
                 raise HTTPException(404, "Programarea nu a fost gasita")
-            _validate_appointment_transition(existing["status"], updates["status"])
+            validate_appointment_transition(existing["status"], updates["status"])
         fields = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [appt_id]
         cursor = await db.execute(
@@ -1308,7 +903,7 @@ async def complete_appointment(appt_id: int, inspection_id: int = None):
         existing = await row.fetchone()
         if existing is None:
             raise HTTPException(404, "Programarea nu a fost gasita")
-        _validate_appointment_transition(existing["status"], "completed")
+        validate_appointment_transition(existing["status"], "completed")
         cursor = await db.execute(
             "UPDATE itp_appointments SET status = 'completed', inspection_id = ? WHERE id = ?",
             (inspection_id, appt_id),
@@ -1319,81 +914,15 @@ async def complete_appointment(appt_id: int, inspection_id: int = None):
     return {"message": "Programare finalizata cu succes."}
 
 
-# ────────── R4-24: Follow-up Alerts (next inspection due) ──────────
-
-def _next_inspection_date(last_date_str: str, vehicle_type: str = "car") -> date | None:
-    """Calculate next inspection date from last inspection.
-
-    Cars: 12 months, Commercial vehicles: 6 months.
-    """
-    try:
-        last = date.fromisoformat(last_date_str)
-    except (ValueError, TypeError):
-        return None
-    months = 6 if vehicle_type == "commercial" else 12
-    # Add months: handle year/month overflow
-    year = last.year + (last.month + months - 1) // 12
-    month = (last.month + months - 1) % 12 + 1
-    day = min(last.day, 28)  # Safe day for all months
-    return date(year, month, day)
-
+# ────────── R4-24: Follow-up Alerts ──────────
 
 @router.get("/followup/due-soon")
 async def followup_due_soon(days: int = Query(30, ge=1, le=365)):
-    """Vehicles with next inspection due within N days based on last inspection + 12 months.
-
-    Returns list sorted by next_due_date ascending (most urgent first).
-    Color coding: red (<7 days), yellow (7-14), green (14-30).
-    """
-    today_date = date.today()
-    future_date = today_date + timedelta(days=days)
-
-    async with get_db() as db:
-        # Get the latest inspection per plate (most recent inspection_date)
-        cursor = await db.execute(
-            """SELECT plate_number, owner_name, MAX(inspection_date) as last_inspection_date,
-                      brand, model, fuel_type
-               FROM itp_inspections
-               WHERE result = 'admis'
-               GROUP BY UPPER(plate_number)
-               ORDER BY last_inspection_date ASC"""
-        )
-        rows = await cursor.fetchall()
-
-    result = []
-    for row in rows:
-        item = dict(row)
-        last_date_str = item.get("last_inspection_date")
-        if not last_date_str:
-            continue
-        next_due = _next_inspection_date(last_date_str)
-        if next_due is None:
-            continue
-        # Only include if due within the requested window
-        if next_due > future_date:
-            continue
-        days_remaining = (next_due - today_date).days
-        result.append({
-            "plate": item["plate_number"],
-            "owner_name": item.get("owner_name") or "",
-            "brand": item.get("brand") or "",
-            "model": item.get("model") or "",
-            "last_inspection_date": last_date_str,
-            "next_due_date": next_due.isoformat(),
-            "days_remaining": days_remaining,
-        })
-
-    # Sort by days_remaining ascending (most urgent first)
-    result.sort(key=lambda x: x["days_remaining"])
-
-    return result
+    """Vehicles with next inspection due within N days based on last inspection + 12 months."""
+    return await compute_followup_due_soon(days)
 
 
 # ────────── R4-26: No-show Tracking ──────────
-
-class MarkShowupRequest(BaseModel):
-    showed_up: bool
-
 
 @router.put("/appointments/{appt_id}/mark-showup")
 async def mark_appointment_showup(appt_id: int, data: MarkShowupRequest):
@@ -1415,7 +944,7 @@ async def mark_appointment_showup(appt_id: int, data: MarkShowupRequest):
         if existing is None:
             raise HTTPException(404, "Programarea nu a fost gasita")
         new_status = "completed" if data.showed_up else "no_show"
-        _validate_appointment_transition(existing["status"], new_status)
+        validate_appointment_transition(existing["status"], new_status)
 
         cursor = await db.execute(
             "UPDATE itp_appointments SET showed_up = ?, status = ? WHERE id = ?",
@@ -1437,34 +966,262 @@ async def mark_appointment_showup(appt_id: int, data: MarkShowupRequest):
 @router.get("/stats/noshow-rate")
 async def stats_noshow_rate():
     """No-show statistics for appointments."""
+    return await compute_noshow_rate()
+
+
+# ────────── Photos ──────────
+
+@router.post("/inspections/{inspection_id}/photos")
+async def upload_inspection_photo(inspection_id: int, file: UploadFile = File(...)):
+    """Upload a photo for an inspection. Max 5MB, images only, max 5 per inspection."""
+    # Validate inspection exists
     async with get_db() as db:
-        # Ensure showed_up column exists
-        try:
-            await db.execute(
-                "ALTER TABLE itp_appointments ADD COLUMN showed_up INTEGER"
+        cursor = await db.execute(
+            "SELECT id FROM itp_inspections WHERE id = ?", (inspection_id,)
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(404, "Inspectia nu a fost gasita")
+
+        # Check current photo count
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM itp_photos WHERE inspection_id = ?",
+            (inspection_id,),
+        )
+        count = (await cursor.fetchone())[0]
+        if count >= MAX_PHOTOS_PER_INSPECTION:
+            raise HTTPException(
+                400,
+                f"Limita de {MAX_PHOTOS_PER_INSPECTION} fotografii per inspectie a fost atinsa.",
             )
-            await db.commit()
-        except Exception:
-            pass
 
-        cursor = await db.execute("SELECT COUNT(*) FROM itp_appointments")
-        total = (await cursor.fetchone())[0]
+    # Validate content type
+    content_type = file.content_type or ""
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            400,
+            f"Tip fisier neacceptat: {content_type}. Acceptate: JPEG, PNG, WebP, GIF.",
+        )
+
+    # Read and validate size
+    content = await file.read()
+    if len(content) > MAX_PHOTO_SIZE:
+        raise HTTPException(400, f"Fisierul depaseste limita de {MAX_PHOTO_SIZE // (1024*1024)} MB.")
+
+    # Generate unique filename
+    ext = Path(file.filename or "photo.jpg").suffix.lower() or ".jpg"
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+
+    # Create directory for this inspection
+    photo_dir = ITP_PHOTOS_DIR / str(inspection_id)
+    photo_dir.mkdir(parents=True, exist_ok=True)
+    filepath = photo_dir / unique_name
+
+    # Resize if width > 1920px using PIL
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(content))
+        if img.width > 1920:
+            ratio = 1920 / img.width
+            new_size = (1920, int(img.height * ratio))
+            img = img.resize(new_size, Image.LANCZOS)
+        img.save(str(filepath), quality=85)
+    except ImportError:
+        # PIL not available — save raw
+        filepath.write_bytes(content)
+    except Exception as exc:
+        # Fallback: save raw on any PIL error
+        logger.warning("PIL resize failed, saving raw: %s", exc)
+        filepath.write_bytes(content)
+
+    # Save to database
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO itp_photos (inspection_id, filename, filepath) VALUES (?, ?, ?)",
+            (inspection_id, file.filename or unique_name, str(filepath)),
+        )
+        await db.commit()
+        photo_id = cursor.lastrowid
+
+    await log_activity(
+        action="itp.photo_upload",
+        summary=f"Foto ITP incarcata: inspectie #{inspection_id} — {file.filename}",
+        details={"inspection_id": inspection_id, "photo_id": photo_id},
+    )
+
+    return {"id": photo_id, "filename": file.filename or unique_name, "path": str(filepath)}
+
+
+@router.get("/inspections/{inspection_id}/photos")
+async def list_inspection_photos(inspection_id: int):
+    """List all photos for an inspection."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM itp_inspections WHERE id = ?", (inspection_id,)
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(404, "Inspectia nu a fost gasita")
 
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM itp_appointments WHERE showed_up = 1"
+            "SELECT id, inspection_id, filename, filepath, created_at "
+            "FROM itp_photos WHERE inspection_id = ? ORDER BY created_at DESC",
+            (inspection_id,),
         )
-        showed_up = (await cursor.fetchone())[0]
+        rows = await cursor.fetchall()
 
+    return [row_dict(row) for row in rows]
+
+
+@router.delete("/inspections/{inspection_id}/photos/{photo_id}")
+async def delete_inspection_photo(inspection_id: int, photo_id: int):
+    """Delete a photo from an inspection."""
+    async with get_db() as db:
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM itp_appointments WHERE showed_up = 0 AND showed_up IS NOT NULL"
+            "SELECT id, filepath, filename FROM itp_photos WHERE id = ? AND inspection_id = ?",
+            (photo_id, inspection_id),
         )
-        no_shows = (await cursor.fetchone())[0]
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Fotografia nu a fost gasita")
 
-    no_show_rate = round((no_shows / total * 100), 1) if total > 0 else 0
+        filepath = Path(row["filepath"])
+        filename = row["filename"]
 
-    return {
-        "total_appointments": total,
-        "showed_up": showed_up,
-        "no_shows": no_shows,
-        "no_show_rate_percent": no_show_rate,
-    }
+        # Delete from DB
+        await db.execute("DELETE FROM itp_photos WHERE id = ?", (photo_id,))
+        await db.commit()
+
+    # Delete file from disk
+    try:
+        if filepath.exists():
+            filepath.unlink()
+    except OSError as exc:
+        logger.warning("Nu s-a putut sterge fisierul foto: %s", exc)
+
+    await log_activity(
+        action="itp.photo_delete",
+        summary=f"Foto ITP stearsa: inspectie #{inspection_id} — {filename}",
+        details={"inspection_id": inspection_id, "photo_id": photo_id},
+    )
+
+    return {"message": "Fotografia a fost stearsa cu succes."}
+
+
+@router.get("/photos/serve/{photo_id}")
+async def serve_photo(photo_id: int):
+    """Serve a photo file by its ID."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT filepath, filename FROM itp_photos WHERE id = ?", (photo_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Fotografia nu a fost gasita")
+
+    filepath = Path(row["filepath"])
+    if not filepath.exists():
+        raise HTTPException(404, "Fisierul foto nu mai exista pe disk")
+
+    return FileResponse(
+        str(filepath),
+        filename=row["filename"],
+        media_type="image/jpeg",
+    )
+
+
+# ────────── ITP Expiry Notification Cron ──────────
+
+async def check_itp_expiring_notifications():
+    """Check for ITP inspections expiring within 14 days and send Telegram notifications.
+
+    Queries inspections where expiry_date is within 14 days and notified_expiry = 0.
+    Sends a Telegram message for each and marks notified_expiry = 1.
+    """
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+    if not bot_token or not chat_id:
+        logger.debug("Telegram credentials not set, skipping ITP expiry notifications")
+        return
+
+    today = date.today()
+    threshold = (today + timedelta(days=14)).isoformat()
+    today_str = today.isoformat()
+
+    try:
+        async with get_db() as db:
+            # Ensure notified_expiry column exists
+            try:
+                await db.execute(
+                    "ALTER TABLE itp_inspections ADD COLUMN notified_expiry INTEGER DEFAULT 0"
+                )
+                await db.commit()
+            except Exception:
+                pass  # Column already exists
+
+            cursor = await db.execute(
+                """SELECT id, plate_number, owner_name, brand, model, expiry_date
+                   FROM itp_inspections
+                   WHERE expiry_date >= ? AND expiry_date <= ?
+                     AND (notified_expiry IS NULL OR notified_expiry = 0)
+                   ORDER BY expiry_date ASC""",
+                (today_str, threshold),
+            )
+            rows = await cursor.fetchall()
+
+        if not rows:
+            return
+
+        notified_ids = []
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for row in rows:
+                inspection = row_dict(row)
+                days_left = (date.fromisoformat(inspection["expiry_date"]) - today).days
+                plate = inspection["plate_number"]
+                owner = inspection.get("owner_name") or "N/A"
+                vehicle = f"{inspection.get('brand') or ''} {inspection.get('model') or ''}".strip() or "N/A"
+
+                message = (
+                    f"🚗 ITP Expira in {days_left} zile!\n"
+                    f"Nr: {plate}\n"
+                    f"Proprietar: {owner}\n"
+                    f"Vehicul: {vehicle}\n"
+                    f"Data expirare: {inspection['expiry_date']}"
+                )
+
+                try:
+                    resp = await client.post(url, json={
+                        "chat_id": chat_id,
+                        "text": message,
+                        "parse_mode": "HTML",
+                    })
+                    if resp.status_code == 200:
+                        notified_ids.append(inspection["id"])
+                    else:
+                        logger.warning(
+                            "Telegram send failed for ITP #%d: HTTP %d",
+                            inspection["id"], resp.status_code,
+                        )
+                except Exception as exc:
+                    logger.warning("Telegram send error for ITP #%d: %s", inspection["id"], exc)
+
+        # Mark as notified
+        if notified_ids:
+            async with get_db() as db:
+                placeholders = ",".join("?" * len(notified_ids))
+                await db.execute(
+                    f"UPDATE itp_inspections SET notified_expiry = 1 WHERE id IN ({placeholders})",
+                    notified_ids,
+                )
+                await db.commit()
+
+            await log_activity(
+                action="itp.expiry_notifications",
+                summary=f"Notificari ITP expirare: {len(notified_ids)} trimise via Telegram",
+                details={"notified_ids": notified_ids},
+            )
+            logger.info("ITP expiry notifications sent: %d", len(notified_ids))
+
+    except Exception as exc:
+        logger.error("Error checking ITP expiry notifications: %s", exc)

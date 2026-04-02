@@ -31,7 +31,7 @@ from typing import Optional
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException, Header, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
@@ -77,9 +77,9 @@ class SetupRequest(BaseModel):
 
 
 class AddKeyRequest(BaseModel):
-    name: str
-    value: str
-    provider: str = "generic"
+    name: str = Field(..., min_length=1, max_length=255)
+    value: str = Field(..., min_length=1, max_length=10000)
+    provider: str = Field("generic", max_length=100)
     expires_at: Optional[str] = None  # ISO date string e.g. "2026-06-01"
 
 
@@ -712,3 +712,103 @@ async def test_key(
         return {"valid": False, "message": f"Timeout (10s) la testarea cheii cu {row['provider']}."}
     except httpx.RequestError as exc:
         return {"valid": False, "message": f"Eroare conexiune la {row['provider']}: {exc}"}
+
+
+# --- Usage Overview ---
+
+# Provider free tier limits (monthly)
+_PROVIDER_LIMITS = {
+    "deepl": {"limit": 500000, "unit": "chars/month"},
+    "azure": {"limit": 2000000, "unit": "chars/month"},
+    "google": {"limit": 500000, "unit": "chars/month"},
+    "mymemory": {"limit": 50000, "unit": "chars/day"},
+    "gemini": {"limit": 250, "unit": "requests/day"},
+    "cerebras": {"limit": 1000000, "unit": "tokens/day"},
+    "groq": {"limit": 30, "unit": "RPM"},
+    "mistral": {"limit": 1000000000, "unit": "tokens/month"},
+}
+
+
+@router.get("/usage-overview")
+async def vault_usage_overview():
+    """Returns free tier usage summary from activity_log for known providers."""
+    result = []
+
+    try:
+        async with get_db() as db:
+            # Get translation activity counts this month per provider
+            cursor = await db.execute(
+                "SELECT "
+                "  COALESCE(json_extract(details, '$.provider'), 'unknown') AS provider, "
+                "  COUNT(*) AS request_count, "
+                "  COALESCE(SUM(CAST(json_extract(details, '$.chars') AS INTEGER)), 0) AS total_chars "
+                "FROM activity_log "
+                "WHERE action LIKE 'translator%' "
+                "AND timestamp >= date('now', 'start of month') "
+                "GROUP BY provider"
+            )
+            translator_rows = await cursor.fetchall()
+
+            for row in translator_rows:
+                prov = (row["provider"] or "unknown").lower()
+                chars = row["total_chars"] or 0
+                limits = _PROVIDER_LIMITS.get(prov)
+                if limits:
+                    limit_val = limits["limit"]
+                    unit = limits["unit"]
+                    used = chars if "chars" in unit else row["request_count"]
+                    percent = round((used / limit_val * 100), 1) if limit_val > 0 else 0
+                else:
+                    limit_val = 0
+                    unit = "unknown"
+                    used = chars
+                    percent = 0
+
+                result.append({
+                    "provider": prov,
+                    "used": used,
+                    "limit": limit_val,
+                    "unit": unit,
+                    "percent": min(percent, 100.0),
+                })
+
+            # Get AI provider usage this month
+            cursor = await db.execute(
+                "SELECT "
+                "  COALESCE(json_extract(details, '$.provider'), 'unknown') AS provider, "
+                "  COUNT(*) AS request_count "
+                "FROM activity_log "
+                "WHERE action LIKE 'ai%' "
+                "AND timestamp >= date('now', 'start of month') "
+                "GROUP BY provider"
+            )
+            ai_rows = await cursor.fetchall()
+
+            for row in ai_rows:
+                prov = (row["provider"] or "unknown").lower()
+                limits = _PROVIDER_LIMITS.get(prov)
+                if limits:
+                    limit_val = limits["limit"]
+                    unit = limits["unit"]
+                    used = row["request_count"]
+                    percent = round((used / limit_val * 100), 1) if limit_val > 0 else 0
+                else:
+                    limit_val = 0
+                    unit = "unknown"
+                    used = row["request_count"]
+                    percent = 0
+
+                # Skip if already added from translator
+                if not any(r["provider"] == prov for r in result):
+                    result.append({
+                        "provider": prov,
+                        "used": used,
+                        "limit": limit_val,
+                        "unit": unit,
+                        "percent": min(percent, 100.0),
+                    })
+
+    except Exception as exc:
+        _logger.error("Error fetching usage overview: %s", exc)
+
+    return result

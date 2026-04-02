@@ -174,7 +174,13 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Master-Password",
+        "X-Vault-Session",
+        "X-Requested-With",
+    ],
     expose_headers=[
         "Content-Disposition",
         "X-Original-Size",
@@ -186,6 +192,28 @@ app.add_middleware(
 
 # --- GZip compression (Z2.9 — reduce response sizes 60-80%) ---
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+# ---------------------------------------------------------------------------
+# Error sanitization — strip secrets from logged error bodies
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_SENSITIVE_PATTERNS = _re.compile(
+    r"sk-[a-zA-Z0-9_-]{20,}"          # OpenAI keys
+    r"|AIza[0-9A-Za-z_-]{30,}"        # Google API keys
+    r"|gsk_[a-zA-Z0-9]{20,}"          # Groq keys
+    r"|csk-[a-zA-Z0-9]{20,}"          # Cerebras keys
+    r'|"(?:password|token|secret|key)"\s*:\s*"[^"]*"'  # JSON secret fields
+    r"|Bearer\s+\S{20,}",             # Bearer tokens
+    _re.IGNORECASE,
+)
+
+
+def _sanitize_error_body(text: str, max_length: int = 500) -> str:
+    """Redact sensitive patterns from error text before logging."""
+    return _SENSITIVE_PATTERNS.sub("[REDACTED]", text)[:max_length]
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +287,7 @@ async def request_logger(request: Request, call_next):
             body_bytes = b""
             async for chunk in response.body_iterator:
                 body_bytes += chunk
-            error_body = body_bytes.decode("utf-8", errors="replace")[:500]
+            error_body = _sanitize_error_body(body_bytes.decode("utf-8", errors="replace"))
 
             await log_activity(
                 action="api.error",
@@ -286,16 +314,43 @@ async def request_logger(request: Request, call_next):
     return response
 
 
-# --- Rate Limiting middleware (D4 — securitate) ---
+# --- Rate Limiting middleware (D4 — securitate, multi-tier) ---
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 
-# Paths with stricter limits (10 req/min instead of 60)
+# Tier 1: VERY_STRICT — 2 req/min (heavy operations: backup, batch PDF)
+_VERY_STRICT_RATE_PATHS = {"/api/reports/backup/", "/api/invoice/export-batch-pdf"}
+
+# Tier 2: MODERATE — 5 req/min (converter operations)
+_MODERATE_RATE_PATHS = {"/api/converter/"}
+
+# Tier 3: STRICT — 10 req/min (AI/translate mutating operations)
 _STRICT_RATE_PATHS = {"/api/ai/", "/api/translator/text", "/api/translator/file", "/api/translator/quality-check"}
+
+
+def _get_rate_tier(path: str, method: str) -> tuple[str, int]:
+    """Determine rate limit tier for a given path and method.
+
+    Returns (tier_name, limit_per_minute).
+    """
+    # Very strict: any method on backup/batch-pdf paths
+    if any(path.startswith(p) for p in _VERY_STRICT_RATE_PATHS):
+        return "very_strict", 2
+
+    # Moderate: any method on converter paths
+    if any(path.startswith(p) for p in _MODERATE_RATE_PATHS):
+        return "moderate", 5
+
+    # Strict: only mutating methods on AI/translate paths
+    if method in ("POST", "PUT", "DELETE") and any(path.startswith(p) for p in _STRICT_RATE_PATHS):
+        return "strict", 10
+
+    # Global: everything else
+    return "global", 60
 
 
 @app.middleware("http")
 async def rate_limiter(request: Request, call_next):
-    """Simple in-memory rate limiting: 60 req/min global, 10 req/min for AI/translate."""
+    """Multi-tier in-memory rate limiting: 2/5/10/60 req/min depending on path."""
     path = request.url.path
     if not path.startswith("/api/") or path in ("/api/health", "/api/log/frontend"):
         return await call_next(request)
@@ -308,12 +363,8 @@ async def rate_limiter(request: Request, call_next):
     now = time.time()
     window = 60  # 1 minute
 
-    # Strict limit only for mutating methods (POST/PUT/DELETE) on AI/translate paths
-    # GET requests are data fetching (providers, templates, sessions) — use global limit
-    method = request.method
-    is_strict = method in ("POST", "PUT", "DELETE") and any(path.startswith(p) for p in _STRICT_RATE_PATHS)
-    limit = 10 if is_strict else 60
-    bucket_key = f"{client_ip}:{'strict' if is_strict else 'global'}"
+    tier_name, limit = _get_rate_tier(path, request.method)
+    bucket_key = f"{client_ip}:{tier_name}"
 
     # Clean old entries and check
     _rate_limit_store[bucket_key] = [t for t in _rate_limit_store[bucket_key] if now - t < window]
@@ -356,6 +407,10 @@ for _mod_info in _modules:
     for _router in _mod_info["routers"]:
         app.include_router(_router)
 
+# --- Global search router (must be registered before SPA catch-all) ---
+from app.api.routes_search import router as search_router
+app.include_router(search_router)
+
 
 # ---------------------------------------------------------------------------
 # Endpoint-uri de bază
@@ -364,10 +419,19 @@ for _mod_info in _modules:
 @app.get("/api/health")
 async def health_check():
     """Verificare stare server."""
+    db_size_mb = 0.0
+    try:
+        db_path = settings.db_path
+        if db_path.exists():
+            db_size_mb = round(db_path.stat().st_size / (1024 * 1024), 2)
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "message": "Serverul funcționează corect.",
         "version": app.version,
+        "db_size_mb": db_size_mb,
     }
 
 

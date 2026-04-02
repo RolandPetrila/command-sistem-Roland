@@ -43,606 +43,55 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import shutil
-import time
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
 
+from .health import build_health_report
+from .models import (
+    VALID_ACTION_TYPES,
+    ApiTestRequest,
+    ApiTestSave,
+    MonitorCreate,
+    MonitorUpdate,
+    NotificationCreate,
+    NotifyRequest,
+    ShortcutCreate,
+    ShortcutUpdate,
+    TaskCreateModel,
+    TaskUpdateModel,
+    row_dict,
+)
+from .monitors import is_monitor_running, start_monitor, stop_monitor
+from .scheduler import (
+    _execute_with_timeout,
+    _record_run_result,
+    _send_task_failure_telegram,
+    get_scheduler_status,
+    validate_cron_expr,
+)
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/automations", tags=["Automations"])
 
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
+# Re-export lifecycle functions so main.py imports still work
+from .monitors import resume_uptime_monitors as resume_uptime_monitors  # noqa: E402, F401
+from .scheduler import start_cron_scheduler as start_cron_scheduler  # noqa: E402, F401
+from .scheduler import stop_cron_scheduler as stop_cron_scheduler  # noqa: E402, F401
 
-VALID_ACTION_TYPES = [
-    "backup_db",
-    "cleanup_temp",
-    "reindex_documents",
-    "health_check",
-    "custom_script",
-]
+# Also re-export notifications functions used externally
+from .notifications import cleanup_old_activity_logs as cleanup_old_activity_logs  # noqa: E402, F401
+from .notifications import send_daily_digest as send_daily_digest  # noqa: E402, F401
 
 
-class TaskCreate(BaseModel):
-    name: str
-    schedule_cron: Optional[str] = None
-    action_type: str
-    action_config: Optional[dict] = None
-    enabled: bool = True
-    timeout_seconds: int = 300  # R4-09: 5 min default
-    max_retries: int = 1  # R4-09: retry once on failure
+# ═══════════════════════════════════════════
+# Task Scheduler CRUD
+# ═══════════════════════════════════════════
 
-
-class TaskUpdate(BaseModel):
-    name: Optional[str] = None
-    schedule_cron: Optional[str] = None
-    action_type: Optional[str] = None
-    action_config: Optional[dict] = None
-    enabled: Optional[bool] = None
-    timeout_seconds: Optional[int] = None
-    max_retries: Optional[int] = None
-
-
-class ShortcutCreate(BaseModel):
-    name: str
-    icon: str = "Zap"
-    color: str = "#3b82f6"
-    url_or_action: str
-    sort_order: int = 0
-
-
-class ShortcutUpdate(BaseModel):
-    name: Optional[str] = None
-    icon: Optional[str] = None
-    color: Optional[str] = None
-    url_or_action: Optional[str] = None
-    sort_order: Optional[int] = None
-
-
-class MonitorCreate(BaseModel):
-    name: str
-    url: str
-    interval_seconds: int = 300
-    enabled: bool = True
-
-
-class MonitorUpdate(BaseModel):
-    name: Optional[str] = None
-    url: Optional[str] = None
-    interval_seconds: Optional[int] = None
-    enabled: Optional[bool] = None
-
-
-class NotifyRequest(BaseModel):
-    """Internal notification request from any module."""
-    source: str
-    title: str
-    message: str
-    severity: str = "info"  # info, warning, error, success
-
-
-class ApiTestRequest(BaseModel):
-    method: str = "GET"
-    url: str
-    headers: Optional[dict] = None
-    body: Optional[str] = None
-
-
-class ApiTestSave(BaseModel):
-    name: str
-    method: str = "GET"
-    url: str
-    headers: Optional[dict] = None
-    body: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Helper: row to dict
-# ---------------------------------------------------------------------------
-
-def _row_dict(row) -> dict:
-    """Convert an aiosqlite.Row to a plain dict."""
-    return dict(row)
-
-
-# ---------------------------------------------------------------------------
-# Cron parser (lightweight, no dependencies)
-# ---------------------------------------------------------------------------
-
-def _cron_field_matches(field_expr: str, current_value: int) -> bool:
-    """Check if a single cron field matches the current value.
-
-    Supported patterns:
-      *      — any value
-      */N    — every N (divisible)
-      N      — exact match
-      N,M    — list of values
-      N-M    — range of values
-    """
-    field_expr = field_expr.strip()
-
-    if field_expr == "*":
-        return True
-
-    if field_expr.startswith("*/"):
-        try:
-            step = int(field_expr[2:])
-            return step > 0 and current_value % step == 0
-        except (ValueError, ZeroDivisionError):
-            return False
-
-    # Support comma-separated values: "1,15,30"
-    if "," in field_expr:
-        parts = field_expr.split(",")
-        return any(_cron_field_matches(p.strip(), current_value) for p in parts)
-
-    # Support range: "1-5"
-    if "-" in field_expr:
-        try:
-            low, high = field_expr.split("-", 1)
-            return int(low) <= current_value <= int(high)
-        except ValueError:
-            return False
-
-    # Exact number
-    try:
-        return int(field_expr) == current_value
-    except ValueError:
-        return False
-
-
-def _cron_matches(cron_expr: str, now: datetime) -> bool:
-    """Check if a cron expression matches the given datetime.
-
-    Format: 'minute hour day month weekday' (5 fields).
-    Weekday: 0=Monday ... 6=Sunday (Python convention).
-    """
-    parts = cron_expr.strip().split()
-    if len(parts) != 5:
-        return False
-
-    minute, hour, day, month, weekday = parts
-    return (
-        _cron_field_matches(minute, now.minute)
-        and _cron_field_matches(hour, now.hour)
-        and _cron_field_matches(day, now.day)
-        and _cron_field_matches(month, now.month)
-        and _cron_field_matches(weekday, now.weekday())
-    )
-
-
-# Field ranges: (min_val, max_val)
-_CRON_FIELD_RANGES = [
-    (0, 59),   # minute
-    (0, 23),   # hour
-    (1, 31),   # day of month
-    (1, 12),   # month
-    (0, 6),    # day of week
-]
-
-
-def _validate_cron_expr(expr: str) -> str | None:
-    """Validate a 5-field cron expression. Returns error message or None if valid."""
-    parts = expr.strip().split()
-    if len(parts) != 5:
-        return "Expresia cron trebuie sa aiba exact 5 campuri (min ora zi luna zi_sapt)"
-
-    field_names = ["minut", "ora", "zi_luna", "luna", "zi_sapt"]
-    for i, (field, (lo, hi)) in enumerate(zip(parts, _CRON_FIELD_RANGES)):
-        # Wildcard and step are always valid structurally; validate numeric values
-        if field == "*":
-            continue
-        if field.startswith("*/"):
-            try:
-                step = int(field[2:])
-                if step <= 0:
-                    return f"Campul '{field_names[i]}': pasul din '*/N' trebuie sa fie pozitiv"
-            except ValueError:
-                return f"Campul '{field_names[i]}': pas invalid in '{field}'"
-            continue
-        # Comma list
-        candidates = field.split(",") if "," in field else [field]
-        for part in candidates:
-            if "-" in part:
-                try:
-                    a, b = part.split("-", 1)
-                    a, b = int(a), int(b)
-                    if not (lo <= a <= hi and lo <= b <= hi and a <= b):
-                        return (
-                            f"Campul '{field_names[i]}': intervalul '{part}' "
-                            f"trebuie sa fie in [{lo}-{hi}]"
-                        )
-                except ValueError:
-                    return f"Campul '{field_names[i]}': interval invalid '{part}'"
-            else:
-                try:
-                    v = int(part)
-                    if not (lo <= v <= hi):
-                        return (
-                            f"Campul '{field_names[i]}': valoarea {v} "
-                            f"trebuie sa fie in [{lo}-{hi}]"
-                        )
-                except ValueError:
-                    return f"Campul '{field_names[i]}': valoare invalida '{part}'"
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Background cron scheduler
-# ---------------------------------------------------------------------------
-
-_scheduler_task: Optional[asyncio.Task] = None
-_scheduler_status: dict[str, Any] = {
-    "running": False,
-    "paused": False,  # R4-11: scheduler pause/resume
-    "paused_at": None,
-    "last_check": None,
-    "tasks_due": 0,
-    "tasks_executed": 0,
-    "last_error": None,
-}
-
-
-async def _execute_with_timeout(action_type: str, config: dict | None, timeout_secs: int) -> str:
-    """Execute a task action with asyncio timeout. R4-09."""
-    return await asyncio.wait_for(
-        _run_action(action_type, config),
-        timeout=timeout_secs,
-    )
-
-
-async def _record_run_result(
-    run_id: int, task_id: int, status: str,
-    output: str | None = None, error: str | None = None,
-):
-    """Update task_runs and scheduled_tasks after execution."""
-    finished_at = datetime.now(timezone.utc).isoformat()
-    async with get_db() as db:
-        await db.execute(
-            """UPDATE task_runs
-               SET status = ?, output = ?, error = ?, finished_at = ?
-               WHERE id = ?""",
-            (status, output, error, finished_at, run_id),
-        )
-        await db.execute(
-            "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
-            (finished_at, task_id),
-        )
-        await db.commit()
-
-
-async def _cron_scheduler_loop():
-    """Background loop: every 60s, check enabled tasks with cron and run due ones."""
-    global _scheduler_status
-    _scheduler_status["running"] = True
-    logger.info("Cron scheduler pornit.")
-
-    while True:
-        try:
-            await asyncio.sleep(60)
-
-            # R4-11: Skip execution when paused
-            if _scheduler_status.get("paused", False):
-                continue
-
-            now = datetime.now(timezone.utc)
-            _scheduler_status["last_check"] = now.isoformat()
-            tasks_due = 0
-
-            async with get_db() as db:
-                cursor = await db.execute(
-                    """SELECT id, name, schedule_cron, action_type, action_config,
-                              last_run, timeout_seconds, max_retries, retry_count
-                       FROM scheduled_tasks
-                       WHERE enabled = 1 AND schedule_cron IS NOT NULL AND schedule_cron != ''"""
-                )
-                tasks = [_row_dict(r) for r in await cursor.fetchall()]
-
-            for task in tasks:
-                try:
-                    if not _cron_matches(task["schedule_cron"], now):
-                        continue
-
-                    # Check last_run to avoid double-execution within the same minute
-                    if task.get("last_run"):
-                        try:
-                            last_run_str = task["last_run"]
-                            # Handle both ISO format and SQLite CURRENT_TIMESTAMP
-                            if "T" in last_run_str:
-                                last_run_dt = datetime.fromisoformat(
-                                    last_run_str.replace("Z", "+00:00")
-                                )
-                            else:
-                                last_run_dt = datetime.strptime(
-                                    last_run_str, "%Y-%m-%d %H:%M:%S"
-                                ).replace(tzinfo=timezone.utc)
-                            if (now - last_run_dt).total_seconds() < 59:
-                                continue
-                        except (ValueError, TypeError):
-                            pass  # If we can't parse last_run, run anyway
-
-                    tasks_due += 1
-
-                    # Create run record
-                    async with get_db() as db:
-                        cursor = await db.execute(
-                            "INSERT INTO task_runs (task_id, status) VALUES (?, 'running')",
-                            (task["id"],),
-                        )
-                        await db.commit()
-                        run_id = cursor.lastrowid
-
-                    # Execute the action
-                    config = None
-                    if task.get("action_config"):
-                        try:
-                            config = json.loads(task["action_config"])
-                        except (json.JSONDecodeError, TypeError):
-                            config = None
-
-                    timeout_secs = task.get("timeout_seconds") or 300
-
-                    try:
-                        output = await _execute_with_timeout(
-                            task["action_type"], config, timeout_secs
-                        )
-                        await _record_run_result(run_id, task["id"], "success", output=output)
-
-                        # Reset retry_count on success
-                        async with get_db() as db:
-                            await db.execute(
-                                "UPDATE scheduled_tasks SET retry_count = 0 WHERE id = ?",
-                                (task["id"],),
-                            )
-                            await db.commit()
-
-                        _scheduler_status["tasks_executed"] += 1
-                        logger.info(
-                            "Cron task executat: #%d '%s' - succes",
-                            task["id"], task["name"],
-                        )
-                    except asyncio.TimeoutError:
-                        error_msg = f"Timeout dupa {timeout_secs}s"
-                        await _record_run_result(run_id, task["id"], "timeout", error=error_msg)
-
-                        # R4-09: Retry logic on timeout
-                        max_retries = task.get("max_retries") or 1
-                        retry_count = (task.get("retry_count") or 0) + 1
-                        async with get_db() as db:
-                            await db.execute(
-                                "UPDATE scheduled_tasks SET retry_count = ? WHERE id = ?",
-                                (retry_count, task["id"]),
-                            )
-                            await db.commit()
-
-                        if retry_count <= max_retries:
-                            logger.info(
-                                "Cron task timeout: #%d '%s' - retry %d/%d in 15min",
-                                task["id"], task["name"], retry_count, max_retries,
-                            )
-                        else:
-                            logger.warning(
-                                "Cron task timeout: #%d '%s' - max retries exhausted",
-                                task["id"], task["name"],
-                            )
-
-                    except Exception as exc:
-                        error_msg = str(exc)[:1000]
-                        await _record_run_result(run_id, task["id"], "failed", error=error_msg)
-
-                        # R4-09: Retry logic on failure
-                        max_retries = task.get("max_retries") or 1
-                        retry_count = (task.get("retry_count") or 0) + 1
-                        async with get_db() as db:
-                            await db.execute(
-                                "UPDATE scheduled_tasks SET retry_count = ? WHERE id = ?",
-                                (retry_count, task["id"]),
-                            )
-                            await db.commit()
-
-                        logger.warning(
-                            "Cron task esuat: #%d '%s' - %s (retry %d/%d)",
-                            task["id"], task["name"], exc, retry_count, max_retries,
-                        )
-                        # Log error to activity_log for visibility in diagnostics
-                        try:
-                            await log_activity(
-                                action="scheduler.error",
-                                summary=f"Cron task esuat: #{task['id']} '{task['name']}' — {task['action_type']}",
-                                details={
-                                    "task_id": task["id"],
-                                    "task_name": task["name"],
-                                    "action_type": task["action_type"],
-                                    "error": str(exc)[:500],
-                                    "run_id": run_id,
-                                    "retry_count": retry_count,
-                                    "max_retries": max_retries,
-                                },
-                            )
-                        except Exception:
-                            pass  # Don't let logging failure break the scheduler
-
-                except Exception as exc:
-                    logger.warning("Eroare procesare cron task #%d: %s", task.get("id", 0), exc)
-
-            _scheduler_status["tasks_due"] = tasks_due
-
-        except asyncio.CancelledError:
-            logger.info("Cron scheduler oprit.")
-            _scheduler_status["running"] = False
-            return
-        except Exception as exc:
-            _scheduler_status["last_error"] = f"{datetime.now(timezone.utc).isoformat()}: {exc}"
-            logger.error("Eroare in cron scheduler: %s", exc)
-            # Continue running despite errors
-
-
-def start_cron_scheduler():
-    """Start the background cron scheduler task. Called from lifespan/startup."""
-    global _scheduler_task
-    if _scheduler_task is None or _scheduler_task.done():
-        _scheduler_task = asyncio.create_task(_cron_scheduler_loop())
-        logger.info("Cron scheduler task creat.")
-
-
-def stop_cron_scheduler():
-    """Stop the background cron scheduler task. Called from lifespan/shutdown."""
-    global _scheduler_task
-    if _scheduler_task and not _scheduler_task.done():
-        _scheduler_task.cancel()
-        logger.info("Cron scheduler task anulat.")
-    _scheduler_task = None
-    _scheduler_status["running"] = False
-
-
-async def resume_uptime_monitors():
-    """Resume all enabled uptime monitors after server restart.
-
-    Called from lifespan/startup after cron scheduler is started.
-    Fetches all monitors with enabled=1 from DB and re-creates their
-    background asyncio tasks.
-    """
-    try:
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT id, url, interval_seconds FROM uptime_monitors WHERE enabled = 1"
-            )
-            monitors = await cursor.fetchall()
-
-        resumed = 0
-        for row in monitors:
-            monitor_id, url, interval = row[0], row[1], row[2]
-            _start_monitor(monitor_id, url, interval)
-            resumed += 1
-
-        if resumed:
-            logger.info("Uptime monitors resumed: %d monitors restarted.", resumed)
-    except Exception as exc:
-        logger.warning("Nu s-au putut relua uptime monitors: %s", exc)
-
-
-# ---------------------------------------------------------------------------
-# Helper: create downtime / recovery notification with cooldown
-# ---------------------------------------------------------------------------
-
-# Track last DOWN notification time per monitor_id to enforce 30-min cooldown
-_downtime_cooldowns: dict[int, float] = {}
-_DOWNTIME_COOLDOWN_SECS = 30 * 60  # 30 minutes
-
-
-async def _create_downtime_notification(
-    monitor_name: str, url: str, error: str | None, monitor_id: int | None = None
-):
-    """Insert a notification when a monitor transitions to down state.
-
-    Enforces a 30-minute cooldown per monitor: won't send another DOWN
-    notification for the same monitor within that window.
-    """
-    # Cooldown check
-    if monitor_id is not None:
-        last_notified = _downtime_cooldowns.get(monitor_id, 0)
-        if (time.time() - last_notified) < _DOWNTIME_COOLDOWN_SECS:
-            logger.debug(
-                "Cooldown activ pentru monitor %d, skip notificare DOWN", monitor_id
-            )
-            return
-        _downtime_cooldowns[monitor_id] = time.time()
-
-    try:
-        msg = f"Monitorul '{monitor_name}' ({url}) este DOWN."
-        if error:
-            msg += f" Eroare: {error[:200]}"
-        async with get_db() as db:
-            await db.execute(
-                """INSERT INTO notifications (title, message, type, source, link)
-                   VALUES (?, ?, 'error', 'uptime_monitor', NULL)""",
-                (f"Downtime: {monitor_name}", msg),
-            )
-            await db.commit()
-        logger.info("Notificare downtime creata pentru: %s", monitor_name)
-    except Exception as exc:
-        logger.warning("Eroare creare notificare downtime: %s", exc)
-
-
-async def _create_recovery_notification(monitor_name: str, url: str):
-    """Insert a notification when a monitor recovers (FAIL -> OK transition)."""
-    try:
-        msg = f"Monitorul '{monitor_name}' ({url}) este din nou UP."
-        async with get_db() as db:
-            await db.execute(
-                """INSERT INTO notifications (title, message, type, source, link)
-                   VALUES (?, ?, 'success', 'uptime_monitor', NULL)""",
-                (f"Recovery: {monitor_name}", msg),
-            )
-            await db.commit()
-        logger.info("Notificare recovery creata pentru: %s", monitor_name)
-    except Exception as exc:
-        logger.warning("Eroare creare notificare recovery: %s", exc)
-
-
-# ---------------------------------------------------------------------------
-# Task action implementations
-# ---------------------------------------------------------------------------
-
-async def _run_action(action_type: str, action_config: dict | None) -> str:
-    """Execute a task action and return output string."""
-    config = action_config or {}
-
-    if action_type == "backup_db":
-        from app.config import settings
-        src = settings.db_path
-        backup_dir = settings.data_dir / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dst = backup_dir / f"calculator_{ts}.db"
-        shutil.copy2(str(src), str(dst))
-        return f"Backup creat: {dst.name}"
-
-    if action_type == "cleanup_temp":
-        from app.config import settings
-        uploads = settings.uploads_dir
-        removed = 0
-        if uploads.exists():
-            for f in uploads.iterdir():
-                if f.is_file():
-                    age_hours = (time.time() - f.stat().st_mtime) / 3600
-                    if age_hours > config.get("max_age_hours", 24):
-                        f.unlink()
-                        removed += 1
-        return f"Fisiere temporare sterse: {removed}"
-
-    if action_type == "reindex_documents":
-        return "Reindexare documente completata (placeholder)"
-
-    if action_type == "health_check":
-        health = await _build_health_report()
-        failed = [k for k, v in health.items() if isinstance(v, dict) and v.get("status") == "error"]
-        if failed:
-            return f"Health check: {len(failed)} probleme detectate: {', '.join(failed)}"
-        return "Health check: toate componentele OK"
-
-    if action_type == "custom_script":
-        script = config.get("script", "")
-        if not script:
-            return "Eroare: script-ul nu a fost specificat"
-        return f"Script custom executat (placeholder): {script[:100]}"
-
-    return f"Actiune necunoscuta: {action_type}"
-
-
-# ---------------------------------------------------------------------------
-# 16.1 Task Scheduler
-# ---------------------------------------------------------------------------
 
 @router.get("/tasks")
 async def list_tasks():
@@ -663,7 +112,7 @@ async def list_tasks():
         rows = await cursor.fetchall()
         tasks = []
         for r in rows:
-            rd = _row_dict(r)
+            rd = row_dict(r)
             last_run = None
             if rd.get("lr_id"):
                 last_run = {
@@ -694,7 +143,7 @@ async def list_tasks():
 
 
 @router.post("/tasks")
-async def create_task(body: TaskCreate):
+async def create_task(body: TaskCreateModel):
     """Create a new scheduled task."""
     if body.action_type not in VALID_ACTION_TYPES:
         raise HTTPException(
@@ -703,7 +152,7 @@ async def create_task(body: TaskCreate):
         )
 
     if body.schedule_cron:
-        cron_error = _validate_cron_expr(body.schedule_cron)
+        cron_error = validate_cron_expr(body.schedule_cron)
         if cron_error:
             raise HTTPException(status_code=400, detail=f"Expresie cron invalida: {cron_error}")
 
@@ -728,7 +177,7 @@ async def create_task(body: TaskCreate):
 
 
 @router.put("/tasks/{task_id}")
-async def update_task(task_id: int, body: TaskUpdate):
+async def update_task(task_id: int, body: TaskUpdateModel):
     """Update an existing scheduled task."""
     async with get_db() as db:
         cursor = await db.execute("SELECT id FROM scheduled_tasks WHERE id = ?", (task_id,))
@@ -742,7 +191,7 @@ async def update_task(task_id: int, body: TaskUpdate):
             updates.append("name = ?")
             params.append(body.name)
         if body.schedule_cron is not None:
-            cron_error = _validate_cron_expr(body.schedule_cron)
+            cron_error = validate_cron_expr(body.schedule_cron)
             if cron_error:
                 raise HTTPException(status_code=400, detail=f"Expresie cron invalida: {cron_error}")
             updates.append("schedule_cron = ?")
@@ -815,9 +264,8 @@ async def run_task_now(task_id: int):
         if not task:
             raise HTTPException(status_code=404, detail="Task negasit")
 
-        task_dict = _row_dict(task)
+        task_dict = row_dict(task)
 
-    # Insert run record
     async with get_db() as db:
         cursor = await db.execute(
             "INSERT INTO task_runs (task_id, status) VALUES (?, 'running')",
@@ -826,7 +274,6 @@ async def run_task_now(task_id: int):
         await db.commit()
         run_id = cursor.lastrowid
 
-    # Execute in background
     async def _execute():
         try:
             config = None
@@ -855,7 +302,6 @@ async def run_task_now(task_id: int):
         except Exception as exc:
             logger.error("Task run failed: %s", exc)
             await _record_run_result(run_id, task_id, "failed", error=str(exc)[:1000])
-            # Log error to activity_log for visibility in diagnostics
             try:
                 await log_activity(
                     action="scheduler.error",
@@ -869,7 +315,14 @@ async def run_task_now(task_id: int):
                     },
                 )
             except Exception:
-                pass  # Don't let logging failure break the execution
+                pass
+            if task_dict.get("notify_on_failure"):
+                try:
+                    await _send_task_failure_telegram(
+                        task_dict["name"], task_id, str(exc)[:300],
+                    )
+                except Exception:
+                    pass
 
     asyncio.create_task(_execute())
 
@@ -878,8 +331,8 @@ async def run_task_now(task_id: int):
 
 @router.get("/scheduler/status")
 async def scheduler_status():
-    """Return the cron scheduler status: running, paused, last check, tasks due."""
-    # Count active (enabled) tasks for the status display
+    """Return the cron scheduler status."""
+    status = get_scheduler_status()
     active_tasks = 0
     try:
         async with get_db() as db:
@@ -892,29 +345,28 @@ async def scheduler_status():
         pass
 
     return {
-        "running": _scheduler_status.get("running", False) and not _scheduler_status.get("paused", False),
-        "paused": _scheduler_status.get("paused", False),
-        "paused_at": _scheduler_status.get("paused_at"),
-        "last_check": _scheduler_status.get("last_check"),
-        "tasks_due": _scheduler_status.get("tasks_due", 0),
-        "tasks_executed": _scheduler_status.get("tasks_executed", 0),
+        "running": status.get("running", False) and not status.get("paused", False),
+        "paused": status.get("paused", False),
+        "paused_at": status.get("paused_at"),
+        "last_check": status.get("last_check"),
+        "tasks_due": status.get("tasks_due", 0),
+        "tasks_executed": status.get("tasks_executed", 0),
         "active_tasks": active_tasks,
-        "last_error": _scheduler_status.get("last_error"),
+        "last_error": status.get("last_error"),
     }
 
 
-# R4-11: Scheduler pause/resume toggle
 @router.post("/scheduler/toggle")
 async def toggle_scheduler():
-    """Pause or resume the cron scheduler. R4-11."""
-    global _scheduler_status
-    currently_paused = _scheduler_status.get("paused", False)
-    _scheduler_status["paused"] = not currently_paused
-    _scheduler_status["paused_at"] = (
+    """Pause or resume the cron scheduler."""
+    status = get_scheduler_status()
+    currently_paused = status.get("paused", False)
+    status["paused"] = not currently_paused
+    status["paused_at"] = (
         datetime.now(timezone.utc).isoformat() if not currently_paused else None
     )
 
-    action = "paused" if _scheduler_status["paused"] else "resumed"
+    action = "paused" if status["paused"] else "resumed"
     logger.info("Scheduler %s by user.", action)
 
     await log_activity(
@@ -922,16 +374,15 @@ async def toggle_scheduler():
         summary=f"Scheduler {action}",
     )
     return {
-        "paused": _scheduler_status["paused"],
-        "paused_at": _scheduler_status["paused_at"],
+        "paused": status["paused"],
+        "paused_at": status["paused_at"],
         "message": f"Scheduler {action}",
     }
 
 
-# R4-10: Task execution history with drill-down
 @router.get("/tasks/{task_id}/history")
 async def task_execution_history(task_id: int, limit: int = 50):
-    """Return the last N executions for a specific task. R4-10."""
+    """Return the last N executions for a specific task."""
     async with get_db() as db:
         cursor = await db.execute(
             "SELECT id FROM scheduled_tasks WHERE id = ?", (task_id,)
@@ -949,13 +400,11 @@ async def task_execution_history(task_id: int, limit: int = 50):
         )
         runs = []
         for r in await cursor.fetchall():
-            rd = _row_dict(r)
-            # Calculate duration_seconds if both timestamps exist
+            rd = row_dict(r)
             if rd.get("started_at") and rd.get("finished_at"):
                 try:
                     start_str = rd["started_at"]
                     end_str = rd["finished_at"]
-                    # Parse both timestamps (strip tz for safe subtraction)
                     if "T" in start_str:
                         start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(tzinfo=None)
                     else:
@@ -974,10 +423,6 @@ async def task_execution_history(task_id: int, limit: int = 50):
         return {"task_id": task_id, "runs": runs, "count": len(runs)}
 
 
-# ---------------------------------------------------------------------------
-# Cleanup old history records
-# ---------------------------------------------------------------------------
-
 @router.post("/cleanup")
 async def cleanup_old_records(days: int = 90):
     """Delete old records: task_runs, uptime_history, activity_log older than N days."""
@@ -986,21 +431,18 @@ async def cleanup_old_records(days: int = 90):
 
     deleted = {}
     async with get_db() as db:
-        # task_runs older than N days
         cursor = await db.execute(
             "DELETE FROM task_runs WHERE started_at < datetime('now', ?)",
             (f"-{days} days",),
         )
         deleted["task_runs"] = cursor.rowcount
 
-        # uptime_history older than N days
         cursor = await db.execute(
             "DELETE FROM uptime_history WHERE checked_at < datetime('now', ?)",
             (f"-{days} days",),
         )
         deleted["uptime_history"] = cursor.rowcount
 
-        # activity_log older than N days
         cursor = await db.execute(
             "DELETE FROM activity_log WHERE timestamp < datetime('now', ?)",
             (f"-{days} days",),
@@ -1018,9 +460,10 @@ async def cleanup_old_records(days: int = 90):
     return {"deleted": deleted, "total": total, "days": days}
 
 
-# ---------------------------------------------------------------------------
-# 16.3 Shortcuts
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════
+# Shortcuts CRUD
+# ═══════════════════════════════════════════
+
 
 @router.get("/shortcuts")
 async def list_shortcuts():
@@ -1029,7 +472,7 @@ async def list_shortcuts():
         cursor = await db.execute(
             "SELECT * FROM shortcuts ORDER BY sort_order, created_at"
         )
-        return [_row_dict(r) for r in await cursor.fetchall()]
+        return [row_dict(r) for r in await cursor.fetchall()]
 
 
 @router.post("/shortcuts")
@@ -1053,7 +496,7 @@ async def create_shortcut(body: ShortcutCreate):
 
 @router.put("/shortcuts/{shortcut_id}")
 async def update_shortcut(shortcut_id: int, body: ShortcutUpdate):
-    """Update an existing shortcut. Only provided fields are changed."""
+    """Update an existing shortcut."""
     async with get_db() as db:
         cursor = await db.execute("SELECT id FROM shortcuts WHERE id = ?", (shortcut_id,))
         if not await cursor.fetchone():
@@ -1113,113 +556,9 @@ async def delete_shortcut(shortcut_id: int):
     return {"status": "deleted"}
 
 
-# ---------------------------------------------------------------------------
-# 16.7 Uptime Monitor
-# ---------------------------------------------------------------------------
-
-# Background monitor tasks keyed by monitor ID
-_monitor_tasks: dict[int, asyncio.Task] = {}
-
-
-async def _ping_url(monitor_id: int, url: str) -> dict:
-    """Ping a URL and return status info."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
-            start = time.monotonic()
-            resp = await client.get(url)
-            elapsed_ms = int((time.monotonic() - start) * 1000)
-            return {
-                "status_code": resp.status_code,
-                "response_ms": elapsed_ms,
-                "error": None,
-            }
-    except Exception as exc:
-        return {
-            "status_code": 0,
-            "response_ms": 0,
-            "error": str(exc)[:500],
-        }
-
-
-async def _monitor_loop(monitor_id: int, url: str, interval: int):
-    """Background loop that pings a URL at intervals, with downtime alerting."""
-    prev_ok = True  # Assume OK at start; detect transition to FAIL
-
-    # Load initial state from DB
-    try:
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT last_status, name FROM uptime_monitors WHERE id = ?",
-                (monitor_id,),
-            )
-            row = await cursor.fetchone()
-            if row:
-                last_status = _row_dict(row).get("last_status")
-                if last_status is not None:
-                    prev_ok = 200 <= last_status < 400
-    except Exception:
-        pass
-
-    while True:
-        try:
-            result = await _ping_url(monitor_id, url)
-            now = datetime.now(timezone.utc).isoformat()
-
-            current_ok = (200 <= result["status_code"] < 400) and result["error"] is None
-
-            async with get_db() as db:
-                await db.execute(
-                    """INSERT INTO uptime_history (monitor_id, status_code, response_ms, error, checked_at)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (monitor_id, result["status_code"], result["response_ms"], result["error"], now),
-                )
-                await db.execute(
-                    """UPDATE uptime_monitors
-                       SET last_status = ?, last_response_ms = ?, last_check = ?
-                       WHERE id = ?""",
-                    (result["status_code"], result["response_ms"], now, monitor_id),
-                )
-                await db.commit()
-
-                # Fetch monitor name for notifications
-                cursor = await db.execute(
-                    "SELECT name FROM uptime_monitors WHERE id = ?", (monitor_id,)
-                )
-                mon_row = await cursor.fetchone()
-                mon_name = _row_dict(mon_row)["name"] if mon_row else f"Monitor #{monitor_id}"
-
-                # Detect transition OK -> FAIL: create downtime notification
-                if prev_ok and not current_ok:
-                    await _create_downtime_notification(
-                        mon_name, url, result.get("error"), monitor_id=monitor_id
-                    )
-
-                # Detect transition FAIL -> OK: create recovery notification
-                if not prev_ok and current_ok:
-                    await _create_recovery_notification(mon_name, url)
-
-            prev_ok = current_ok
-
-        except Exception as exc:
-            logger.warning("Monitor %d ping error: %s", monitor_id, exc)
-
-        await asyncio.sleep(interval)
-
-
-def _start_monitor(monitor_id: int, url: str, interval: int):
-    """Start a background monitor task."""
-    if monitor_id in _monitor_tasks:
-        _monitor_tasks[monitor_id].cancel()
-    _monitor_tasks[monitor_id] = asyncio.create_task(
-        _monitor_loop(monitor_id, url, interval)
-    )
-
-
-def _stop_monitor(monitor_id: int):
-    """Stop a background monitor task."""
-    task = _monitor_tasks.pop(monitor_id, None)
-    if task:
-        task.cancel()
+# ═══════════════════════════════════════════
+# Uptime Monitors CRUD
+# ═══════════════════════════════════════════
 
 
 @router.get("/monitors")
@@ -1229,12 +568,9 @@ async def list_monitors():
         cursor = await db.execute(
             "SELECT * FROM uptime_monitors ORDER BY created_at DESC"
         )
-        monitors = [_row_dict(r) for r in await cursor.fetchall()]
-
-        # Mark which are actively running
+        monitors = [row_dict(r) for r in await cursor.fetchall()]
         for m in monitors:
-            m["running"] = m["id"] in _monitor_tasks
-
+            m["running"] = is_monitor_running(m["id"])
         return monitors
 
 
@@ -1250,9 +586,8 @@ async def create_monitor(body: MonitorCreate):
         await db.commit()
         monitor_id = cursor.lastrowid
 
-    # Start background monitoring if enabled
     if body.enabled:
-        _start_monitor(monitor_id, body.url, body.interval_seconds)
+        start_monitor(monitor_id, body.url, body.interval_seconds)
 
     await log_activity(
         action="automations.monitor_create",
@@ -1263,7 +598,7 @@ async def create_monitor(body: MonitorCreate):
 
 @router.put("/monitors/{monitor_id}")
 async def update_monitor(monitor_id: int, body: MonitorUpdate):
-    """Update an existing uptime monitor. Only provided fields are changed."""
+    """Update an existing uptime monitor."""
     async with get_db() as db:
         cursor = await db.execute(
             "SELECT * FROM uptime_monitors WHERE id = ?", (monitor_id,)
@@ -1272,7 +607,7 @@ async def update_monitor(monitor_id: int, body: MonitorUpdate):
         if not existing:
             raise HTTPException(status_code=404, detail="Monitor negasit")
 
-        existing_dict = _row_dict(existing)
+        existing_dict = row_dict(existing)
 
         updates = []
         params = []
@@ -1300,15 +635,14 @@ async def update_monitor(monitor_id: int, body: MonitorUpdate):
         )
         await db.commit()
 
-    # Restart or stop monitor background task if needed
     new_enabled = body.enabled if body.enabled is not None else bool(existing_dict.get("enabled", 1))
     new_url = body.url if body.url is not None else existing_dict["url"]
     new_interval = body.interval_seconds if body.interval_seconds is not None else existing_dict["interval_seconds"]
 
     if new_enabled:
-        _start_monitor(monitor_id, new_url, new_interval)
+        start_monitor(monitor_id, new_url, new_interval)
     else:
-        _stop_monitor(monitor_id)
+        stop_monitor(monitor_id)
 
     await log_activity(
         action="automations.monitor_update",
@@ -1325,7 +659,7 @@ async def delete_monitor(monitor_id: int):
         if not await cursor.fetchone():
             raise HTTPException(status_code=404, detail="Monitor negasit")
 
-        _stop_monitor(monitor_id)
+        stop_monitor(monitor_id)
 
         await db.execute("DELETE FROM uptime_history WHERE monitor_id = ?", (monitor_id,))
         await db.execute("DELETE FROM uptime_monitors WHERE id = ?", (monitor_id,))
@@ -1355,12 +689,13 @@ async def monitor_history(monitor_id: int, limit: int = 288):
                LIMIT ?""",
             (monitor_id, limit),
         )
-        return [_row_dict(r) for r in await cursor.fetchall()]
+        return [row_dict(r) for r in await cursor.fetchall()]
 
 
-# ---------------------------------------------------------------------------
-# 16.8 API Tester
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════
+# API Tester
+# ═══════════════════════════════════════════
+
 
 @router.post("/api-test")
 async def execute_api_test(body: ApiTestRequest):
@@ -1374,17 +709,17 @@ async def execute_api_test(body: ApiTestRequest):
 
     try:
         async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
-            start = time.monotonic()
+            start_ms = __import__("time").monotonic()
             resp = await client.request(
                 method=method,
                 url=body.url,
                 headers=headers,
                 content=req_body.encode("utf-8") if req_body else None,
             )
-            elapsed_ms = int((time.monotonic() - start) * 1000)
+            elapsed_ms = int((__import__("time").monotonic() - start_ms) * 1000)
 
             response_headers = dict(resp.headers)
-            response_body = resp.text[:50000]  # limit to 50KB
+            response_body = resp.text[:50000]
 
             result = {
                 "status_code": resp.status_code,
@@ -1401,7 +736,6 @@ async def execute_api_test(body: ApiTestRequest):
             "error": str(exc)[:1000],
         }
 
-    # Save to history
     try:
         async with get_db() as db:
             await db.execute(
@@ -1436,7 +770,7 @@ async def api_test_history():
                ORDER BY created_at DESC
                LIMIT 20"""
         )
-        return [_row_dict(r) for r in await cursor.fetchall()]
+        return [row_dict(r) for r in await cursor.fetchall()]
 
 
 @router.post("/api-test/save")
@@ -1463,7 +797,7 @@ async def list_api_templates():
         cursor = await db.execute(
             "SELECT * FROM api_test_saved ORDER BY created_at DESC"
         )
-        templates = [_row_dict(r) for r in await cursor.fetchall()]
+        templates = [row_dict(r) for r in await cursor.fetchall()]
         for t in templates:
             if t.get("headers"):
                 try:
@@ -1473,119 +807,16 @@ async def list_api_templates():
         return templates
 
 
-# ---------------------------------------------------------------------------
-# 16.10 Health Monitor
-# ---------------------------------------------------------------------------
-
-async def _build_health_report() -> dict[str, Any]:
-    """Build a comprehensive health report."""
-    report: dict[str, Any] = {}
-
-    # Database
-    try:
-        async with get_db() as db:
-            cursor = await db.execute("SELECT COUNT(*) as cnt FROM schema_version")
-            row = await cursor.fetchone()
-            migrations = row["cnt"] if row else 0
-            report["database"] = {
-                "status": "ok",
-                "migrations_applied": migrations,
-            }
-    except Exception as exc:
-        report["database"] = {"status": "error", "error": str(exc)[:200]}
-
-    # Disk space
-    try:
-        from app.config import settings
-        usage = shutil.disk_usage(str(settings.data_dir))
-        free_gb = usage.free / (1024 ** 3)
-        total_gb = usage.total / (1024 ** 3)
-        used_pct = ((usage.total - usage.free) / usage.total) * 100
-        report["disk"] = {
-            "status": "ok" if free_gb > 1 else ("warning" if free_gb > 0.2 else "error"),
-            "free_gb": round(free_gb, 2),
-            "total_gb": round(total_gb, 2),
-            "used_percent": round(used_pct, 1),
-        }
-    except Exception as exc:
-        report["disk"] = {"status": "error", "error": str(exc)[:200]}
-
-    # Modules
-    try:
-        from app.module_discovery import discover_modules
-        modules = discover_modules()
-        report["modules"] = {
-            "status": "ok",
-            "count": len(modules),
-            "names": [m["name"] for m in modules],
-        }
-    except Exception as exc:
-        report["modules"] = {"status": "error", "error": str(exc)[:200]}
-
-    # API keys configured (from vault)
-    try:
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT name FROM vault_keys"
-            )
-            keys = [_row_dict(r)["name"] for r in await cursor.fetchall()]
-            report["api_keys"] = {
-                "status": "ok" if keys else "warning",
-                "count": len(keys),
-                "configured": keys,
-            }
-    except Exception:
-        report["api_keys"] = {"status": "info", "count": 0, "configured": []}
-
-    # Recent errors from activity log
-    try:
-        async with get_db() as db:
-            cursor = await db.execute(
-                """SELECT action, summary, timestamp
-                   FROM activity_log
-                   WHERE status = 'error'
-                   ORDER BY timestamp DESC
-                   LIMIT 5"""
-            )
-            errors = [_row_dict(r) for r in await cursor.fetchall()]
-            report["recent_errors"] = {
-                "status": "ok" if not errors else "warning",
-                "count": len(errors),
-                "items": errors,
-            }
-    except Exception:
-        report["recent_errors"] = {"status": "info", "count": 0, "items": []}
-
-    # Uptime monitors summary
-    try:
-        async with get_db() as db:
-            cursor = await db.execute("SELECT COUNT(*) as cnt FROM uptime_monitors")
-            row = await cursor.fetchone()
-            total = row["cnt"] if row else 0
-
-            cursor2 = await db.execute(
-                "SELECT COUNT(*) as cnt FROM uptime_monitors WHERE last_status >= 200 AND last_status < 400"
-            )
-            row2 = await cursor2.fetchone()
-            healthy = row2["cnt"] if row2 else 0
-
-            report["uptime_monitors"] = {
-                "status": "ok" if total == 0 or healthy == total else "warning",
-                "total": total,
-                "healthy": healthy,
-            }
-    except Exception:
-        report["uptime_monitors"] = {"status": "info", "total": 0, "healthy": 0}
-
-    return report
+# ═══════════════════════════════════════════
+# Health Monitor
+# ═══════════════════════════════════════════
 
 
 @router.get("/health")
 async def health_check():
     """Comprehensive health check: DB, disk, modules, API keys, errors."""
-    report = await _build_health_report()
+    report = await build_health_report()
 
-    # Overall status
     statuses = [
         v.get("status", "ok")
         for v in report.values()
@@ -1606,22 +837,12 @@ async def health_check():
 
 
 # ═══════════════════════════════════════════
-# F6: Unified Notifications
+# Notifications CRUD
 # ═══════════════════════════════════════════
-
-class NotificationCreate(BaseModel):
-    title: str
-    message: str
-    type: str = "info"  # info, warning, error, success
-    source: str | None = None
-    link: str | None = None
 
 
 @router.get("/notifications")
-async def list_notifications(
-    unread_only: bool = False,
-    limit: int = 50,
-):
+async def list_notifications(unread_only: bool = False, limit: int = 50):
     """List notifications, optionally only unread."""
     async with get_db() as db:
         if unread_only:
@@ -1635,7 +856,6 @@ async def list_notifications(
                 (limit,),
             )
         rows = await cursor.fetchall()
-        # Count unread
         cursor2 = await db.execute("SELECT COUNT(*) as cnt FROM notifications WHERE is_read = 0")
         unread_count = (await cursor2.fetchone())["cnt"]
     return {"items": [dict(r) for r in rows], "unread_count": unread_count}
@@ -1683,17 +903,9 @@ async def delete_notification(notif_id: int):
     return {"message": "Notificare stearsa."}
 
 
-# ---------------------------------------------------------------------------
-# Internal notify endpoint (for cross-module notifications)
-# ---------------------------------------------------------------------------
-
 @router.post("/notify", status_code=201)
 async def notify_internal(data: NotifyRequest):
-    """Internal endpoint: any module can create a notification.
-
-    Accepts source, title, message, severity. Maps severity to type.
-    """
-    # Map severity to notification type for consistency
+    """Internal endpoint: any module can create a notification."""
     type_map = {"info": "info", "warning": "warning", "error": "error", "success": "success"}
     notif_type = type_map.get(data.severity, "info")
 

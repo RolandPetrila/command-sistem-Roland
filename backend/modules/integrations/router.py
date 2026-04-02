@@ -15,219 +15,61 @@ Chei necesare în ai_config:
 from __future__ import annotations
 
 import asyncio
-import email
 import imaplib
-import json
+import io
 import logging
-import re
 import smtplib
 import time as _time
-from datetime import datetime, timedelta, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.header import decode_header
 from typing import Any
 
-import io
-import uuid
-
-import httpx
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
 
 from app.core.activity_log import log_activity
-from app.db.database import get_db
+
+from .models import (
+    CalendarEventCreate,
+    CalendarEventUpdate,
+    EmailSendRequest,
+    GitHubIssueCreate,
+    _cache_clear,
+    _cache_get,
+    _cache_set,
+    _get_config_key,
+)
+from .gmail import (
+    imap_download_attachment,
+    imap_list_labels,
+    imap_list_messages,
+    imap_read_message,
+    smtp_send_email,
+)
+from .gdrive import (
+    check_drive_status,
+    download_drive_file,
+    get_drive_headers,
+    list_drive_files,
+    upload_drive_file,
+)
+from .calendar_integration import (
+    check_calendar_status,
+    create_calendar_event,
+    delete_calendar_event,
+    get_calendar_headers,
+    list_calendar_events,
+    update_calendar_event,
+)
+from .github_integration import (
+    check_github_status,
+    create_github_issue,
+    get_github_headers,
+    list_github_commits,
+    list_github_repos,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-async def _get_config_key(key: str) -> str | None:
-    """Citește o cheie din tabelul ai_config."""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT value FROM ai_config WHERE key = ?", (key,)
-        )
-        row = await cursor.fetchone()
-        return row["value"] if row else None
-
-
-def _decode_mime_header(raw: str | None) -> str:
-    """Decodează un header MIME (subject, from, etc.)."""
-    if not raw:
-        return ""
-    parts = decode_header(raw)
-    decoded = []
-    for part, charset in parts:
-        if isinstance(part, bytes):
-            decoded.append(part.decode(charset or "utf-8", errors="replace"))
-        else:
-            decoded.append(part)
-    return " ".join(decoded)
-
-
-def _extract_email_body(msg: email.message.Message) -> str:
-    """Extrage corpul text din mesajul email."""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            if content_type == "text/plain":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
-            elif content_type == "text/html":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
-    else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
-    return ""
-
-
-# ---------------------------------------------------------------------------
-# Status cache (R4-32) — 5 min TTL in-memory
-# ---------------------------------------------------------------------------
-
-_STATUS_CACHE_TTL = 300  # 5 minutes in seconds
-_status_cache: dict[str, dict] = {}
-
-
-def _cache_get(provider: str) -> dict | None:
-    """Return cached status if exists and < TTL old, else None."""
-    entry = _status_cache.get(provider)
-    if entry and (_time.time() - entry["timestamp"]) < _STATUS_CACHE_TTL:
-        return entry["data"]
-    return None
-
-
-def _cache_set(provider: str, data: dict) -> dict:
-    """Store status result in cache with current timestamp. Returns data."""
-    _status_cache[provider] = {"data": data, "timestamp": _time.time()}
-    return data
-
-
-# ---------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------
-
-_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-
-
-def _validate_email_format(addr: str) -> str:
-    """Validate a single email address format."""
-    addr = addr.strip()
-    if not _EMAIL_RE.match(addr):
-        raise ValueError(f"Adresa email invalidă: {addr}")
-    return addr
-
-
-def _validate_iso8601(value: str, field_name: str) -> str:
-    """Validate that a string is a parseable ISO 8601 datetime."""
-    try:
-        datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        raise ValueError(
-            f"Câmpul '{field_name}' nu este o dată ISO 8601 validă: {value}"
-        )
-    return value
-
-
-# ---------------------------------------------------------------------------
-# Pydantic Models
-# ---------------------------------------------------------------------------
-
-class EmailSendRequest(BaseModel):
-    to: str
-    subject: str
-    body: str
-    html: bool = False
-    cc: list[str] = []
-    bcc: list[str] = []
-
-    @field_validator("to")
-    @classmethod
-    def validate_to(cls, v: str) -> str:
-        return _validate_email_format(v)
-
-    @field_validator("cc", "bcc")
-    @classmethod
-    def validate_cc_bcc(cls, v: list[str]) -> list[str]:
-        return [_validate_email_format(addr) for addr in v]
-
-
-class CalendarEventCreate(BaseModel):
-    summary: str
-    start: str  # ISO 8601 datetime
-    end: str    # ISO 8601 datetime
-    description: str = ""
-
-    @field_validator("start")
-    @classmethod
-    def validate_start(cls, v: str) -> str:
-        return _validate_iso8601(v, "start")
-
-    @field_validator("end")
-    @classmethod
-    def validate_end(cls, v: str, info) -> str:
-        v = _validate_iso8601(v, "end")
-        start_val = info.data.get("start")
-        if start_val:
-            try:
-                if datetime.fromisoformat(v) < datetime.fromisoformat(start_val):
-                    raise ValueError(
-                        "Data de final (end) nu poate fi înainte de data de start."
-                    )
-            except (ValueError, TypeError):
-                pass  # start already failed validation; skip comparison
-        return v
-
-
-class CalendarEventUpdate(BaseModel):
-    summary: str | None = None
-    start: str | None = None   # ISO 8601 datetime
-    end: str | None = None     # ISO 8601 datetime
-    description: str | None = None
-
-    @field_validator("start")
-    @classmethod
-    def validate_start(cls, v: str | None) -> str | None:
-        if v is not None:
-            return _validate_iso8601(v, "start")
-        return v
-
-    @field_validator("end")
-    @classmethod
-    def validate_end(cls, v: str | None, info) -> str | None:
-        if v is None:
-            return v
-        v = _validate_iso8601(v, "end")
-        start_val = info.data.get("start")
-        if start_val:
-            try:
-                if datetime.fromisoformat(v) < datetime.fromisoformat(start_val):
-                    raise ValueError(
-                        "Data de final (end) nu poate fi înainte de data de start."
-                    )
-            except (ValueError, TypeError):
-                pass
-        return v
-
-
-class GitHubIssueCreate(BaseModel):
-    title: str
-    body: str = ""
-    labels: list[str] = []
 
 
 # ===========================================================================
@@ -262,36 +104,8 @@ async def gmail_list_labels():
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat. Adaugă gmail_email și gmail_app_password în Setări AI.")
 
-    def _imap_labels(addr: str, pwd: str) -> list[dict]:
-        """Blocking IMAP LIST — runs in thread via asyncio.to_thread."""
-        imap = None
-        try:
-            imap = imaplib.IMAP4_SSL("imap.gmail.com")
-            imap.login(addr, pwd)
-            status, data = imap.list()
-            if status != "OK":
-                return []
-            labels = []
-            for item in data:
-                decoded = item.decode("utf-8", errors="replace") if isinstance(item, bytes) else str(item)
-                # Format: '(\\HasNoChildren) "/" "INBOX"'
-                match = re.search(r'"([^"]*)"$', decoded)
-                if match:
-                    name = match.group(1)
-                else:
-                    parts = decoded.rsplit(" ", 1)
-                    name = parts[-1].strip('"') if parts else decoded
-                labels.append({"name": name, "raw": decoded})
-            return labels
-        finally:
-            if imap:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-
     try:
-        labels = await asyncio.to_thread(_imap_labels, email_addr, app_password)
+        labels = await asyncio.to_thread(imap_list_labels, email_addr, app_password)
         return {"labels": labels, "total": len(labels)}
     except imaplib.IMAP4.error as exc:
         logger.error("Eroare IMAP labels: %s", exc)
@@ -313,55 +127,10 @@ async def gmail_list_messages(
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat. Adaugă gmail_email și gmail_app_password în Setări AI.")
 
-    def _imap_list(addr: str, pwd: str, search_q: str, limit: int, mailbox: str) -> list[dict]:
-        """Blocking IMAP fetch — runs in thread via asyncio.to_thread."""
-        imap = None
-        try:
-            imap = imaplib.IMAP4_SSL("imap.gmail.com")
-            imap.login(addr, pwd)
-            # Use provided label/folder instead of hardcoded INBOX
-            status, _ = imap.select(f'"{mailbox}"', readonly=True)
-            if status != "OK":
-                # Fallback to INBOX if label not found
-                imap.select("INBOX", readonly=True)
-
-            search_criteria = f'({search_q})' if search_q else "ALL"
-            status, data = imap.search(None, search_criteria)
-            if status != "OK":
-                return []
-
-            msg_ids = data[0].split()
-            msg_ids = list(reversed(msg_ids))[:limit]
-
-            messages = []
-            for msg_id in msg_ids:
-                status, msg_data = imap.fetch(msg_id, "(RFC822.SIZE BODY[HEADER.FIELDS (FROM SUBJECT DATE)])")
-                if status != "OK" or not msg_data or not msg_data[0]:
-                    continue
-
-                raw_header = msg_data[0][1] if isinstance(msg_data[0], tuple) else b""
-                if isinstance(raw_header, bytes):
-                    header_msg = email.message_from_bytes(raw_header)
-                else:
-                    continue
-
-                messages.append({
-                    "id": msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
-                    "from": _decode_mime_header(header_msg.get("From")),
-                    "subject": _decode_mime_header(header_msg.get("Subject")),
-                    "date": header_msg.get("Date", ""),
-                })
-
-            return messages
-        finally:
-            if imap:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-
     try:
-        messages = await asyncio.to_thread(_imap_list, email_addr, app_password, q, max_results, label)
+        messages = await asyncio.to_thread(
+            imap_list_messages, email_addr, app_password, q, max_results, label
+        )
 
         await log_activity(
             action="integrations.gmail.list",
@@ -386,51 +155,10 @@ async def gmail_read_message(message_id: str):
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat.")
 
-    def _imap_read(addr: str, pwd: str, mid: str) -> dict | None:
-        """Blocking IMAP read — runs in thread via asyncio.to_thread."""
-        imap = None
-        try:
-            imap = imaplib.IMAP4_SSL("imap.gmail.com")
-            imap.login(addr, pwd)
-            imap.select("INBOX", readonly=True)
-
-            status, msg_data = imap.fetch(mid.encode(), "(RFC822)")
-            if status != "OK" or not msg_data or not msg_data[0]:
-                return None
-
-            raw_email = msg_data[0][1]
-            msg = email.message_from_bytes(raw_email)
-
-            # Colectează atașamentele (doar metadata)
-            attachments = []
-            if msg.is_multipart():
-                for part in msg.walk():
-                    filename = part.get_filename()
-                    if filename:
-                        attachments.append({
-                            "filename": _decode_mime_header(filename),
-                            "content_type": part.get_content_type(),
-                            "size": len(part.get_payload(decode=True) or b""),
-                        })
-
-            return {
-                "id": mid,
-                "from": _decode_mime_header(msg.get("From")),
-                "to": _decode_mime_header(msg.get("To")),
-                "subject": _decode_mime_header(msg.get("Subject")),
-                "date": msg.get("Date", ""),
-                "body": _extract_email_body(msg),
-                "attachments": attachments,
-            }
-        finally:
-            if imap:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-
     try:
-        result = await asyncio.to_thread(_imap_read, email_addr, app_password, message_id)
+        result = await asyncio.to_thread(
+            imap_read_message, email_addr, app_password, message_id
+        )
         if result is None:
             raise HTTPException(404, "Email negăsit.")
 
@@ -456,39 +184,8 @@ async def gmail_send(req: EmailSendRequest):
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat. Adaugă gmail_email și gmail_app_password în Setări AI.")
 
-    def _smtp_send(addr: str, pwd: str, request: EmailSendRequest) -> None:
-        """Blocking SMTP send — runs in thread via asyncio.to_thread."""
-        smtp_conn = None
-        try:
-            msg = MIMEMultipart()
-            msg["From"] = addr
-            msg["To"] = request.to
-            msg["Subject"] = request.subject
-
-            # CC apare in header-ul mesajului
-            if request.cc:
-                msg["Cc"] = ", ".join(request.cc)
-
-            content_type = "html" if request.html else "plain"
-            msg.attach(MIMEText(request.body, content_type, "utf-8"))
-
-            # Destinatarii SMTP = To + CC + BCC (BCC NU apare in header)
-            all_recipients = [request.to]
-            all_recipients.extend(request.cc)
-            all_recipients.extend(request.bcc)
-
-            smtp_conn = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-            smtp_conn.login(addr, pwd)
-            smtp_conn.sendmail(addr, all_recipients, msg.as_string())
-        finally:
-            if smtp_conn:
-                try:
-                    smtp_conn.quit()
-                except Exception:
-                    pass
-
     try:
-        await asyncio.to_thread(_smtp_send, email_addr, app_password, req)
+        await asyncio.to_thread(smtp_send_email, email_addr, app_password, req)
 
         cc_info = f", CC: {', '.join(req.cc)}" if req.cc else ""
         bcc_info = f", BCC: {len(req.bcc)} dest." if req.bcc else ""
@@ -517,55 +214,9 @@ async def gmail_download_attachment(
     if not email_addr or not app_password:
         raise HTTPException(400, "Gmail nu este configurat.")
 
-    def _imap_attachment(addr: str, pwd: str, mid: str, att_idx: int) -> tuple[str, str, bytes]:
-        """Blocking IMAP attachment fetch — runs in thread via asyncio.to_thread.
-        Returns (filename, content_type, payload) or raises."""
-        imap = None
-        try:
-            imap = imaplib.IMAP4_SSL("imap.gmail.com")
-            imap.login(addr, pwd)
-            imap.select("INBOX", readonly=True)
-
-            status, msg_data = imap.fetch(mid.encode(), "(RFC822)")
-            if status != "OK" or not msg_data or not msg_data[0]:
-                raise ValueError("EMAIL_NOT_FOUND")
-
-            raw_email = msg_data[0][1]
-            msg = email.message_from_bytes(raw_email)
-
-            # Colectează toate atașamentele
-            attachments = []
-            if msg.is_multipart():
-                for part in msg.walk():
-                    fn = part.get_filename()
-                    if fn:
-                        attachments.append(part)
-
-            if not attachments:
-                raise ValueError("NO_ATTACHMENTS")
-
-            if att_idx >= len(attachments):
-                raise ValueError(f"INDEX_OUT_OF_RANGE:{len(attachments)}")
-
-            target_part = attachments[att_idx]
-            filename = _decode_mime_header(target_part.get_filename() or "attachment")
-            content_type = target_part.get_content_type() or "application/octet-stream"
-            payload = target_part.get_payload(decode=True)
-
-            if not payload:
-                raise ValueError("EMPTY_ATTACHMENT")
-
-            return filename, content_type, payload
-        finally:
-            if imap:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-
     try:
         filename, content_type, payload = await asyncio.to_thread(
-            _imap_attachment, email_addr, app_password, message_id, attachment_index
+            imap_download_attachment, email_addr, app_password, message_id, attachment_index
         )
 
         await log_activity(
@@ -605,18 +256,6 @@ async def gmail_download_attachment(
 # GOOGLE DRIVE
 # ===========================================================================
 
-DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
-DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
-
-
-async def _drive_headers() -> dict[str, str]:
-    """Returnează header-ele de autorizare pentru Google Drive API."""
-    token = await _get_config_key("google_drive_token")
-    if not token:
-        raise HTTPException(400, "Google Drive nu este configurat. Adaugă google_drive_token în Setări AI.")
-    return {"Authorization": f"Bearer {token}"}
-
-
 @router.get("/drive/status")
 async def drive_status():
     """Verifică dacă Google Drive este configurat."""
@@ -624,52 +263,9 @@ async def drive_status():
     if cached is not None:
         return cached
 
-    token = await _get_config_key("google_drive_token")
-    configured = bool(token)
-
-    if configured:
-        # Verifică dacă token-ul e valid
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    f"{DRIVE_API_BASE}/about?fields=user",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-                if resp.status_code == 200:
-                    user_info = resp.json().get("user", {})
-                    return _cache_set("google_drive", {
-                        "provider": "google_drive",
-                        "configured": True,
-                        "connected": True,
-                        "user": user_info.get("displayName", ""),
-                        "email": user_info.get("emailAddress", ""),
-                        "message": "Google Drive conectat.",
-                        "cached_at": _time.time(),
-                    })
-                else:
-                    return _cache_set("google_drive", {
-                        "provider": "google_drive",
-                        "configured": True,
-                        "connected": False,
-                        "message": "Token Google Drive expirat sau invalid. Re-autentifică din Setări.",
-                        "cached_at": _time.time(),
-                    })
-        except Exception:
-            return _cache_set("google_drive", {
-                "provider": "google_drive",
-                "configured": True,
-                "connected": False,
-                "message": "Nu s-a putut verifica conexiunea Google Drive.",
-                "cached_at": _time.time(),
-            })
-
-    return _cache_set("google_drive", {
-        "provider": "google_drive",
-        "configured": False,
-        "connected": False,
-        "message": "Lipsește google_drive_token din Setări AI.",
-        "cached_at": _time.time(),
-    })
+    result = await check_drive_status()
+    result["cached_at"] = _time.time()
+    return _cache_set("google_drive", result)
 
 
 @router.get("/drive/files")
@@ -679,37 +275,10 @@ async def drive_list_files(
     max_results: int = Query(20, ge=1, le=100),
 ):
     """Listează fișierele din Google Drive."""
-    headers = await _drive_headers()
-
-    q_parts = []
-    if query:
-        safe_query = query.replace("\\", "\\\\").replace("'", "\\'")
-        q_parts.append(f"name contains '{safe_query}'")
-    if folder_id:
-        q_parts.append(f"'{folder_id}' in parents")
-    q_parts.append("trashed = false")
-
-    params: dict[str, Any] = {
-        "pageSize": max_results,
-        "fields": "files(id,name,mimeType,size,modifiedTime,webViewLink)",
-        "orderBy": "modifiedTime desc",
-    }
-    if q_parts:
-        params["q"] = " and ".join(q_parts)
+    headers = await get_drive_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{DRIVE_API_BASE}/files", headers=headers, params=params
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token Google Drive expirat. Re-autentifică din Setări.")
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"Eroare Google Drive API: {resp.text}")
-
-        data = resp.json()
-        files = data.get("files", [])
+        files = await list_drive_files(headers, query, folder_id, max_results)
 
         await log_activity(
             action="integrations.drive.list",
@@ -734,50 +303,14 @@ async def drive_upload_file(
     Încarcă un fișier cu conținut pe Google Drive (multipart upload).
     Acceptă orice tip de fișier prin form upload.
     """
-    headers = await _drive_headers()
+    headers = await get_drive_headers()
 
     file_name = file.filename or "untitled"
     mime_type = file.content_type or "application/octet-stream"
 
-    metadata: dict[str, Any] = {"name": file_name}
-    if folder_id:
-        metadata["parents"] = [folder_id]
-
     try:
         file_content = await file.read()
-
-        # Google Drive API v3 multipart upload:
-        # POST https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart
-        # Body: multipart/related cu metadata JSON + conținut fișier
-        boundary = f"boundary_{uuid.uuid4().hex}"
-
-        body_parts = []
-        body_parts.append(f"--{boundary}\r\n".encode())
-        body_parts.append(b"Content-Type: application/json; charset=UTF-8\r\n\r\n")
-        body_parts.append(json.dumps(metadata).encode("utf-8"))
-        body_parts.append(f"\r\n--{boundary}\r\n".encode())
-        body_parts.append(f"Content-Type: {mime_type}\r\n\r\n".encode())
-        body_parts.append(file_content)
-        body_parts.append(f"\r\n--{boundary}--".encode())
-
-        multipart_body = b"".join(body_parts)
-
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{DRIVE_UPLOAD_BASE}/files?uploadType=multipart",
-                headers={
-                    **headers,
-                    "Content-Type": f"multipart/related; boundary={boundary}",
-                },
-                content=multipart_body,
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token Google Drive expirat.")
-        if resp.status_code not in (200, 201):
-            raise HTTPException(resp.status_code, f"Eroare upload Drive: {resp.text}")
-
-        result = resp.json()
+        result = await upload_drive_file(headers, file_name, mime_type, file_content, folder_id)
 
         size_kb = len(file_content) / 1024
         await log_activity(
@@ -802,25 +335,10 @@ async def drive_upload_file(
 @router.get("/drive/download/{file_id}")
 async def drive_download_file(file_id: str):
     """Descarcă un fișier din Google Drive (returnează link de descărcare)."""
-    headers = await _drive_headers()
+    headers = await get_drive_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            # Obține metadata fișierului
-            resp = await client.get(
-                f"{DRIVE_API_BASE}/files/{file_id}",
-                headers=headers,
-                params={"fields": "id,name,mimeType,size,webContentLink"},
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token Google Drive expirat.")
-        if resp.status_code == 404:
-            raise HTTPException(404, "Fișier negăsit pe Drive.")
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"Eroare Drive: {resp.text}")
-
-        file_meta = resp.json()
+        file_meta = await download_drive_file(headers, file_id)
 
         await log_activity(
             action="integrations.drive.download",
@@ -844,17 +362,6 @@ async def drive_download_file(file_id: str):
 # GOOGLE CALENDAR
 # ===========================================================================
 
-CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
-
-
-async def _calendar_headers() -> dict[str, str]:
-    """Returnează header-ele de autorizare pentru Google Calendar API."""
-    token = await _get_config_key("google_calendar_token")
-    if not token:
-        raise HTTPException(400, "Google Calendar nu este configurat. Adaugă google_calendar_token în Setări AI.")
-    return {"Authorization": f"Bearer {token}"}
-
-
 @router.get("/calendar/status")
 async def calendar_status():
     """Verifică dacă Google Calendar este configurat."""
@@ -862,50 +369,9 @@ async def calendar_status():
     if cached is not None:
         return cached
 
-    token = await _get_config_key("google_calendar_token")
-    configured = bool(token)
-
-    if configured:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    f"{CALENDAR_API_BASE}/calendars/primary",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-                if resp.status_code == 200:
-                    cal_info = resp.json()
-                    return _cache_set("google_calendar", {
-                        "provider": "google_calendar",
-                        "configured": True,
-                        "connected": True,
-                        "calendar": cal_info.get("summary", ""),
-                        "message": "Google Calendar conectat.",
-                        "cached_at": _time.time(),
-                    })
-                else:
-                    return _cache_set("google_calendar", {
-                        "provider": "google_calendar",
-                        "configured": True,
-                        "connected": False,
-                        "message": "Token Google Calendar expirat sau invalid.",
-                        "cached_at": _time.time(),
-                    })
-        except Exception:
-            return _cache_set("google_calendar", {
-                "provider": "google_calendar",
-                "configured": True,
-                "connected": False,
-                "message": "Nu s-a putut verifica conexiunea Google Calendar.",
-                "cached_at": _time.time(),
-            })
-
-    return _cache_set("google_calendar", {
-        "provider": "google_calendar",
-        "configured": False,
-        "connected": False,
-        "message": "Lipsește google_calendar_token din Setări AI.",
-        "cached_at": _time.time(),
-    })
+    result = await check_calendar_status()
+    result["cached_at"] = _time.time()
+    return _cache_set("google_calendar", result)
 
 
 @router.get("/calendar/events")
@@ -913,46 +379,10 @@ async def calendar_list_events(
     days: int = Query(7, ge=1, le=90, description="Câte zile înainte"),
 ):
     """Listează evenimentele din calendarul principal pentru următoarele N zile."""
-    headers = await _calendar_headers()
-
-    now = datetime.now(timezone.utc)
-    time_min = now.isoformat()
-    time_max = (now + timedelta(days=days)).isoformat()
-
-    params = {
-        "timeMin": time_min,
-        "timeMax": time_max,
-        "singleEvents": "true",
-        "orderBy": "startTime",
-        "maxResults": 50,
-    }
+    headers = await get_calendar_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{CALENDAR_API_BASE}/calendars/primary/events",
-                headers=headers,
-                params=params,
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token Google Calendar expirat.")
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"Eroare Calendar API: {resp.text}")
-
-        data = resp.json()
-        events = []
-        for ev in data.get("items", []):
-            events.append({
-                "id": ev.get("id"),
-                "summary": ev.get("summary", "(Fără titlu)"),
-                "description": ev.get("description", ""),
-                "start": ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", "")),
-                "end": ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", "")),
-                "location": ev.get("location", ""),
-                "status": ev.get("status", ""),
-                "htmlLink": ev.get("htmlLink", ""),
-            })
+        events = await list_calendar_events(headers, days)
 
         await log_activity(
             action="integrations.calendar.list",
@@ -971,29 +401,12 @@ async def calendar_list_events(
 @router.post("/calendar/events")
 async def calendar_create_event(req: CalendarEventCreate):
     """Creează un eveniment nou în Google Calendar."""
-    headers = await _calendar_headers()
-
-    event_body = {
-        "summary": req.summary,
-        "description": req.description,
-        "start": {"dateTime": req.start, "timeZone": "Europe/Bucharest"},
-        "end": {"dateTime": req.end, "timeZone": "Europe/Bucharest"},
-    }
+    headers = await get_calendar_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{CALENDAR_API_BASE}/calendars/primary/events",
-                headers={**headers, "Content-Type": "application/json"},
-                json=event_body,
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token Google Calendar expirat.")
-        if resp.status_code not in (200, 201):
-            raise HTTPException(resp.status_code, f"Eroare creare eveniment: {resp.text}")
-
-        created = resp.json()
+        created = await create_calendar_event(
+            headers, req.summary, req.start, req.end, req.description
+        )
 
         await log_activity(
             action="integrations.calendar.create",
@@ -1021,21 +434,10 @@ async def calendar_create_event(req: CalendarEventCreate):
 @router.delete("/calendar/events/{event_id}")
 async def calendar_delete_event(event_id: str):
     """Șterge un eveniment din Google Calendar."""
-    headers = await _calendar_headers()
+    headers = await get_calendar_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.delete(
-                f"{CALENDAR_API_BASE}/calendars/primary/events/{event_id}",
-                headers=headers,
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token Google Calendar expirat.")
-        if resp.status_code == 404:
-            raise HTTPException(404, "Eveniment negăsit.")
-        if resp.status_code not in (200, 204):
-            raise HTTPException(resp.status_code, f"Eroare ștergere eveniment: {resp.text}")
+        await delete_calendar_event(headers, event_id)
 
         await log_activity(
             action="integrations.calendar.delete",
@@ -1054,7 +456,7 @@ async def calendar_delete_event(event_id: str):
 @router.put("/calendar/events/{event_id}")
 async def calendar_update_event(event_id: str, req: CalendarEventUpdate):
     """Actualizează un eveniment existent în Google Calendar (PATCH parțial)."""
-    headers = await _calendar_headers()
+    headers = await get_calendar_headers()
 
     # Construiește doar câmpurile trimise (non-None)
     patch_body: dict[str, Any] = {}
@@ -1071,21 +473,7 @@ async def calendar_update_event(event_id: str, req: CalendarEventUpdate):
         raise HTTPException(400, "Niciun câmp de actualizat. Trimite cel puțin un câmp (summary, start, end, description).")
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.patch(
-                f"{CALENDAR_API_BASE}/calendars/primary/events/{event_id}",
-                headers={**headers, "Content-Type": "application/json"},
-                json=patch_body,
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token Google Calendar expirat.")
-        if resp.status_code == 404:
-            raise HTTPException(404, f"Eveniment negăsit: {event_id}")
-        if resp.status_code not in (200, 201):
-            raise HTTPException(resp.status_code, f"Eroare actualizare eveniment: {resp.text}")
-
-        updated = resp.json()
+        updated = await update_calendar_event(headers, event_id, patch_body)
         changed_fields = list(patch_body.keys())
 
         await log_activity(
@@ -1118,20 +506,6 @@ async def calendar_update_event(event_id: str, req: CalendarEventUpdate):
 # GITHUB
 # ===========================================================================
 
-GITHUB_API_BASE = "https://api.github.com"
-
-
-async def _github_headers() -> dict[str, str]:
-    """Returnează header-ele de autorizare pentru GitHub API."""
-    token = await _get_config_key("github_token")
-    if not token:
-        raise HTTPException(400, "GitHub nu este configurat. Adaugă github_token în Setări AI.")
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-
-
 @router.get("/github/status")
 async def github_status():
     """Verifică dacă GitHub este configurat."""
@@ -1139,55 +513,9 @@ async def github_status():
     if cached is not None:
         return cached
 
-    token = await _get_config_key("github_token")
-    configured = bool(token)
-
-    if configured:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    f"{GITHUB_API_BASE}/user",
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Accept": "application/vnd.github.v3+json",
-                    },
-                )
-                if resp.status_code == 200:
-                    user = resp.json()
-                    return _cache_set("github", {
-                        "provider": "github",
-                        "configured": True,
-                        "connected": True,
-                        "user": user.get("login", ""),
-                        "name": user.get("name", ""),
-                        "repos": user.get("public_repos", 0),
-                        "message": "GitHub conectat.",
-                        "cached_at": _time.time(),
-                    })
-                else:
-                    return _cache_set("github", {
-                        "provider": "github",
-                        "configured": True,
-                        "connected": False,
-                        "message": "Token GitHub invalid sau expirat.",
-                        "cached_at": _time.time(),
-                    })
-        except Exception:
-            return _cache_set("github", {
-                "provider": "github",
-                "configured": True,
-                "connected": False,
-                "message": "Nu s-a putut verifica conexiunea GitHub.",
-                "cached_at": _time.time(),
-            })
-
-    return _cache_set("github", {
-        "provider": "github",
-        "configured": False,
-        "connected": False,
-        "message": "Lipsește github_token din Setări AI.",
-        "cached_at": _time.time(),
-    })
+    result = await check_github_status()
+    result["cached_at"] = _time.time()
+    return _cache_set("github", result)
 
 
 @router.get("/github/repos")
@@ -1195,38 +523,10 @@ async def github_list_repos(
     max_results: int = Query(30, ge=1, le=100),
 ):
     """Listează repo-urile utilizatorului GitHub."""
-    headers = await _github_headers()
+    headers = await get_github_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{GITHUB_API_BASE}/user/repos",
-                headers=headers,
-                params={
-                    "sort": "updated",
-                    "direction": "desc",
-                    "per_page": max_results,
-                },
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token GitHub invalid.")
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"Eroare GitHub API: {resp.text}")
-
-        repos = []
-        for repo in resp.json():
-            repos.append({
-                "id": repo.get("id"),
-                "name": repo.get("name"),
-                "full_name": repo.get("full_name"),
-                "description": repo.get("description", ""),
-                "private": repo.get("private", False),
-                "language": repo.get("language", ""),
-                "stars": repo.get("stargazers_count", 0),
-                "updated_at": repo.get("updated_at", ""),
-                "html_url": repo.get("html_url", ""),
-            })
+        repos = await list_github_repos(headers, max_results)
 
         await log_activity(
             action="integrations.github.repos",
@@ -1250,36 +550,10 @@ async def github_repo_commits(
     branch: str = Query("main", description="Branch-ul din care se listează commit-urile"),
 ):
     """Listează ultimele commit-uri dintr-un repo GitHub (pe un branch specificat)."""
-    headers = await _github_headers()
+    headers = await get_github_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits",
-                headers=headers,
-                params={"per_page": max_results, "sha": branch},
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token GitHub invalid.")
-        if resp.status_code == 404:
-            raise HTTPException(404, f"Repo {owner}/{repo} negăsit.")
-        if resp.status_code == 409:
-            raise HTTPException(404, f"Branch-ul '{branch}' nu există în {owner}/{repo}.")
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"Eroare GitHub API: {resp.text}")
-
-        commits = []
-        for c in resp.json():
-            commit_info = c.get("commit", {})
-            author_info = commit_info.get("author", {})
-            commits.append({
-                "sha": c.get("sha", "")[:8],
-                "message": commit_info.get("message", ""),
-                "author": author_info.get("name", ""),
-                "date": author_info.get("date", ""),
-                "html_url": c.get("html_url", ""),
-            })
+        commits = await list_github_commits(headers, owner, repo, max_results, branch)
 
         await log_activity(
             action="integrations.github.commits",
@@ -1298,31 +572,12 @@ async def github_repo_commits(
 @router.post("/github/repo/{owner}/{repo}/issues")
 async def github_create_issue(owner: str, repo: str, req: GitHubIssueCreate):
     """Creează un issue nou într-un repo GitHub."""
-    headers = await _github_headers()
-
-    issue_body: dict[str, Any] = {
-        "title": req.title,
-        "body": req.body,
-    }
-    if req.labels:
-        issue_body["labels"] = req.labels
+    headers = await get_github_headers()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/issues",
-                headers={**headers, "Content-Type": "application/json"},
-                json=issue_body,
-            )
-
-        if resp.status_code == 401:
-            raise HTTPException(401, "Token GitHub invalid.")
-        if resp.status_code == 404:
-            raise HTTPException(404, f"Repo {owner}/{repo} negăsit.")
-        if resp.status_code not in (200, 201):
-            raise HTTPException(resp.status_code, f"Eroare creare issue: {resp.text}")
-
-        created = resp.json()
+        created = await create_github_issue(
+            headers, owner, repo, req.title, req.body, req.labels
+        )
 
         await log_activity(
             action="integrations.github.issue",
@@ -1400,7 +655,7 @@ async def integrations_status_overview():
 @router.post("/status/refresh")
 async def integrations_status_refresh():
     """Golește cache-ul de status pentru toate integrările, forțând verificare proaspătă."""
-    _status_cache.clear()
+    _cache_clear()
     await log_activity(
         action="integrations.status.refresh",
         summary="Cache status integrări golit manual",

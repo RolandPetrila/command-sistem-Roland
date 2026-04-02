@@ -27,24 +27,37 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import hashlib
 import io
 import logging
 import os
-import tempfile
 import time
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
 
 # fitz, docx — lazy imported inside functions to cut cold-start time
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
 
+from .models import (
+    CompareRequest,
+    DetectRequest,
+    GlossaryAddRequest,
+    GlossaryUpdateRequest,
+    QualityCheckRequest,
+    TMAddRequest,
+    TranslateTextRequest,
+)
+from .helpers import (
+    compute_cache_hash,
+    ensure_cache_table,
+    extract_text_from_file,
+    get_provider_latencies,
+    record_latency,
+    save_upload,
+)
 from .providers import (
     detect_language,
     get_available_translation_providers,
@@ -74,214 +87,6 @@ router = APIRouter(prefix="/api/translator", tags=["Traducator"])
 
 
 # ---------------------------------------------------------------------------
-# ISO 639-1 language code whitelist & domain validation
-# ---------------------------------------------------------------------------
-
-VALID_LANG_CODES: set[str] = {
-    "en", "ro", "de", "fr", "es", "it", "pt", "nl", "pl", "cs",
-    "ja", "zh", "ko", "ru", "ar", "hi", "tr", "sv", "da", "no",
-    "fi", "hu", "bg", "el", "uk", "hr", "sk", "sl", "et", "lv",
-    "lt", "ga", "mt", "sq", "sr", "bs", "mk", "is", "ms", "th",
-    "vi", "id", "he", "fa", "ur", "bn", "ta", "te", "ml", "ka",
-    "auto",  # allow "auto" for auto-detect
-}
-
-VALID_DOMAINS: set[str] = {
-    "general", "tehnic", "technical", "auto", "juridic", "legal",
-    "medical", "financiar", "financial", "IT", "it",
-    "constructii", "construction", "ITP", "itp",
-}
-
-
-def _validate_lang_code(code: str, field_name: str) -> str:
-    """Validate and normalize a language code."""
-    code = code.strip().lower()
-    if code not in VALID_LANG_CODES:
-        raise ValueError(
-            f"{field_name}: '{code}' nu este un cod de limba ISO 639-1 valid. "
-            f"Exemple valide: en, ro, de, fr, es, it"
-        )
-    return code
-
-
-def _validate_domain(domain: str) -> str:
-    """Validate glossary/TM domain."""
-    domain = domain.strip()
-    if domain and domain.lower() not in {d.lower() for d in VALID_DOMAINS}:
-        raise ValueError(
-            f"Domeniu invalid: '{domain}'. "
-            f"Domenii valide: {', '.join(sorted(VALID_DOMAINS - {'auto'}))}"
-        )
-    return domain
-
-
-# ---------------------------------------------------------------------------
-# Pydantic models (with language & domain validators)
-# ---------------------------------------------------------------------------
-
-from pydantic import field_validator
-
-
-class TranslateTextRequest(BaseModel):
-    text: str = Field(..., max_length=50000)
-    source_lang: str = "en"
-    target_lang: str = "ro"
-    provider: str = "auto"
-    use_tm: bool = True
-    use_glossary: bool = True
-    domain: str = "general"
-    auto_tm: bool = True
-
-    @field_validator("source_lang", "target_lang")
-    @classmethod
-    def validate_lang(cls, v: str) -> str:
-        return _validate_lang_code(v, "source_lang/target_lang")
-
-    @field_validator("domain")
-    @classmethod
-    def validate_domain(cls, v: str) -> str:
-        return _validate_domain(v)
-
-
-class DetectRequest(BaseModel):
-    text: str
-
-
-class TMAddRequest(BaseModel):
-    source: str
-    target: str
-    source_lang: str = "en"
-    target_lang: str = "ro"
-    domain: str = "general"
-
-    @field_validator("source_lang", "target_lang")
-    @classmethod
-    def validate_lang(cls, v: str) -> str:
-        return _validate_lang_code(v, "source_lang/target_lang")
-
-    @field_validator("domain")
-    @classmethod
-    def validate_domain(cls, v: str) -> str:
-        return _validate_domain(v)
-
-
-class GlossaryAddRequest(BaseModel):
-    source: str
-    target: str
-    source_lang: str = "en"
-    target_lang: str = "ro"
-    domain: str = "general"
-    notes: str | None = None
-    client_id: int | None = None
-
-    @field_validator("source_lang", "target_lang")
-    @classmethod
-    def validate_lang(cls, v: str) -> str:
-        return _validate_lang_code(v, "source_lang/target_lang")
-
-    @field_validator("domain")
-    @classmethod
-    def validate_domain(cls, v: str) -> str:
-        return _validate_domain(v)
-
-
-class GlossaryUpdateRequest(BaseModel):
-    source: str | None = None
-    target: str | None = None
-    source_lang: str | None = None
-    target_lang: str | None = None
-    domain: str | None = None
-    notes: str | None = None
-    client_id: int | None = None
-
-    @field_validator("source_lang", "target_lang")
-    @classmethod
-    def validate_lang(cls, v: str) -> str:
-        if v is not None:
-            return _validate_lang_code(v, "source_lang/target_lang")
-        return v
-
-    @field_validator("domain")
-    @classmethod
-    def validate_domain(cls, v: str) -> str:
-        if v is not None:
-            return _validate_domain(v)
-        return v
-
-
-class CompareRequest(BaseModel):
-    text: str = Field(..., max_length=50000)
-    source_lang: str = "en"
-    target_lang: str = "ro"
-    provider_a: str = Field(..., description="Primul provider (ex: deepl, azure, google)")
-    provider_b: str = Field(..., description="Al doilea provider (ex: deepl, azure, google)")
-
-    @field_validator("source_lang", "target_lang")
-    @classmethod
-    def validate_lang(cls, v: str) -> str:
-        return _validate_lang_code(v, "source_lang/target_lang")
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _extract_text_from_file(file_path: str) -> str:
-    """Extract text from PDF, DOCX, or text file."""
-    import fitz  # PyMuPDF
-    from docx import Document as DocxDocument
-
-    p = file_path.lower()
-    if p.endswith(".pdf"):
-        doc = fitz.open(file_path)
-        text = "\n".join(page.get_text() for page in doc)
-        doc.close()
-        return text.strip()
-    elif p.endswith(".docx"):
-        doc = DocxDocument(file_path)
-        return "\n".join(para.text for para in doc.paragraphs if para.text.strip()).strip()
-    elif p.endswith((".txt", ".md", ".csv", ".html", ".xml")):
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read().strip()
-    else:
-        raise ValueError(f"Tip fisier nesuportat: {Path(file_path).suffix}")
-
-
-async def _save_upload(file: UploadFile) -> str:
-    """Save UploadFile to temp and return path."""
-    suffix = Path(file.filename or "file").suffix
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=tempfile.gettempdir()) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        return tmp.name
-
-
-def _compute_cache_hash(text: str, source_lang: str, target_lang: str) -> str:
-    """Compute SHA-256 hash for translation cache key."""
-    key = f"{text}|{source_lang.lower()}|{target_lang.lower()}"
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()
-
-
-async def _ensure_cache_table() -> None:
-    """Create translation_cache table if it does not exist."""
-    async with get_db() as db:
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS translation_cache (
-                hash        TEXT PRIMARY KEY,
-                source_text TEXT NOT NULL,
-                target_text TEXT NOT NULL,
-                source_lang TEXT NOT NULL,
-                target_lang TEXT NOT NULL,
-                provider    TEXT NOT NULL,
-                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        await db.commit()
-
-
-# ---------------------------------------------------------------------------
 # POST /api/translator/text — Translate text
 # ---------------------------------------------------------------------------
 
@@ -295,8 +100,8 @@ async def translate_text_endpoint(req: TranslateTextRequest):
     from_cache = False
 
     # Step 0: Check translation cache
-    await _ensure_cache_table()
-    cache_hash = _compute_cache_hash(req.text, req.source_lang, req.target_lang)
+    await ensure_cache_table()
+    cache_hash = compute_cache_hash(req.text, req.source_lang, req.target_lang)
 
     async with get_db() as db:
         cursor = await db.execute(
@@ -366,7 +171,7 @@ async def translate_text_endpoint(req: TranslateTextRequest):
 
     # R4-14: Record provider latency
     if provider_latency_ms is not None:
-        _record_latency(provider, provider_latency_ms)
+        record_latency(provider, provider_latency_ms)
 
     # Step 3: Store in cache
     async with get_db() as db:
@@ -462,7 +267,7 @@ async def translate_file_endpoint(
             f"Format nesuportat: {ext}. Acceptate: PDF, DOCX, TXT, MD"
         )
 
-    tmp_path = await _save_upload(file)
+    tmp_path = await save_upload(file)
 
     try:
         total_chars = 0
@@ -858,7 +663,7 @@ async def add_glossary_term(req: GlossaryAddRequest):
         raise HTTPException(409, str(e))
 
     # Invalidate cache entries for the affected language pair
-    await _ensure_cache_table()
+    await ensure_cache_table()
     async with get_db() as db:
         await db.execute(
             "DELETE FROM translation_cache WHERE source_lang = ? AND target_lang = ?",
@@ -894,7 +699,7 @@ async def update_glossary_term(term_id: int, req: GlossaryUpdateRequest):
         raise HTTPException(404, "Termenul nu a fost gasit in glosar")
 
     # Invalidate cache entries for the affected language pair
-    await _ensure_cache_table()
+    await ensure_cache_table()
     async with get_db() as db:
         await db.execute(
             "DELETE FROM translation_cache WHERE source_lang = ? AND target_lang = ?",
@@ -961,7 +766,7 @@ async def import_glossary(
     )
 
     # Invalidate cache entries for the affected language pair
-    await _ensure_cache_table()
+    await ensure_cache_table()
     async with get_db() as db:
         await db.execute(
             "DELETE FROM translation_cache WHERE source_lang = ? AND target_lang = ?",
@@ -1199,7 +1004,7 @@ async def translate_batch(
             results.append({"filename": fname, "status": "error", "output_url": None, "error": f"Format nesuportat: {ext}"})
             continue
 
-        tmp_path = await _save_upload(f)
+        tmp_path = await save_upload(f)
         try:
             if ext in (".txt", ".md"):
                 with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
@@ -1249,29 +1054,16 @@ async def translate_batch(
 
 
 # ---------------------------------------------------------------------------
-# R4-14: Provider latency tracking + stats endpoint
+# GET /api/translator/provider-stats — Provider latency statistics
 # ---------------------------------------------------------------------------
-
-# In-memory latency store: {provider_name: [latency_ms, ...]}
-_provider_latencies: dict[str, list[float]] = {}
-
-
-def _record_latency(provider_name: str, latency_ms: float) -> None:
-    """Record a provider latency measurement (keep last 20)."""
-    if provider_name not in _provider_latencies:
-        _provider_latencies[provider_name] = []
-    _provider_latencies[provider_name].append(latency_ms)
-    # Keep only last 20 measurements
-    if len(_provider_latencies[provider_name]) > 20:
-        _provider_latencies[provider_name] = _provider_latencies[provider_name][-20:]
-
 
 @router.get("/provider-stats")
 async def get_provider_stats():
     """R4-14: Statistici latenta per provider de traducere."""
+    latency_store = get_provider_latencies()
     stats = []
     for prov_name in ["deepl", "azure", "google", "gemini", "openai"]:
-        latencies = _provider_latencies.get(prov_name, [])
+        latencies = latency_store.get(prov_name, [])
         last = latencies[-1] if latencies else None
         avg = round(sum(latencies) / len(latencies), 1) if latencies else None
         stats.append({
@@ -1286,13 +1078,6 @@ async def get_provider_stats():
 # ---------------------------------------------------------------------------
 # POST /api/translator/quality-check — Translation quality assessment (AI)
 # ---------------------------------------------------------------------------
-
-class QualityCheckRequest(BaseModel):
-    source_text: str
-    translated_text: str
-    source_lang: str = "en"
-    target_lang: str = "ro"
-
 
 @router.post("/quality-check")
 async def quality_check(req: QualityCheckRequest):
