@@ -11,6 +11,7 @@ Rezultate auto-generate de skill-uri: `/audit`, `/security-review`, `/perf`, `/i
 ## Ce sa pastrezi
 
 Daca un audit dezvaluie URGENT/HIGH issues → muta concluziile in:
+
 - `.workspace/investigations/` (RCA dedicat)
 - `docs/plan.md` follow-ups
 - `.meta/decisions.yaml` (daca devine decizie)

@@ -4,7 +4,7 @@
 
 meta:
   schema_version: "1.0"
-  generated_at: "2026-05-22T00:27:47+03:00"
+  generated_at: "2026-05-22T00:36:27+03:00"
   generator: "sync-meta.py (auto)"
 
 project:
@@ -19,8 +19,8 @@ deploy:
   url_local: "http://127.0.0.1:8000"
   url_dev: "http://localhost:5173"
   url_tunnel: "https://*.trycloudflare.com (quick tunnel, random per restart)"
-  last_commit: "4b136ca"
-  last_commit_msg: "feat(workspace): .workspace/ pentru zona AI work â€” drafts + investigations + audit-outputs (E4)"
+  last_commit: "c8be340"
+  last_commit_msg: "feat(hooks): wire post-edit-check + session-stop la scripturi auto-sync (E7)"
   branch: "restructurare-native-ws"
   master_at: "5ec3beb"
   master_msg: "docs(checkpoint): Faza 34 docs + plan restructurare Native Workspace (2026-05-21)"
@@ -40,13 +40,13 @@ tests:
   coverage_pct: null
 
 phases:
-  total_completed: 33
-  current: "Restructurare Native Workspace (E2/8)"
-  next: "Modul bilingual_doc (ETAPA 2, post-restructurare)"
+  total_completed: 34
+  current: "ETAPA 1 (Restructurare Native Workspace) COMPLETA — gata de merge in master"
+  next: "ETAPA 2 — Modul bilingual_doc (planned, sesiune separata)"
   latest_done:
-    name: "Faza 34"
-    summary: "start.py launcher + Cloudflare Tunnel + watchdog + PWA auto-update + timetracking + e-Factura + search + voice input + claude-prep"
-    completed_at: "2026-05-21"
+    name: "Restructurare Native Workspace v2.1 (E0-E7.5)"
+    summary: "8 commit-uri pe branch dedicat: cleanup radacina, .meta/ minimal, docs/plan, .workspace/, 3 scripturi Python auto-sync, RUNBOOK + CLAUDE slim + README, hooks wired, validare Rule 08 PASS"
+    completed_at: "2026-05-22"
 
 restructurare:
   branch: "restructurare-native-ws"
@@ -56,13 +56,16 @@ restructurare:
   etape:
     E0: "DONE (commit Faza 34 in 8 commit-uri logice + creare branch)"
     E1: "DONE (cleanup radacina + docs/ + .archive/)"
-    E2: "IN_PROGRESS (.meta/ minimal scaffold)"
-    E3: "PENDING (split CLAUDE.md + 0.0_PLAN_EXTINDERE_COMPLET)"
-    E4: "PENDING (.workspace/ setup)"
-    E5: "PENDING (3 scripturi PowerShell)"
-    E6: "PENDING (RUNBOOK + CLAUDE.md slim)"
-    E7: "PENDING (hooks auto-sync)"
-    E7_5: "PENDING (validare Rule 08 + commit final)"
+    E2: "DONE (.meta/ minimal scaffold: profile + status + decisions + sitemap)"
+    E3: "DONE (docs/plan.md + update referinte rules 01/02/03)"
+    E4: "DONE (.workspace/ drafts + investigations + audit-outputs + scratchpad)"
+    E5: "DONE (3 scripturi Python: sync-meta + indexer + root-sweeper)"
+    E6: "DONE (RUNBOOK 101 linii + CLAUDE.md slim 146 linii + README.md 67 linii)"
+    E7: "DONE (hooks post-edit-check + session-stop wired la scripturi auto-sync)"
+    E7_5: "DONE (validare Rule 08 PASS + commit final)"
+  status: COMPLETE
+  completed_at: "2026-05-22"
+  result: "Aplicat selectiv conform P13/P14 (single-user, NU enterprise overkill). Root: 5 fisiere essential + 2 config (.gitignore + .gitattributes). 8 commit-uri pe branch restructurare-native-ws gata de merge in master."
 
 modules:
   backend:

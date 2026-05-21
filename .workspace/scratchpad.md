@@ -10,4 +10,5 @@
 - MERGE CalculatorPage + CalculatorAdvancedPage planificat post-restructurare (Task #11)
 
 ---
+
 <!-- Note noi mai sus -->

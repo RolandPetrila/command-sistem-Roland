@@ -17,9 +17,10 @@
 
 ---
 
-## 2. Stare curenta (2026-05-21)
+## 2. Stare curenta (2026-05-22)
 
-**Faza activa:** Restructurare Native Workspace (etapa E2/8 in progress).
+**Ultima faza completa:** Restructurare Native Workspace v2.1 — toate etapele E0-E7.5 ✅ DONE.
+**Faza urmatoare:** ETAPA 2 — Integrare modul `bilingual_doc` (planned).
 
 **Cifre cheie:**
 
@@ -36,21 +37,21 @@
 
 ## 3. Roadmap activ
 
-### ETAPA 1 — Restructurare Native Workspace (in curs, ~3h30min total)
+### ETAPA 1 — Restructurare Native Workspace ✅ COMPLETA (2026-05-22)
 
 Aplicare blueprint `c:/Proiecte/Blueprints/Roland_99/Blueprints_Restructurare_Nativ.md` SELECTIV (filtrat prin P13 scale lens + P14 tool overhead).
 
-| Etapa | Status         | Continut                                                     |
-| ----- | -------------- | ------------------------------------------------------------ |
-| E0    | ✅ DONE        | Commit Faza 34 in 8 commit-uri logice + branch dedicat       |
-| E1    | ✅ DONE        | Cleanup radacina: mutare la docs/, .archive/, USER_WORKSPACE |
-| E2    | ✅ DONE        | .meta/ minimal (profile + status + decisions + sitemap)      |
-| E3    | 🔄 IN_PROGRESS | docs/plan.md (acest fisier) + update referinte               |
-| E4    | ⏳ PENDING     | .workspace/ (drafts + investigations + audit-outputs)        |
-| E5    | ⏳ PENDING     | 3 scripturi PowerShell (sync-meta + indexer + root-sweeper)  |
-| E6    | ⏳ PENDING     | RUNBOOK.md + CLAUDE.md slim <200 linii + README.md           |
-| E7    | ⏳ PENDING     | Hooks auto-sync (post-edit-check + session-stop)             |
-| E7.5  | ⏳ PENDING     | Validare Rule 08 + commit final + merge in master            |
+| Etapa | Status  | Continut                                                                                                   |
+| ----- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| E0    | ✅ DONE | Commit Faza 34 in 8 commit-uri logice + branch dedicat                                                     |
+| E1    | ✅ DONE | Cleanup radacina: mutare la docs/, .archive/, USER_WORKSPACE                                               |
+| E2    | ✅ DONE | .meta/ minimal (profile + status + decisions + sitemap)                                                    |
+| E3    | ✅ DONE | docs/plan.md + update referinte rules 01/02/03                                                             |
+| E4    | ✅ DONE | .workspace/ (drafts + investigations + audit-outputs + scratchpad)                                         |
+| E5    | ✅ DONE | 3 scripturi Python (sync-meta + indexer + root-sweeper) — schimbat din PS la Python pentru robustete UTF-8 |
+| E6    | ✅ DONE | RUNBOOK.md (101 linii) + CLAUDE.md slim (146 linii) + README.md (67 linii)                                 |
+| E7    | ✅ DONE | Hooks auto-sync wired (post-edit-check + session-stop)                                                     |
+| E7.5  | ✅ DONE | Validare Rule 08 PASS (import + health + frontend build) + commit final                                    |
 
 Plan detaliat: `../PLAN_RESTRUCTURARE_2026-05-21.md` (mut in .archive/ dupa E7.5).
 
