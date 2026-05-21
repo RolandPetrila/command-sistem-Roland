@@ -8,7 +8,7 @@ This rule REPLACES R-BRIEF and R-MODE from global CLAUDE.md for tasks in this pr
 ## Process (all steps, in order):
 
 ### Step 1 — Dependency Check
-- Read cross-phase dependencies from `0.0_PLAN_EXTINDERE_COMPLET.md`
+- Read cross-phase dependencies from `docs/plan.md` (curent + roadmap) si `99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md` (istoric detaliat faze 0-33)
 - If the feature has unimplemented dependencies → warn and list them
 - Does NOT block — only informs
 

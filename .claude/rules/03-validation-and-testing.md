@@ -27,5 +27,6 @@ Organize by phases with clear sections and easy navigation.
 
 ### Step 4 — Update Test Markers
 When user confirms a feature works on Android → mark `✅ Testat Android OK (YYYY-MM-DD)` in:
-- `0.0_PLAN_EXTINDERE_COMPLET.md`
-- `GHID_TESTARE.md`
+- `docs/plan.md` (curent)
+- `99_Roland_Work_Place/0.0_PLAN_EXTINDERE_COMPLET.md` (istoric)
+- `99_Roland_Work_Place/GHID_TESTARE.md`
