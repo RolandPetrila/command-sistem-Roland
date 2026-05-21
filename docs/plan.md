@@ -55,29 +55,59 @@ Aplicare blueprint `c:/Proiecte/Blueprints/Roland_99/Blueprints_Restructurare_Na
 
 Plan detaliat: `../PLAN_RESTRUCTURARE_2026-05-21.md` (mut in .archive/ dupa E7.5).
 
-### ETAPA 2 — Modul bilingual_doc (planned, post-restructurare)
+### ETAPA 2 — Modul bilingual_doc (PLAN APROBAT 2026-05-22, 5 sub-faze)
 
-Integrare sistem generator HTML print-ready bilingv DE/RO (extensibil multi-limbă) ca modul nou Roland.
+Integrare sistem generator HTML print-ready bilingv DE/RO (extensibil multi-limbă) ca modul nou Roland. **Decizie: scriu nou modular conform skill global (NU refolosesc zip monolitic 247KB).**
 
-**Resurse pregatite:**
+**5 sub-faze secventiale (~14-19h total):**
 
-- Skill global: `~/.claude/skills/bilingual-doc-rendering/` (9 documente)
-- Backend zip arhivat: `~/.claude/context-snapshots/Traduceri-Bilingv-Sistem-2026-05-21/backend_archive.zip` (255 KB, 5 generatoare Python + 13 module spec)
-- 3 documente reale livrate la `c:/Users/ALIENWARE/Desktop/Roly/4. Artificial Inteligence/1.0_Traduceri/.../NOU/Finale/`
-- Decizii detaliate: `handovers/2026-05-21_restructurare.md`
+| Faza                           | Continut                                                                                                                                                                                                 | Efort |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| **2.1** Backend Core           | Migration 026_bilingual_doc.sql (3 tabele) + 5 module (pdf_extractor, structure_parser, glossary_engine, translator_chain wrapper Faza 9, orchestrator) + API routes (POST upload, GET list, GET detail) | 4-5h  |
+| **2.2** Rendering + Audit      | html_renderer (Jinja2 + CSS print A4 portrait/landscape auto-detect) + auditor (V1-V8 blocker) + integrare orchestrator                                                                                  | 3-4h  |
+| **2.3** Frontend UI            | BilingualDocPage + 4 componente (Upload, Preview iframe, Audit dashboard, History) + manifest.js entry + App.jsx route lazy-loaded                                                                       | 3-4h  |
+| **2.4** Glossary CRUD + Review | API CRUD glossary + UI editor + review decisions tracking (NEW/KEEP/FREEZE promovare) + seed DE→RO (chemistry, legal, water_tech) cu seed_flag=true                                                      | 2-3h  |
+| **2.5** Testing + Polish       | Test E2E pe 3 ref docs (TrinkwV 65p + BAnz B12 26p + Fomar 1p) + GHID_TESTARE update + responsive mobile + merge final + push                                                                            | 2-3h  |
 
-**Pasi:**
+**Cerinte user confirmate:** Multi-limbă activ (DE, RO, EN, IT, HU, SK extensibil), glosar generic, selectabil UI, validare V1-V8 automata, backward compat.
 
-1. Refactor generator monolitic (247KB) in 8 module mici
-2. Migration SQL `0NN_bilingual_doc.sql` (3 tabele)
-3. Backend FastAPI routes (upload PDF, list, glossary CRUD, review)
-4. Frontend React (BilingualDocUpload + Preview + Audit + History)
-5. Integrare cu Faza 9 Translator (5 providers existenti)
-6. Integrare cu Glossary per client existent
-7. Adaugare in module_discovery
-8. Migrare seed-uri DE→RO (spec_modules/30-32) ca preset glossary
+**Decizii arhitecturale confirmate (ETAPA 2 briefing 2026-05-22):**
 
-**Cerinte user:** Multi-limbă activ (DE, RO, EN, IT, HU, SK extensibil), glosar generic, selectabil UI, validare V1-V8 automata, backward compat.
+1. **Scriu nou modular** conform `02_architecture_modules.md` (NU port zip monolitic)
+2. **Pipeline 5 pasi**: extract → parse → translate → render → audit
+3. **HTML single-file** cu `data-lang` switching (CSS hide/show, NU duplicare DOM)
+4. **Print A4 mix orientation**: portrait + landscape auto-detect (>5 col SAU col >20 char)
+5. **REVIEW 3-state**: NEW → KEEP (1 doc) → FREEZE (2+ docs cu confirmare user)
+6. **V1-V8 audit blocker** (spans balance, tag balance, contaminari diacritice, footer numerotare)
+7. **NU meta-document automat** (Schlussseiten/Quellen — only la solicitare explicita)
+8. **Footer minim**: doar `Pagina X / N`
+9. **Seed-uri DE→RO marcate `seed_flag=true`** — NU FREEZE automat
+10. **Process page-by-page streaming** pentru PDF 100+ pagini (NU all-at-once)
+
+**Tabele DB Faza 2.1:**
+
+```sql
+bilingual_documents (id, filename, source_lang, target_langs[], domain, status, created_at, audit_yaml)
+glossary_entries (id, source_lang, target_lang, source_term, target_term, state, domain_tags[], confidence, notes, seed_flag, created_at)
+review_decisions (id, document_id, term_id, decision, decided_by, decided_at)
+```
+
+**Risc-uri identificate + mitigation:**
+
+| Risc                              | Mitigation                                          |
+| --------------------------------- | --------------------------------------------------- |
+| PDF scanate (no extractable text) | Fallback EasyOCR (Faza 15A) — adauga ~30 min in 2.1 |
+| Encoding diacritice Windows       | `PYTHONIOENCODING=utf-8` standard                   |
+| Tabele complexe → landscape       | Heuristic >5 col sau col >20 char                   |
+| Glosar polluted de seed-uri       | `seed_flag=true` separate, NU FREEZE auto           |
+| Memory PDF 100+ pagini            | Page-by-page streaming                              |
+
+**Resurse:**
+
+- Skill global (9 docs): `~/.claude/skills/bilingual-doc-rendering/`
+- Backend zip referinta: `~/.claude/context-snapshots/Traduceri-Bilingv-Sistem-2026-05-21/backend_archive.zip`
+- 3 docs reale referinta: `c:/Users/ALIENWARE/Desktop/Roly/4. Artificial Inteligence/1.0_Traduceri/.../NOU/Finale/`
+- HANDOVER detaliat: `docs/handovers/2026-05-21_restructurare.md`
 
 ### Follow-ups (post-ETAPA 1, ordine flexibila)
 

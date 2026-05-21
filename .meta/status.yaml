@@ -4,7 +4,7 @@
 
 meta:
   schema_version: "1.0"
-  generated_at: "2026-05-22T00:36:27+03:00"
+  generated_at: "2026-05-22T01:07:07+03:00"
   generator: "sync-meta.py (auto)"
 
 project:
@@ -19,11 +19,11 @@ deploy:
   url_local: "http://127.0.0.1:8000"
   url_dev: "http://localhost:5173"
   url_tunnel: "https://*.trycloudflare.com (quick tunnel, random per restart)"
-  last_commit: "c8be340"
-  last_commit_msg: "feat(hooks): wire post-edit-check + session-stop la scripturi auto-sync (E7)"
-  branch: "restructurare-native-ws"
-  master_at: "5ec3beb"
-  master_msg: "docs(checkpoint): Faza 34 docs + plan restructurare Native Workspace (2026-05-21)"
+  last_commit: "c0d3d40"
+  last_commit_msg: "Merge Restructurare Native Workspace v2.1 (ETAPA 1) â€” 8 commit-uri E0-E7.5"
+  branch: "master"
+  master_at: "c0d3d40"
+  master_msg: "Merge Restructurare Native Workspace v2.1 (ETAPA 1) â€” 8 commit-uri E0-E7.5"
   auto_start: "Windows Task Scheduler RolandCC_AutoStart (User Logon, delay 30s)"
 
 build:
@@ -41,12 +41,29 @@ tests:
 
 phases:
   total_completed: 34
-  current: "ETAPA 1 (Restructurare Native Workspace) COMPLETA — gata de merge in master"
-  next: "ETAPA 2 — Modul bilingual_doc (planned, sesiune separata)"
+  current: "ETAPA 2 — Modul bilingual_doc (PLAN APROBAT 2026-05-22, gata de start Faza 2.1)"
+  next: "Faza 2.1 — Backend Core (migration 026 + 5 module + API routes, ~4-5h)"
   latest_done:
     name: "Restructurare Native Workspace v2.1 (E0-E7.5)"
-    summary: "8 commit-uri pe branch dedicat: cleanup radacina, .meta/ minimal, docs/plan, .workspace/, 3 scripturi Python auto-sync, RUNBOOK + CLAUDE slim + README, hooks wired, validare Rule 08 PASS"
+    summary: "8 commit-uri merged in master (c0d3d40), pushed origin"
     completed_at: "2026-05-22"
+
+etapa_2_plan:
+  status: "APPROVED 2026-05-22"
+  approach: "scriu nou modular conform skill (NU port zip monolitic 247KB)"
+  total_effort: "14-19h"
+  sub_phases:
+    F2_1: "Backend Core — migration + 5 module + API routes (~4-5h)"
+    F2_2: "Rendering + Audit — Jinja2 + V1-V8 (~3-4h)"
+    F2_3: "Frontend UI — page + 4 componente (~3-4h)"
+    F2_4: "Glossary CRUD + Review System — UI editor + seed DE→RO (~2-3h)"
+    F2_5: "Testing + Polish — 3 ref docs + responsive + merge + push (~2-3h)"
+  resources:
+    skill_global: "~/.claude/skills/bilingual-doc-rendering/ (9 documente)"
+    backend_zip_ref: "~/.claude/context-snapshots/Traduceri-Bilingv-Sistem-2026-05-21/backend_archive.zip"
+    ref_docs: "c:/Users/ALIENWARE/Desktop/Roly/.../NOU/Finale/ (3 docs reale: TrinkwV 65p + BAnz B12 26p + Fomar 1p)"
+    handover: "docs/handovers/2026-05-21_restructurare.md"
+    memory: "C:/Users/ALIENWARE/.claude/projects/.../memory/decisions_etapa2_bilingual_doc.md"
 
 restructurare:
   branch: "restructurare-native-ws"
