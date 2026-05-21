@@ -1,4 +1,4 @@
--- Migration 017: Translation cache table
+-- Migration 023: Translation cache table (renumbered from duplicate 017)
 -- Caches identical translations to avoid redundant API calls
 
 CREATE TABLE IF NOT EXISTS translation_cache (
@@ -13,4 +13,4 @@ CREATE TABLE IF NOT EXISTS translation_cache (
 
 CREATE INDEX IF NOT EXISTS idx_cache_langs ON translation_cache(source_lang, target_lang);
 
-INSERT INTO schema_version (version, name) VALUES (17, '017_translation_cache');
+INSERT OR IGNORE INTO schema_version (version, name) VALUES (23, '023_translation_cache');
