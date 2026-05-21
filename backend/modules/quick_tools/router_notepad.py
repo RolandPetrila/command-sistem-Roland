@@ -52,14 +52,14 @@ async def _ensure_category_column():
 
 
 class NoteCreate(BaseModel):
-    title: str = Field("Notă nouă", max_length=500)
-    content: str = Field("", max_length=100_000)
+    title: str = Field("Notă nouă", max_length=2000)
+    content: str = Field("", max_length=2_000_000)  # 2MB content (extins de la 100KB)
     category: str = Field("general", max_length=100)
 
 
 class NoteUpdate(BaseModel):
-    title: str | None = Field(None, max_length=500)
-    content: str | None = Field(None, max_length=100_000)
+    title: str | None = Field(None, max_length=2000)
+    content: str | None = Field(None, max_length=2_000_000)  # 2MB content
     category: str | None = Field(None, max_length=100)
 
 

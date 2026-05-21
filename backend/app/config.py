@@ -4,8 +4,8 @@ Folosește pydantic-settings pentru management centralizat al setărilor.
 """
 
 from pathlib import Path
-from pydantic_settings import BaseSettings
 
+from pydantic_settings import BaseSettings
 
 # Directorul rădăcină al proiectului backend
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -31,7 +31,8 @@ class Settings(BaseSettings):
 
     # --- Analiză ---
     ocr_words_threshold: int = 10  # sub acest nr de cuvinte/pagină → document scanat
-    max_upload_size_mb: int = 50
+    max_upload_size_mb: int = 500  # crescut de la 50 la 500 MB (single-user)
+    rate_limit_disabled: bool = True  # single-user → rate limiting global dezactivat
 
     # --- Server ---
     host: str = "0.0.0.0"

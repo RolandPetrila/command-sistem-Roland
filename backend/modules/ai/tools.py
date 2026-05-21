@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from app.core.activity_log import log_activity
 from app.db.database import get_db
+
 from .providers import ai_generate
 from .token_tracker import track_usage
 
@@ -226,12 +227,14 @@ async def notepad_ai_action(action: str, req: NotepadActionRequest):
     """
     Acțiuni AI pe text din notepad: improve, summarize, translate.
     """
-    valid_actions = {"improve", "summarize", "translate"}
+    valid_actions = {"improve", "summarize", "translate", "claude-prep"}
     if action not in valid_actions:
         raise HTTPException(400, f"Acțiune invalidă. Opțiuni: {', '.join(valid_actions)}")
 
     if not req.text.strip():
         raise HTTPException(400, "Textul este gol")
+
+    preferred_provider = None  # auto chain by default
 
     if action == "improve":
         system = (
@@ -251,8 +254,7 @@ async def notepad_ai_action(action: str, req: NotepadActionRequest):
         )
         prompt = f"Rezumă acest text:\n\n{req.text}"
 
-    else:  # translate
-        # Detect source language
+    elif action == "translate":
         system = (
             "Ești un traducător profesionist EN↔RO. "
             "Detectează automat limba textului. "
@@ -264,7 +266,30 @@ async def notepad_ai_action(action: str, req: NotepadActionRequest):
         )
         prompt = f"Traduce acest text:\n\n{req.text}"
 
-    result = await ai_generate(prompt, system)
+    else:  # claude-prep — Cerebras primary (1M tok/zi, 30 RPM)
+        preferred_provider = "cerebras"
+        system = (
+            "Ești un specialist în transformarea instrucțiunilor dictate vocal în prompts clare "
+            "și precise pentru Claude Code — un AI tehnic de programare.\n\n"
+            "Textul primit poate conține: cuvinte de umplutură ('deci', 'adică', 'ma refer'), "
+            "repetări, propoziții incomplete, terminologie imprecisă sau colocvială.\n\n"
+            "Transformă textul respectând aceste reguli:\n"
+            "1. Prompt tehnic clar, direct și fără ambiguitate\n"
+            "2. Structurat după caz: Obiectiv clar / Context (fișier, modul, funcție) / "
+            "Cerință specifică / Output așteptat\n"
+            "3. Terminologie corectă de programare (componente, endpoint-uri, funcții, clase, "
+            "props, state, router, migration etc.)\n"
+            "4. Eliminat: cuvinte de umplutură, repetări, digresiuni\n"
+            "5. Păstrat: intenția completă și toate detaliile tehnice relevante menționate\n\n"
+            "Returnează DOAR promptul transformat, fără explicații, prefixe sau metacomentarii.\n"
+            "Limba output: aceeași cu predominanța din input (română sau engleză)."
+        )
+        prompt = (
+            "Transformă această instrucțiune dictată vocal într-un prompt clar pentru Claude Code:\n\n"
+            f"{req.text}"
+        )
+
+    result = await ai_generate(prompt, system, preferred_provider)
     await track_usage(result["provider"], chars=len(prompt) + len(result["text"]))
 
     await log_activity(

@@ -1,7 +1,7 @@
 """
 System Reports — disk stats, system info, file analysis,
 dashboard summary, BNR exchange rates, backup ZIP, dashboard widgets,
-DB backup & integrity, critical JSON export.
+DB backup & integrity, critical JSON export, monthly business report.
 
 Endpoints:
   GET  /api/reports/disk-stats
@@ -22,10 +22,23 @@ Endpoints:
   GET  /api/reports/revenue-by-client
   GET  /api/reports/export/pdf
   GET  /api/reports/dashboard/my-day
+  GET  /api/reports/monthly-business
+  GET  /api/reports/dashboard/daily-goals
+  POST /api/reports/dashboard/daily-goals
+  PUT  /api/reports/dashboard/daily-goals/{goal_id}
+  DELETE /api/reports/dashboard/daily-goals/{goal_id}
+  GET  /api/reports/dashboard/weekly-comparison
+  GET  /api/templates
+  POST /api/templates
+  GET  /api/templates/{template_id}
+  PUT  /api/templates/{template_id}
+  DELETE /api/templates/{template_id}
+  POST /api/templates/{template_id}/render
 """
 
 from __future__ import annotations
 
+import calendar
 import io
 import json
 import logging
@@ -44,8 +57,9 @@ from typing import Any
 
 import httpx
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from app.config import settings
 from app.core.activity_log import log_activity
@@ -1567,3 +1581,507 @@ async def dashboard_my_day():
         logger.error("Eroare dashboard my-day: %s", exc)
 
     return result
+
+
+# ===========================================================================
+# MONTHLY BUSINESS REPORT
+# ===========================================================================
+
+@router.get("/monthly-business")
+async def monthly_business_report(
+    month: str = Query(
+        default=None,
+        description="Luna in format YYYY-MM (default: luna curenta)",
+    ),
+):
+    """Raport lunar de business: facturi, traduceri, ITP, time tracking, top clienti, activitate zilnica."""
+    # Parse and validate month parameter
+    if month is None:
+        now = datetime.now()
+        year, month_num = now.year, now.month
+    else:
+        try:
+            parts = month.strip().split("-")
+            if len(parts) != 2:
+                raise ValueError("Format invalid")
+            year = int(parts[0])
+            month_num = int(parts[1])
+            if not (1 <= month_num <= 12):
+                raise ValueError("Luna trebuie sa fie intre 1 si 12")
+            if not (2000 <= year <= 2100):
+                raise ValueError("Anul trebuie sa fie intre 2000 si 2100")
+        except (ValueError, IndexError) as exc:
+            raise HTTPException(400, f"Format luna invalid: '{month}'. Foloseste YYYY-MM (ex: 2026-03).") from exc
+
+    # Date range for the month
+    _, last_day = calendar.monthrange(year, month_num)
+    date_from = f"{year:04d}-{month_num:02d}-01"
+    date_to = f"{year:04d}-{month_num:02d}-{last_day:02d}"
+
+    result: dict[str, Any] = {
+        "period": {"month": month_num, "year": year, "date_from": date_from, "date_to": date_to},
+        "invoices": {"count": 0, "total_amount": 0.0, "paid_count": 0, "paid_amount": 0.0, "unpaid_count": 0, "unpaid_amount": 0.0},
+        "translations": {"count": 0},
+        "itp": {"count": 0},
+        "time_tracked": {"total_hours": 0.0},
+        "top_clients": [],
+        "daily_activity": [],
+    }
+
+    async with get_db() as db:
+        # --- Invoices ---
+        try:
+            cursor = await db.execute(
+                "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS total_amount "
+                "FROM invoices WHERE date >= ? AND date <= ?",
+                (date_from, date_to),
+            )
+            row = await cursor.fetchone()
+            if row:
+                result["invoices"]["count"] = row["cnt"]
+                result["invoices"]["total_amount"] = round(row["total_amount"], 2)
+
+            # Paid invoices
+            cursor = await db.execute(
+                "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS total_amount "
+                "FROM invoices WHERE date >= ? AND date <= ? AND status = 'paid'",
+                (date_from, date_to),
+            )
+            row = await cursor.fetchone()
+            if row:
+                result["invoices"]["paid_count"] = row["cnt"]
+                result["invoices"]["paid_amount"] = round(row["total_amount"], 2)
+
+            result["invoices"]["unpaid_count"] = result["invoices"]["count"] - result["invoices"]["paid_count"]
+            result["invoices"]["unpaid_amount"] = round(
+                result["invoices"]["total_amount"] - result["invoices"]["paid_amount"], 2,
+            )
+        except Exception as exc:
+            logger.warning("Monthly report — invoices query error: %s", exc)
+
+        # --- Translations (from activity_log) ---
+        try:
+            cursor = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM activity_log "
+                "WHERE action LIKE 'translator%' AND timestamp >= ? AND timestamp <= ?",
+                (date_from, date_to + " 23:59:59"),
+            )
+            row = await cursor.fetchone()
+            if row:
+                result["translations"]["count"] = row["cnt"]
+        except Exception as exc:
+            logger.warning("Monthly report — translations query error: %s", exc)
+
+        # --- ITP Inspections ---
+        try:
+            cursor = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM itp_inspections "
+                "WHERE inspection_date >= ? AND inspection_date <= ?",
+                (date_from, date_to),
+            )
+            row = await cursor.fetchone()
+            if row:
+                result["itp"]["count"] = row["cnt"]
+        except Exception as exc:
+            logger.warning("Monthly report — itp query error: %s", exc)
+
+        # --- Time Tracked ---
+        try:
+            cursor = await db.execute(
+                "SELECT COALESCE(SUM(duration_minutes), 0) AS total_min "
+                "FROM time_entries "
+                "WHERE start_time >= ? AND start_time <= ?",
+                (date_from, date_to + " 23:59:59"),
+            )
+            row = await cursor.fetchone()
+            if row:
+                result["time_tracked"]["total_hours"] = round(row["total_min"] / 60.0, 2)
+        except Exception as exc:
+            logger.warning("Monthly report — time_entries query error: %s", exc)
+
+        # --- Top Clients by Revenue ---
+        try:
+            cursor = await db.execute(
+                "SELECT c.name, COALESCE(SUM(i.total), 0) AS total_amount "
+                "FROM invoices i "
+                "JOIN clients c ON i.client_id = c.id "
+                "WHERE i.date >= ? AND i.date <= ? "
+                "GROUP BY i.client_id "
+                "ORDER BY total_amount DESC "
+                "LIMIT 5",
+                (date_from, date_to),
+            )
+            rows = await cursor.fetchall()
+            result["top_clients"] = [
+                {"name": row["name"], "total_amount": round(row["total_amount"], 2)}
+                for row in rows
+            ]
+        except Exception as exc:
+            logger.warning("Monthly report — top_clients query error: %s", exc)
+
+        # --- Daily Activity (from activity_log) ---
+        try:
+            cursor = await db.execute(
+                "SELECT SUBSTR(timestamp, 1, 10) AS day, COUNT(*) AS cnt "
+                "FROM activity_log "
+                "WHERE timestamp >= ? AND timestamp <= ? "
+                "GROUP BY day "
+                "ORDER BY day ASC",
+                (date_from, date_to + " 23:59:59"),
+            )
+            rows = await cursor.fetchall()
+            result["daily_activity"] = [
+                {"date": row["day"], "count": row["cnt"]}
+                for row in rows
+            ]
+        except Exception as exc:
+            logger.warning("Monthly report — daily_activity query error: %s", exc)
+
+    await log_activity(
+        action="reports.monthly_business",
+        summary=f"Raport lunar business generat: {year}-{month_num:02d}",
+        details={"year": year, "month": month_num},
+    )
+
+    return result
+
+
+# ===========================================================================
+# DAILY GOALS
+# ===========================================================================
+
+class DailyGoalCreate(BaseModel):
+    text: str
+
+
+class DailyGoalUpdate(BaseModel):
+    completed: bool
+
+
+@router.get("/dashboard/daily-goals")
+async def list_daily_goals():
+    """List goals for today."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id, date, text, completed, created_at FROM daily_goals "
+            "WHERE date = ? ORDER BY created_at ASC",
+            (today,),
+        )
+        rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+@router.post("/dashboard/daily-goals", status_code=201)
+async def create_daily_goal(data: DailyGoalCreate):
+    """Create a new goal for today."""
+    if not data.text.strip():
+        raise HTTPException(400, "Textul obiectivului nu poate fi gol.")
+    today = datetime.now().strftime("%Y-%m-%d")
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO daily_goals (date, text, completed) VALUES (?, ?, 0)",
+            (today, data.text.strip()),
+        )
+        await db.commit()
+        goal_id = cursor.lastrowid
+
+    await log_activity(
+        action="reports.goal_create",
+        summary=f"Obiectiv zilnic creat: {data.text[:50]}",
+        details={"goal_id": goal_id},
+    )
+    return {"id": goal_id, "message": "Obiectiv creat cu succes."}
+
+
+@router.put("/dashboard/daily-goals/{goal_id}")
+async def toggle_daily_goal(goal_id: int, data: DailyGoalUpdate):
+    """Toggle a goal's completed status."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM daily_goals WHERE id = ?", (goal_id,)
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(404, "Obiectivul nu a fost gasit.")
+
+        await db.execute(
+            "UPDATE daily_goals SET completed = ? WHERE id = ?",
+            (1 if data.completed else 0, goal_id),
+        )
+        await db.commit()
+
+    return {"message": "Obiectiv actualizat.", "completed": data.completed}
+
+
+@router.delete("/dashboard/daily-goals/{goal_id}")
+async def delete_daily_goal(goal_id: int):
+    """Delete a goal."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM daily_goals WHERE id = ?", (goal_id,)
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Obiectivul nu a fost gasit.")
+
+    return {"message": "Obiectiv sters cu succes."}
+
+
+# ===========================================================================
+# WEEKLY COMPARISON
+# ===========================================================================
+
+@router.get("/dashboard/weekly-comparison")
+async def weekly_comparison():
+    """Activity count per day for this week vs last week."""
+    today = datetime.now()
+    # Start of this week (Monday)
+    this_week_start = today - timedelta(days=today.weekday())
+    last_week_start = this_week_start - timedelta(days=7)
+    last_week_end = this_week_start - timedelta(days=1)
+    this_week_end = today
+
+    day_names = ["Lun", "Mar", "Mie", "Joi", "Vin", "Sam", "Dum"]
+
+    result = {
+        "this_week": [],
+        "last_week": [],
+        "this_week_total": 0,
+        "last_week_total": 0,
+    }
+
+    try:
+        async with get_db() as db:
+            # This week
+            cursor = await db.execute(
+                "SELECT date(timestamp) AS day, COUNT(*) AS cnt "
+                "FROM activity_log "
+                "WHERE date(timestamp) >= ? AND date(timestamp) <= ? "
+                "GROUP BY day ORDER BY day ASC",
+                (this_week_start.strftime("%Y-%m-%d"), this_week_end.strftime("%Y-%m-%d")),
+            )
+            this_week_data = {row["day"]: row["cnt"] for row in await cursor.fetchall()}
+
+            # Last week
+            cursor = await db.execute(
+                "SELECT date(timestamp) AS day, COUNT(*) AS cnt "
+                "FROM activity_log "
+                "WHERE date(timestamp) >= ? AND date(timestamp) <= ? "
+                "GROUP BY day ORDER BY day ASC",
+                (last_week_start.strftime("%Y-%m-%d"), last_week_end.strftime("%Y-%m-%d")),
+            )
+            last_week_data = {row["day"]: row["cnt"] for row in await cursor.fetchall()}
+
+        # Build arrays for each day of the week
+        for i in range(7):
+            tw_date = (this_week_start + timedelta(days=i)).strftime("%Y-%m-%d")
+            lw_date = (last_week_start + timedelta(days=i)).strftime("%Y-%m-%d")
+
+            tw_count = this_week_data.get(tw_date, 0)
+            lw_count = last_week_data.get(lw_date, 0)
+
+            result["this_week"].append({
+                "day": day_names[i], "date": tw_date, "count": tw_count,
+            })
+            result["last_week"].append({
+                "day": day_names[i], "date": lw_date, "count": lw_count,
+            })
+
+            result["this_week_total"] += tw_count
+            result["last_week_total"] += lw_count
+
+    except Exception as exc:
+        logger.error("Eroare weekly comparison: %s", exc)
+
+    return result
+
+
+# ===========================================================================
+# DOCUMENT TEMPLATES (prefix: /api/templates)
+# ===========================================================================
+
+# Ensure the doc_templates table exists (separate from calculator's document_templates)
+_DOC_TEMPLATES_TABLE = "doc_templates"
+
+templates_router = APIRouter(prefix="/api/templates", tags=["Document Templates"])
+
+
+class TemplateCreate(BaseModel):
+    name: str
+    category: str = "general"
+    content: str
+    variables: list[str] = []
+
+
+class TemplateUpdate(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    content: str | None = None
+    variables: list[str] | None = None
+
+
+class TemplateRender(BaseModel):
+    variables: dict[str, str] = {}
+
+
+@templates_router.get("")
+async def list_templates(category: str = None):
+    """List all document templates, optionally filtered by category."""
+    async with get_db() as db:
+        if category:
+            cursor = await db.execute(
+                "SELECT id, name, category, variables, created_at, updated_at "
+                "FROM doc_templates WHERE category = ? ORDER BY name",
+                (category,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT id, name, category, variables, created_at, updated_at "
+                "FROM doc_templates ORDER BY category, name"
+            )
+        rows = await cursor.fetchall()
+
+    result = []
+    for row in rows:
+        d = dict(row)
+        try:
+            d["variables"] = json.loads(d["variables"]) if d["variables"] else []
+        except (json.JSONDecodeError, TypeError):
+            d["variables"] = []
+        result.append(d)
+    return result
+
+
+@templates_router.post("", status_code=201)
+async def create_template(data: TemplateCreate):
+    """Create a new document template."""
+    if not data.name.strip():
+        raise HTTPException(400, "Numele template-ului este obligatoriu.")
+    if not data.content.strip():
+        raise HTTPException(400, "Continutul template-ului este obligatoriu.")
+
+    variables_json = json.dumps(data.variables)
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO doc_templates (name, category, content, variables) "
+            "VALUES (?, ?, ?, ?)",
+            (data.name.strip(), data.category, data.content, variables_json),
+        )
+        await db.commit()
+        template_id = cursor.lastrowid
+
+    await log_activity(
+        action="templates.create",
+        summary=f"Template creat: {data.name} ({data.category})",
+        details={"template_id": template_id},
+    )
+    return {"id": template_id, "message": f"Template '{data.name}' creat cu succes."}
+
+
+@templates_router.get("/{template_id}")
+async def get_template(template_id: int):
+    """Get a specific template with its content."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT * FROM doc_templates WHERE id = ?", (template_id,)
+        )
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "Template-ul nu a fost gasit.")
+    d = dict(row)
+    try:
+        d["variables"] = json.loads(d["variables"]) if d["variables"] else []
+    except (json.JSONDecodeError, TypeError):
+        d["variables"] = []
+    return d
+
+
+@templates_router.put("/{template_id}")
+async def update_template(template_id: int, data: TemplateUpdate):
+    """Update an existing template."""
+    updates = data.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "Niciun camp de actualizat.")
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM doc_templates WHERE id = ?", (template_id,)
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(404, "Template-ul nu a fost gasit.")
+
+        if "variables" in updates:
+            updates["variables"] = json.dumps(updates["variables"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values())
+        values.append(template_id)
+
+        await db.execute(
+            f"UPDATE doc_templates SET {set_clause}, updated_at = datetime('now') WHERE id = ?",
+            values,
+        )
+        await db.commit()
+
+    await log_activity(
+        action="templates.update",
+        summary=f"Template actualizat: ID {template_id}",
+        details={"template_id": template_id, "fields": list(updates.keys())},
+    )
+    return {"message": "Template actualizat cu succes."}
+
+
+@templates_router.delete("/{template_id}")
+async def delete_template(template_id: int):
+    """Delete a template."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM doc_templates WHERE id = ?", (template_id,)
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(404, "Template-ul nu a fost gasit.")
+
+    await log_activity(
+        action="templates.delete",
+        summary=f"Template sters: ID {template_id}",
+        details={"template_id": template_id},
+    )
+    return {"message": "Template sters cu succes."}
+
+
+@templates_router.post("/{template_id}/render")
+async def render_template(template_id: int, data: TemplateRender):
+    """Render a template by replacing {{variable}} placeholders with provided values."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT name, content, variables FROM doc_templates WHERE id = ?",
+            (template_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "Template-ul nu a fost gasit.")
+
+    content = row["content"]
+    template_vars = []
+    try:
+        template_vars = json.loads(row["variables"]) if row["variables"] else []
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Replace {{variable}} placeholders
+    rendered = content
+    for key, value in data.variables.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
+
+    # Check for unresolved variables
+    import re
+    unresolved = re.findall(r"\{\{(\w+)\}\}", rendered)
+
+    return {
+        "name": row["name"],
+        "rendered": rendered,
+        "variables_used": list(data.variables.keys()),
+        "unresolved": unresolved,
+    }

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ---------------------------------------------------------------------------
 # ISO 639-1 language code whitelist & domain validation
 # ---------------------------------------------------------------------------
@@ -54,7 +53,7 @@ def _validate_domain(domain: str) -> str:
 # ---------------------------------------------------------------------------
 
 class TranslateTextRequest(BaseModel):
-    text: str = Field(..., max_length=50000)
+    text: str = Field(..., max_length=500_000)
     source_lang: str = "en"
     target_lang: str = "ro"
     provider: str = "auto"
@@ -141,7 +140,7 @@ class GlossaryUpdateRequest(BaseModel):
 
 
 class CompareRequest(BaseModel):
-    text: str = Field(..., max_length=50000)
+    text: str = Field(..., max_length=500_000)
     source_lang: str = "en"
     target_lang: str = "ro"
     provider_a: str = Field(..., description="Primul provider (ex: deepl, azure, google)")

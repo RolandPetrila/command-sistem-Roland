@@ -12,12 +12,13 @@ import time
 
 # Load .env before anything else reads os.environ
 from dotenv import load_dotenv
+
 load_dotenv()
 from collections import defaultdict
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -103,7 +104,7 @@ ws_manager = ConnectionManager()
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Evenimente la pornire și oprire."""
     # --- Startup ---
     logger.info("Inițializare bază de date...")
@@ -350,20 +351,30 @@ def _get_rate_tier(path: str, method: str) -> tuple[str, int]:
 
 @app.middleware("http")
 async def rate_limiter(request: Request, call_next):
-    """Multi-tier in-memory rate limiting: 2/5/10/60 req/min depending on path."""
+    """Multi-tier in-memory rate limiting cu skip pentru single-user + LAN."""
     path = request.url.path
     if not path.startswith("/api/") or path in ("/api/health", "/api/log/frontend"):
+        return await call_next(request)
+
+    # Skip rate limiting daca e dezactivat global (single-user mode din config)
+    if settings.rate_limit_disabled:
         return await call_next(request)
 
     # Skip rate limiting for test clients (ASGI transport uses test as host)
     if request.base_url.hostname == "test":
         return await call_next(request)
 
+    # Skip pentru IP-uri locale (LAN + Tailscale + Cloudflare Tunnel relay)
     client_ip = request.client.host if request.client else "unknown"
+    if client_ip.startswith(("127.", "192.168.", "10.", "100.", "172.")) or client_ip == "::1":
+        return await call_next(request)
+
     now = time.time()
     window = 60  # 1 minute
 
-    tier_name, limit = _get_rate_tier(path, request.method)
+    tier_name, base_limit = _get_rate_tier(path, request.method)
+    # Multiplicator 10x pe toate tier-urile pentru a permite scenarii de batch normale
+    limit = base_limit * 10
     bucket_key = f"{client_ip}:{tier_name}"
 
     # Clean old entries and check
@@ -409,6 +420,7 @@ for _mod_info in _modules:
 
 # --- Global search router (must be registered before SPA catch-all) ---
 from app.api.routes_search import router as search_router
+
 app.include_router(search_router)
 
 
@@ -449,8 +461,9 @@ async def speed_payload():
 @app.get("/api/diagnostics")
 async def diagnostics():
     """Diagnostic complet: erori recente, stats request-uri, stare sistem."""
-    from app.core.activity_log import get_activity_log
     import shutil
+
+    from app.core.activity_log import get_activity_log
 
     # Recent errors from activity_log
     errors = await get_activity_log(limit=30, action_filter="api.error")
