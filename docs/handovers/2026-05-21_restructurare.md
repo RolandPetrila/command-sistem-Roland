@@ -123,11 +123,11 @@ User a cerut explicit eliminare:
 
 ## Pași imediați la deschidere sesiune nouă în Roland
 
-1. Citește acest fișier (`HANDOVER_RESTRUCTURARE_2026-05-21.md`)
+1. Citește acest fișier (`docs/handovers/2026-05-21_restructurare.md`)
 2. Rulează `/onboard` sau `/status` pentru context Roland general
 3. Întreabă user-ul: "Pornim restructurarea Roland conform blueprint (ETAPA 1) sau direct cu integrare modul bilingv (ETAPA 2)?"
 4. **Recomandare**: ETAPA 1 prima (restructurare), ETAPA 2 după validarea structurii noi.
 
 ## După finalizarea ambelor etape
 
-Acest fișier `HANDOVER_RESTRUCTURARE_2026-05-21.md` se poate șterge sau muta în `archive/` per blueprint Native Workspace (principiul P7 — Arhiva over delete).
+Acest fișier (acum la `docs/handovers/2026-05-21_restructurare.md`) se poate șterge sau muta în `.archive/` per blueprint Native Workspace (principiul P7 — Arhiva over delete).

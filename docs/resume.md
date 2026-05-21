@@ -1,6 +1,6 @@
 # RESUME — Roland Command Center · Punct curent
 
-> **Pentru reluare în terminal nou:** rulează `/onboard` sau cere "citește RESUME_PUNCT_CURENT.md si continua".
+> **Pentru reluare în terminal nou:** rulează `/onboard` sau cere "citește docs/resume.md si continua".
 
 ## 📍 Stare la 2026-05-14
 
@@ -37,7 +37,7 @@
 cd C:\Proiecte\NOU_Calculator_Pret_Traduceri
 
 # Pas 2 — Cere context
-"citeste RESUME_PUNCT_CURENT.md si continua" sau "/onboard"
+"citeste docs/resume.md si continua" sau "/onboard"
 
 # Pas 3 — Verifică sistem
 curl -s http://127.0.0.1:8000/api/health    # local
