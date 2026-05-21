@@ -4,8 +4,8 @@
 
 meta:
   schema_version: "1.0"
-  generated_at: "2026-05-21T19:00:00+03:00"
-  generator: "manual (initial scaffold)"
+  generated_at: "2026-05-22T00:27:47+03:00"
+  generator: "sync-meta.py (auto)"
 
 project:
   name: "Roland Command Center"
@@ -19,8 +19,8 @@ deploy:
   url_local: "http://127.0.0.1:8000"
   url_dev: "http://localhost:5173"
   url_tunnel: "https://*.trycloudflare.com (quick tunnel, random per restart)"
-  last_commit: "7b8f56a"
-  last_commit_msg: "refactor(structure): cleanup radacina + creeaza docs/ + .archive/ (E1 Native Workspace)"
+  last_commit: "4b136ca"
+  last_commit_msg: "feat(workspace): .workspace/ pentru zona AI work â€” drafts + investigations + audit-outputs (E4)"
   branch: "restructurare-native-ws"
   master_at: "5ec3beb"
   master_msg: "docs(checkpoint): Faza 34 docs + plan restructurare Native Workspace (2026-05-21)"
