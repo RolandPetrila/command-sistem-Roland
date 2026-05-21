@@ -70,8 +70,18 @@ test_dashboard.png
 # Sensitive files — API keys in plaintext
 API_KEYS.md
 
+# Cloudflare Tunnel token (NEVER commit — equivalent to private key)
+cloudflared/tunnel_token.txt
+
 # Project artifacts and trash
 /.trash/
+/.codex_global_staging/
+/.claude-outputs/
+
+# Runtime root logs (Faza 34 launcher captures)
+/roland_backend.log
+/roland_start.log
+/logs/
 
 # Dev/simulation scripts at backend root
 /backend/simulate*.py

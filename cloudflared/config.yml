@@ -1,0 +1,5 @@
+# Roland CC -- Zero Trust Tunnel (API auth, fara domeniu)
+tunnel: 776a3c53-bfdb-43e5-b80c-730f2c2a79f1
+
+ingress:
+  - service: http://localhost:5173
