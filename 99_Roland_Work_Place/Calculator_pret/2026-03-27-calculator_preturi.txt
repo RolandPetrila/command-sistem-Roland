@@ -1,0 +1,1570 @@
+ ▐▛███▜▌   Claude Code v2.1.84
+▝▜█████▛▘  Opus 4.6 (1M context) · Claude Max
+  ▘▘ ▝▝    C:\Proiecte\NOU_Calculator_Pret_Traduceri\backend
+
+❯ /model                                                                        
+  ⎿  Set model to Opus 4.6 (1M context) (default) with max effort
+
+❯ vreau sa identifici modulul care calculeaza preturile pentru fisierele        
+traduse. analizeaza logica , propune inbunatatiri deoarece acum nu imi          
+calculeaza bine preturile , simuleaza tu rularile le fisiere pana cand obtii    
+valoarea exacta pt toate                                                        
+
+● Voi analiza modulul de calcul prețuri. Hai să identific componentele
+  relevante.
+
+● Explore(Explore pricing calculator module)
+  ⎿  Done (34 tool uses · 86.9k tokens · 1m 53s)
+  (ctrl+o to expand)
+
+● Am o imagine de ansamblu completă. Acum voi citi fișierele core pentru a
+  analiza logica în detaliu.
+  ⎿  Loaded backend\CLAUDE.md
+
+  Read 4 files (ctrl+o to expand)
+
+● Acum voi citi calibration data, analyzer-ul și cache-ul de referință pentru a
+  putea simula calculele.
+
+  Read 3 files (ctrl+o to expand)
+
+● Acum citesc calibration.py și routes_price.py pentru a vedea fluxul complet.
+
+  Read 2 files (ctrl+o to expand)
+
+● Am citit tot codul. Am identificat problemele. Acum voi crea un script de
+  simulare care testează modelul curent pe toate cele 25 fișiere de referință și
+   apoi propune și testează un model îmbunătățit.
+
+● Write(simulate_pricing.py)
+  ⎿  Wrote 452 lines to simulate_pricing.py
+       1 """
+       2 Simulare pricing - diagnostic + optimizare model.
+       3 Rulare: cd backend && python simulate_pricing.py
+       4 """
+       5 import json
+       6 import math
+       7 import sys
+       8 from pathlib import Path
+       9 
+      10 import numpy as np
+     … +442 lines (ctrl+o to expand)
+
+● Bash(cd C:\Proiecte\NOU_Calculator_Pret_Traduceri\backend && set
+      PYTHONIOENCODING=utf-8 && python simulate_pricing.py 2>&1)
+  ⎿  Error: Exit code 1
+     /usr/bin/bash: line 1: cd: C:ProiecteNOU_Calculator_Pret_Traduceribackend: 
+     No such file or directory
+
+● Bash(cd "C:/Proiecte/NOU_Calculator_Pret_Traduceri/backend" &&
+      PYTHONIOENCODING=utf-8 python simulate_pricing.py 2>&1)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 5m)
+
+  Read 1 file (ctrl+o to expand)
+
+● Simularea încă rulează (grid search). Să aștept rezultatele complete.
+
+  Read 1 file (ctrl+o to expand)
+
+● Grid search-ul durează — are multe combinații. Să verific dacă s-a terminat.
+
+  Read 1 file (ctrl+o to expand)
+
+● Grid search-ul durează prea mult cu modelul curent. Problema e structurală —
+  multiplicatorii de complexitate sunt mult prea agresivi. Voi rescrie simularea
+   cu un model fundamental mai bun.
+
+● Write(simulate_pricing.py)
+  ⎿  Added 378 lines, removed 314 lines
+       1  """
+       2 -Simulare pricing - diagnostic + optimizare model.              
+       2 +Simulare pricing V2 — model nou bazat pe analiza datelor.      
+       3  Rulare: cd backend && python simulate_pricing.py
+       4  """
+       5  import json
+       6  import math
+       7 -import sys                                                     
+       7  from pathlib import Path
+       8  
+       9  import numpy as np
+      11 -from sklearn.preprocessing import StandardScaler               
+      10  
+      11  # ── Load reference data ──
+      12  CACHE = Path(__file__).parent.parent / "Fisiere_Reper_Tarif" / 
+          "Pret_Intreg_100la100" / "_reference_cache.json"
+     ...
+       16  print(f"Loaded {len(REF_DATA)} reference files\n")
+       17  
+       18  # ════════════════════════════════════════════════════════════
+           ═══════
+       21 -# PASUL 1 — Analiza datelor: ce spune realitatea?             
+       19 +# ANALIZA — ce spune realitatea?                              
+       20  # ════════════════════════════════════════════════════════════
+           ═══════
+       21  
+       24 -print("=" * 80)                                               
+       25 -print("PASUL 1: Analiza datelor — Pret per pagina real")      
+       26 -print("=" * 80)                                               
+       27 -                                                              
+       28 -rates = []                                                    
+       29 -for r in REF_DATA:                                            
+       30 -    pp = r["price"] / r["features"]["page_count"]             
+       31 -    rates.append(pp)                                          
+       32 -    print(f"  {r['filename']:>12s}  {r['price']:>8.0f} RON  / 
+          -{r['features']['page_count']:>3d} pg  = {pp:>6.1f} RON/pg"    
+       33 -          f"  | words={r['features']['word_count']:>5d}  imgs=
+          -{r['features']['image_count']:>4d}"                           
+       34 -          f"  tables={r['features']['table_count']:>2d}  densi
+          -ty={r['features']['text_density']:.2f}")                      
+       35 -                                                              
+       36 -print(f"\n  Rata/pagina: min={min(rates):.1f}  max={max(rates)
+          -:.1f}  "                                                      
+       37 -      f"mean={np.mean(rates):.1f}  median={np.median(rates):.1
+          -f}  std={np.std(rates):.1f}")                                 
+       38 -                                                              
+       39 -# Corelatie pret vs features                                  
+       22  prices = np.array([r["price"] for r in REF_DATA])
+       23  pages = np.array([r["features"]["page_count"] for r in REF_DAT
+           A])
+       24  words = np.array([r["features"]["word_count"] for r in REF_DAT
+           A])
+       43 -images = np.array([r["features"]["image_count"] for r in REF_D
+          -ATA])                                                         
+       25 +rates = prices / pages                                        
+       26  
+       45 -corr_pages = np.corrcoef(pages, prices)[0, 1]                 
+       46 -corr_words = np.corrcoef(words, prices)[0, 1]                 
+       47 -corr_images = np.corrcoef(images, prices)[0, 1]               
+       48 -print(f"\n  Corelatii cu pretul: pages={corr_pages:.4f}  words
+          -={corr_words:.4f}  images={corr_images:.4f}")                 
+       49 -print(f"  → page_count este cel mai bun predictor (corelatie {
+          -corr_pages:.4f})")                                            
+       27 +print("=" * 85)                                               
+       28 +print("ANALIZA DATELOR REALE")                                
+       29 +print("=" * 85)                                               
+       30  
+       31 +for r in sorted(REF_DATA, key=lambda x: x["price"]):          
+       32 +    f = r["features"]                                         
+       33 +    pp = r["price"] / f["page_count"]                         
+       34 +    print(f"  {r['filename']:>12s}  {r['price']:>7.0f} RON  /{
+          +f['page_count']:>3d} pg = {pp:>5.1f}/pg"                      
+       35 +          f"  | wpp={f['words_per_page']:>5.1f}  dens={f['text
+          +_density']:.2f}"                                              
+       36 +          f"  imgs/pg={f['image_count']/f['page_count']:>5.1f}
+          +  tbl={f['table_count']:>2d}"                                 
+       37 +          f"  lc={f['layout_complexity']}")                   
+       38 +                                                              
+       39 +print(f"\n  Rate/pagina: min={rates.min():.1f}  max={rates.max
+          +():.1f}  "                                                    
+       40 +      f"mean={rates.mean():.1f}  median={np.median(rates):.1f}
+          +  std={rates.std():.1f}")                                     
+       41 +print(f"  Corelatie pret~pages: {np.corrcoef(pages, prices)[0,
+          +1]:.4f}")                                                     
+       42 +                                                              
+       43 +                                                              
+       44  # ════════════════════════════════════════════════════════════
+           ═══════
+       52 -# PASUL 2 — Simulare MODEL CURENT (calibration.json actual)   
+       45 +# MODEL NOU — Pret = pages × rata_efectiva                    
+       46  # ════════════════════════════════════════════════════════════
+           ═══════
+       47  
+       55 -def calc_base_rate(features, rate_pp=25.0, vol_disc=0.05, cmul
+          -t=None):                                                      
+       56 -    if cmult is None:                                         
+       57 -        cmult = {"simple": 1.0, "moderate": 1.3, "complex": 1.
+          -6}                                                            
+       48 +def model_v2(features, base_rate=61.5, vol_k=0.012, vol_max=0.
+          +15,                                                           
+       49 +             density_bonus=0.0, min_rate=48.0):               
+       50 +    """                                                       
+       51 +    Model V2: Pret direct bazat pe pagini.                    
+       52 +                                                              
+       53 +    price = pages × base_rate × (1 - volume_discount)         
+       54 +                                                              
+       55 +    Volume discount: log-based, creste cu nr pagini.          
+       56 +    Nu are complexity multiplier (datele arata ca NU e necesar
+          +).                                                            
+       57 +    """                                                       
+       58      pc = features["page_count"]
+       59 -    lc = features["layout_complexity"]                        
+       60 -    tc = features["table_count"]                              
+       61 -    ic = features["image_count"]                              
+       62 -    hct = features.get("has_complex_tables", False)           
+       63 -    hd = features.get("has_diagrams", False)                  
+       59  
+       65 -    if lc <= 2:                                               
+       66 -        m = cmult["simple"]                                   
+       67 -    elif lc == 3:                                             
+       68 -        m = cmult["moderate"]                                 
+       60 +    # Volume discount (logaritmic)                            
+       61 +    if pc > 1:                                                
+       62 +        vd = min(vol_k * math.log(pc), vol_max)               
+       63      else:
+       70 -        m = cmult["complex"]                                  
+       64 +        vd = 0.0                                              
+       65  
+       72 -    adj = 0.0                                                 
+       73 -    if hct: adj += 0.1                                        
+       74 -    if pc > 0 and ic / pc > 1.0: adj += 0.1                   
+       75 -    if hd: adj += 0.05                                        
+       76 -    if pc > 0 and tc / pc > 0.5: adj += 0.05                  
+       77 -    m += adj                                                  
+       66 +    effective_rate = base_rate * (1 - vd)                     
+       67  
+       79 -    vd = min(vol_disc * math.log(pc), 0.30) if pc > 1 else 0.0
+       80 -    return round(pc * rate_pp * m * (1 - vd), 2)              
+       68 +    # Density bonus: documente cu text_density < 0.3 (mai mult
+          + DTP) → mic bonus                                             
+       69 +    td = features.get("text_density", 0.5)                    
+       70 +    if density_bonus > 0 and td < 0.35:                       
+       71 +        effective_rate += density_bonus                       
+       72  
+       73 +    # Floor: nu sub min_rate                                  
+       74 +    effective_rate = max(effective_rate, min_rate)            
+       75  
+       83 -def calc_word_rate(features, rate_pw=0.08):                   
+       84 -    wc = features["word_count"]                               
+       85 -    pc = max(features["page_count"], 1)                       
+       86 -    tc = features["table_count"]                              
+       87 -    ic = features["image_count"]                              
+       88 -    hct = features.get("has_complex_tables", False)           
+       89 -    hd = features.get("has_diagrams", False)                  
+       90 -    cc = features.get("chart_count", 0)                       
+       91 -    lc = features["layout_complexity"]                        
+       76 +    return round(pc * effective_rate, 2)                      
+       77  
+       93 -    f = 1.0                                                   
+       94 -    if tc / pc > 0.3: f += 0.10                               
+       95 -    if hct: f += 0.10                                         
+       96 -    if ic / pc > 0.5: f += 0.10                               
+       97 -    if hd: f += 0.10                                          
+       98 -    if cc > 3: f += 0.05                                      
+       99 -    if lc >= 4: f += 0.15                                     
+      100 -    elif lc >= 3: f += 0.10                                   
+      101 -    f = min(f, 2.0)                                           
+      102 -    return round(wc * rate_pw * f, 2)                         
+       78  
+       79 +def model_regresie(features, a=0.0, b=0.0):                   
+       80 +    """                                                       
+       81 +    Regresie liniara: price = a × pages + b                   
+       82 +    """                                                       
+       83 +    return round(a * features["page_count"] + b, 2)           
+       84  
+      105 -def calc_knn(features, all_refs, exclude_idx=None, k=3):      
+      106 -    target = np.array([                                       
+      107 -        float(features.get("page_count", 0)),                 
+      108 -        float(features.get("word_count", 0)),                 
+      109 -        float(features.get("words_per_page", 0)),             
+      110 -        float(features.get("image_count", 0)),                
+      111 -        float(features.get("table_count", 0)),                
+      112 -        float(features.get("has_complex_tables", False)),     
+      113 -        float(features.get("chart_count", 0)),                
+      114 -        float(features.get("has_diagrams", False)),           
+      115 -        float(features.get("layout_complexity", 1)),          
+      116 -        float(features.get("is_scanned", False)),             
+      117 -        float(features.get("text_density", 0)),               
+      118 -    ]).reshape(1, -1)                                         
+       85  
+      120 -    refs = [r for i, r in enumerate(all_refs) if i != exclude_
+          -idx]                                                          
+       86 +def model_knn_pages(features, all_refs, exclude_idx=None, k=3)
+          +:                                                             
+       87 +    """                                                       
+       88 +    KNN doar pe page_count — interpolare 1D.                  
+       89 +    Cel mai stabil KNN posibil.                               
+       90 +    """                                                       
+       91 +    target_pages = features["page_count"]                     
+       92 +    refs = [(r["features"]["page_count"], r["price"])         
+       93 +            for i, r in enumerate(all_refs) if i != exclude_id
+          +x]                                                            
+       94 +                                                              
+       95      if not refs:
+       96          return 0.0
+       97  
+      124 -    ref_vecs = np.array([r["vector"] for r in refs])          
+      125 -    ref_prices = np.array([r["price"] for r in refs])         
+       98 +    # Distanta = |pages_diff|                                 
+       99 +    dists = [(abs(pg - target_pages), pg, price) for pg, price
+          + in refs]                                                     
+      100 +    dists.sort()                                              
+      101 +    nearest = dists[:k]                                       
+      102  
+      127 -    scaler = StandardScaler()                                 
+      128 -    ref_norm = scaler.fit_transform(ref_vecs)                 
+      129 -    tgt_norm = scaler.transform(target)                       
+      103 +    # Ponderare inversa distantei                             
+      104 +    eps = 0.5  # epsilon mai mare pt a evita overfit pe exact 
+          +match                                                         
+      105 +    weights = [1.0 / (d + eps) for d, _, _ in nearest]        
+      106 +    total_w = sum(weights)                                    
+      107  
+      131 -    dists = np.linalg.norm(ref_norm - tgt_norm, axis=1)       
+      132 -    k_actual = min(k, len(refs))                              
+      133 -    nearest = np.argsort(dists)[:k_actual]                    
+      108 +    price = sum(w * p / total_w for w, (_, _, p) in zip(weight
+          +s, nearest))                                                  
+      109 +    return round(price, 2)                                    
+      110  
+      135 -    eps = 1e-10                                               
+      136 -    w = 1.0 / (dists[nearest] + eps)                          
+      137 -    w = w / w.sum()                                           
+      138 -    return round(float(np.dot(w, ref_prices[nearest])), 2)    
+      111  
+      112 +def model_knn_2d(features, all_refs, exclude_idx=None, k=3):  
+      113 +    """                                                       
+      114 +    KNN pe page_count + words_per_page (normalizat).          
+      115 +    2D = mult mai stabil decat 11D.                           
+      116 +    """                                                       
+      117 +    from sklearn.preprocessing import StandardScaler          
+      118  
+      141 -def calc_knn_simple(features, all_refs, exclude_idx=None, k=3)
+          -:                                                             
+      142 -    """KNN simplificat — doar page_count + words_per_page + te
+          -xt_density."""                                                
+      119      target = np.array([
+      144 -        float(features.get("page_count", 0)),                 
+      145 -        float(features.get("words_per_page", 0)),             
+      146 -        float(features.get("text_density", 0)),               
+      120 +        features["page_count"],                               
+      121 +        features.get("words_per_page", 200),                  
+      122      ]).reshape(1, -1)
+      123  
+      124      refs = [r for i, r in enumerate(all_refs) if i != exclude_
+           idx]
+      125      if not refs:
+      126          return 0.0
+      127  
+      153 -    ref_vecs = np.array([[                                    
+      154 -        float(r["features"]["page_count"]),                   
+      155 -        float(r["features"]["words_per_page"]),               
+      156 -        float(r["features"]["text_density"]),                 
+      157 -    ] for r in refs])                                         
+      128 +    ref_vecs = np.array([[r["features"]["page_count"],        
+      129 +                          r["features"].get("words_per_page", 
+          +200)]                                                         
+      130 +                         for r in refs])                      
+      131      ref_prices = np.array([r["price"] for r in refs])
+      132  
+      133      scaler = StandardScaler()
+     ...
+      144      return round(float(np.dot(w, ref_prices[nearest])), 2)
+      145  
+      146  
+      174 -def calc_dtp(features):                                       
+      175 -    pc = max(features["page_count"], 1)                       
+      176 -    ic = features["image_count"]                              
+      177 -    tc = features["table_count"]                              
+      178 -    cc = features.get("chart_count", 0)                       
+      179 -    hct = features.get("has_complex_tables", False)           
+      180 -    hd = features.get("has_diagrams", False)                  
+      181 -    lc = features["layout_complexity"]                        
+      182 -    td = features.get("text_density", 1.0)                    
+      147 +def model_ensemble_v2(features, all_refs, exclude_idx=None,   
+      148 +                       base_rate=61.5, vol_k=0.012, vol_max=0.
+          +15,                                                           
+      149 +                       w_direct=0.5, w_knn=0.5, knn_k=3, knn_t
+          +ype="2d"):                                                    
+      150 +    """                                                       
+      151 +    Ensemble V2: combina model direct (pages × rate) cu KNN si
+          +mplu.                                                         
+      152 +    """                                                       
+      153 +    p_direct = model_v2(features, base_rate=base_rate, vol_k=v
+          +ol_k,                                                         
+      154 +                         vol_max=vol_max)                     
+      155  
+      184 -    ipp = ic / pc                                             
+      185 -    tpp = tc / pc                                             
+      186 -                                                              
+      187 -    if ipp > 5.0 or (tpp > 1.0 and hct) or (hd and lc >= 4 and
+          - ipp > 2.0):                                                  
+      188 -        factor, level = 1.30, "heavy"                         
+      189 -    elif ipp > 2.0 or (tpp > 0.5 and (hct or cc > 0)) or lc >=
+          - 4 or (hd and ipp > 1.0):                                     
+      190 -        factor, level = 1.20, "medium"                        
+      191 -    elif ipp > 0.5 or tpp > 0.2 or cc > 0 or lc >= 3:         
+      192 -        factor, level = 1.10, "light"                         
+      156 +    if knn_type == "1d":                                      
+      157 +        p_knn = model_knn_pages(features, all_refs, exclude_id
+          +x, k=knn_k)                                                   
+      158      else:
+      194 -        factor, level = 1.00, "none"                          
+      159 +        p_knn = model_knn_2d(features, all_refs, exclude_idx, 
+          +k=knn_k)                                                      
+      160  
+      196 -    if td < 0.4 and level != "none":                          
+      197 -        factor = min(factor + 0.05, 1.35)                     
+      198 -    return factor                                             
+      161 +    return round(w_direct * p_direct + w_knn * p_knn, 2)      
+      162  
+      163  
+      201 -def run_model(ref_data, rate_pp, rate_pw, w1, w2, w3, vol_disc
+          -, use_dtp=True,                                               
+      202 -              use_simple_knn=False, label="", knn_k=3):       
+      164 +# ════════════════════════════════════════════════════════════
+          +═══════                                                       
+      165 +# SIMULARE — Test fiecare model pe toate fisierele (leave-one-
+          +out)                                                          
+      166 +# ════════════════════════════════════════════════════════════
+          +═══════                                                       
+      167 +                                                              
+      168 +def evaluate(ref_data, model_fn, label=""):                   
+      169 +    """Evalueaza un model pe toate fisierele cu LOO."""       
+      170      errors_pct = []
+      171      errors_abs = []
+      172      results = []
+     ...
+      174      for i, item in enumerate(ref_data):
+      175          feat = item["features"]
+      176          actual = item["price"]
+      177 +        predicted = model_fn(feat, i)                         
+      178  
+      211 -        pb = calc_base_rate(feat, rate_pp, vol_disc)          
+      212 -        pw = calc_word_rate(feat, rate_pw)                    
+      213 -        if use_simple_knn:                                    
+      214 -            ps = calc_knn_simple(feat, ref_data, exclude_idx=i
+          -, k=knn_k)                                                    
+      215 -        else:                                                 
+      216 -            ps = calc_knn(feat, ref_data, exclude_idx=i, k=knn
+          -_k)                                                           
+      217 -                                                              
+      218 -        tw = w1 + w2 + w3                                     
+      219 -        nw1, nw2, nw3 = w1 / tw, w2 / tw, w3 / tw             
+      220 -                                                              
+      221 -        base_price = nw1 * pb + nw2 * pw + nw3 * ps           
+      222 -                                                              
+      223 -        if use_dtp:                                           
+      224 -            dtp = calc_dtp(feat)                              
+      225 -            final = round(base_price * dtp, 2)                
+      226 -        else:                                                 
+      227 -            final = round(base_price, 2)                      
+      228 -                                                              
+      229 -        err_pct = abs(final - actual) / actual * 100          
+      230 -        err_abs = abs(final - actual)                         
+      179 +        err_pct = abs(predicted - actual) / actual * 100      
+      180 +        err_abs = abs(predicted - actual)                     
+      181          errors_pct.append(err_pct)
+      182          errors_abs.append(err_abs)
+      233 -        results.append((item["filename"], actual, final, err_p
+          -ct, pb, pw, ps))                                              
+      183 +        results.append((item["filename"], actual, predicted, e
+          +rr_pct))                                                      
+      184  
+      185      mape = np.mean(errors_pct)
+      186      mae = np.mean(errors_abs)
+      187 +    within5 = sum(1 for e in errors_pct if e <= 5)            
+      188      within10 = sum(1 for e in errors_pct if e <= 10)
+      189      within20 = sum(1 for e in errors_pct if e <= 20)
+      190      max_err = max(errors_pct)
+     ...
+      194          "mape": mape,
+      195          "mae": mae,
+      196          "max_error": max_err,
+      197 +        "within_5": within5,                                  
+      198          "within_10": within10,
+      199          "within_20": within20,
+      200          "results": results,
+      201      }
+      202  
+      203  
+      252 -def print_results(r):                                         
+      253 -    print(f"\n{'─' * 80}")                                    
+      204 +def print_eval(r, show_all=True):                             
+      205 +    print(f"\n{'─' * 85}")                                    
+      206      print(f"  {r['label']}")
+      207      print(f"  MAPE: {r['mape']:.1f}%  |  MAE: {r['mae']:.0f} R
+           ON  |  "
+      208            f"Max err: {r['max_error']:.1f}%  |  "
+      257 -          f"Within 10%: {r['within_10']}/25  |  Within 20%: {r
+          -['within_20']}/25")                                           
+      258 -    print(f"{'─' * 80}")                                      
+      259 -    print(f"  {'File':>12s}  {'Actual':>8s}  {'Predicted':>10s
+          -}  {'Error%':>7s}  "                                          
+      260 -          f"{'BaseRate':>9s}  {'WordRate':>9s}  {'KNN':>9s}") 
+      261 -    for fn, actual, pred, err, pb, pw, ps in sorted(r["results
+          -"], key=lambda x: -x[3]):                                     
+      262 -        marker = " ←" if err > 20 else ""                     
+      263 -        print(f"  {fn:>12s}  {actual:>8.0f}  {pred:>10.1f}  {e
+          -rr:>6.1f}%  "                                                 
+      264 -              f"{pb:>9.1f}  {pw:>9.1f}  {ps:>9.1f}{marker}")  
+      209 +          f"≤5%: {r['within_5']}/25  |  ≤10%: {r['within_10']}
+          +/25  |  ≤20%: {r['within_20']}/25")                           
+      210 +    if show_all:                                              
+      211 +        print(f"{'─' * 85}")                                  
+      212 +        print(f"  {'File':>12s}  {'Actual':>8s}  {'Predicted':
+          +>10s}  {'Error%':>7s}")                                       
+      213 +        for fn, actual, pred, err in sorted(r["results"], key=
+          +lambda x: -x[3]):                                             
+      214 +            marker = " ←" if err > 20 else ""                 
+      215 +            print(f"  {fn:>12s}  {actual:>8.0f}  {pred:>10.1f}
+          +  {err:>6.1f}%{marker}")                                      
+      216  
+      217  
+      267 -# ── MODEL CURENT ──                                          
+      268 -print(f"\n{'=' * 80}")                                        
+      269 -print("PASUL 2: Simulare MODEL CURENT (calibration.json)")    
+      270 -print(f"{'=' * 80}")                                          
+      218 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      219 +# 1. MODEL CURENT (baseline)                                  
+      220 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      221  
+      272 -r_current = run_model(                                        
+      273 -    REF_DATA,                                                 
+      274 -    rate_pp=25.0, rate_pw=0.295842,                           
+      275 -    w1=0.3, w2=0.4, w3=0.3,                                   
+      276 -    vol_disc=0.05, use_dtp=True,                              
+      277 -    label="MODEL CURENT: rate_pp=25, rate_pw=0.296, w=(0.3,0.4
+          -,0.3), DTP=ON"                                                
+      278 -)                                                             
+      279 -print_results(r_current)                                      
+      222 +print(f"\n{'=' * 85}")                                        
+      223 +print("MODELUL CURENT vs MODELE NOI")                         
+      224 +print(f"{'=' * 85}")                                          
+      225  
+      281 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      282 -# PASUL 3 — Diagnostice: ce merge prost?                      
+      283 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      226 +# Simulez modelul curent (base_rate=25, pw=0.296, DTP, KNN 11D
+          +)                                                             
+      227 +def current_model_base_rate(feat, rate_pp=25.0, vol_disc=0.05)
+          +:                                                             
+      228 +    pc = feat["page_count"]                                   
+      229 +    lc = feat["layout_complexity"]                            
+      230 +    tc = feat["table_count"]                                  
+      231 +    ic = feat["image_count"]                                  
+      232 +    hct = feat.get("has_complex_tables", False)               
+      233 +    hd = feat.get("has_diagrams", False)                      
+      234  
+      285 -print(f"\n{'=' * 80}")                                        
+      286 -print("PASUL 3: DIAGNOSTICE — Probleme identificate")         
+      287 -print(f"{'=' * 80}")                                          
+      235 +    if lc <= 2: m = 1.0                                       
+      236 +    elif lc == 3: m = 1.3                                     
+      237 +    else: m = 1.6                                             
+      238  
+      289 -print("""                                                     
+      290 -  PROBLEMA 1: base_rate_per_page = 25 RON (pretul real e ~60 R
+          -ON/pagina)                                                    
+      291 -  → Metoda base_rate subestimeaza sistematic.                 
+      239 +    adj = 0.0                                                 
+      240 +    if hct: adj += 0.1                                        
+      241 +    if pc > 0 and ic / pc > 1.0: adj += 0.1                   
+      242 +    if hd: adj += 0.05                                        
+      243 +    if pc > 0 and tc / pc > 0.5: adj += 0.05                  
+      244 +    m += adj                                                  
+      245  
+      293 -  PROBLEMA 2: base_rate_per_word = 0.296 RON (normal: 0.04-0.0
+          -8)                                                            
+      294 -  → Optimizatorul a inflat rata/cuvant ca sa compenseze rata/p
+          -agina prea mica.                                              
+      295 -  → Word_rate devine dominant si introduce erori mari.        
+      246 +    vd = min(vol_disc * math.log(pc), 0.30) if pc > 1 else 0.0
+      247 +    return round(pc * rate_pp * m * (1 - vd), 2)              
+      248  
+      297 -  PROBLEMA 3: DTP dublu-contabilizeaza complexitatea          
+      298 -  → base_rate are deja complexity_multiplier (1.0-1.8) pt imag
+          -ini/tabele                                                    
+      299 -  → DTP aplica INCA un multiplicator (1.0-1.35) pe ACELEASI fe
+          -atures                                                        
+      300 -  → Documente complexe: mult_total = 1.6 × 1.30 = 2.08 (exager
+          -at)                                                           
+      249  
+      302 -  PROBLEMA 4: KNN cu 11 features + 25 puncte = instabil       
+      303 -  → image_count de la PyMuPDF e inselator (numara si iconite, 
+          -logos)                                                        
+      304 -  → word_count, words_per_page, page_count sunt corelate → col
+          -inearitate                                                    
+      250 +def current_model_word_rate(feat, rate_pw=0.295842):          
+      251 +    wc = feat["word_count"]                                   
+      252 +    pc = max(feat["page_count"], 1)                           
+      253 +    tc = feat["table_count"]                                  
+      254 +    ic = feat["image_count"]                                  
+      255 +    hct = feat.get("has_complex_tables", False)               
+      256 +    hd = feat.get("has_diagrams", False)                      
+      257 +    cc = feat.get("chart_count", 0)                           
+      258 +    lc = feat["layout_complexity"]                            
+      259  
+      306 -  PROBLEMA 5: weight word_rate = 40% (cel mai mare!)          
+      307 -  → Dar pretul coreleaza MULT mai bine cu page_count (r=0.99) 
+      308 -  → word_count e un predictor secundar                        
+      309 -""")                                                          
+      260 +    f = 1.0                                                   
+      261 +    if tc / pc > 0.3: f += 0.10                               
+      262 +    if hct: f += 0.10                                         
+      263 +    if ic / pc > 0.5: f += 0.10                               
+      264 +    if hd: f += 0.10                                          
+      265 +    if cc > 3: f += 0.05                                      
+      266 +    if lc >= 4: f += 0.15                                     
+      267 +    elif lc >= 3: f += 0.10                                   
+      268 +    return round(wc * rate_pw * min(f, 2.0), 2)               
+      269  
+      311 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      312 -# PASUL 4 — Teste de imbunatatire                             
+      313 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      270  
+      315 -print(f"{'=' * 80}")                                          
+      316 -print("PASUL 4: Teste modele imbunatatite")                   
+      317 -print(f"{'=' * 80}")                                          
+      271 +def current_model_knn_11d(feat, all_refs, exclude_idx, k=3):  
+      272 +    from sklearn.preprocessing import StandardScaler          
+      273 +    target = np.array([                                       
+      274 +        float(feat.get("page_count", 0)),                     
+      275 +        float(feat.get("word_count", 0)),                     
+      276 +        float(feat.get("words_per_page", 0)),                 
+      277 +        float(feat.get("image_count", 0)),                    
+      278 +        float(feat.get("table_count", 0)),                    
+      279 +        float(feat.get("has_complex_tables", False)),         
+      280 +        float(feat.get("chart_count", 0)),                    
+      281 +        float(feat.get("has_diagrams", False)),               
+      282 +        float(feat.get("layout_complexity", 1)),              
+      283 +        float(feat.get("is_scanned", False)),                 
+      284 +        float(feat.get("text_density", 0)),                   
+      285 +    ]).reshape(1, -1)                                         
+      286 +    refs = [r for i, r in enumerate(all_refs) if i != exclude_
+          +idx]                                                          
+      287 +    if not refs: return 0.0                                   
+      288 +    ref_vecs = np.array([r["vector"] for r in refs])          
+      289 +    ref_prices = np.array([r["price"] for r in refs])         
+      290 +    scaler = StandardScaler()                                 
+      291 +    ref_norm = scaler.fit_transform(ref_vecs)                 
+      292 +    tgt_norm = scaler.transform(target)                       
+      293 +    dists = np.linalg.norm(ref_norm - tgt_norm, axis=1)       
+      294 +    k_actual = min(k, len(refs))                              
+      295 +    nearest = np.argsort(dists)[:k_actual]                    
+      296 +    eps = 1e-10                                               
+      297 +    w = 1.0 / (dists[nearest] + eps)                          
+      298 +    w = w / w.sum()                                           
+      299 +    return round(float(np.dot(w, ref_prices[nearest])), 2)    
+      300  
+      319 -# ── Test A: Doar corectare rate_pp la 60, restul la fel ──   
+      320 -r_a = run_model(                                              
+      321 -    REF_DATA,                                                 
+      322 -    rate_pp=60.0, rate_pw=0.295842,                           
+      323 -    w1=0.3, w2=0.4, w3=0.3,                                   
+      324 -    vol_disc=0.05, use_dtp=True,                              
+      325 -    label="TEST A: rate_pp=60, restul neschimbat"             
+      326 -)                                                             
+      327 -print_results(r_a)                                            
+      301  
+      329 -# ── Test B: rate_pp=60, rate_pw=0.06, DTP OFF ──             
+      330 -r_b = run_model(                                              
+      331 -    REF_DATA,                                                 
+      332 -    rate_pp=60.0, rate_pw=0.06,                               
+      333 -    w1=0.5, w2=0.2, w3=0.3,                                   
+      334 -    vol_disc=0.03, use_dtp=False,                             
+      335 -    label="TEST B: rate_pp=60, rate_pw=0.06, w=(0.5,0.2,0.3), 
+          -DTP=OFF"                                                      
+      336 -)                                                             
+      337 -print_results(r_b)                                            
+      302 +def current_model_dtp(feat):                                  
+      303 +    pc = max(feat["page_count"], 1)                           
+      304 +    ic = feat["image_count"]                                  
+      305 +    tc = feat["table_count"]                                  
+      306 +    cc = feat.get("chart_count", 0)                           
+      307 +    hct = feat.get("has_complex_tables", False)               
+      308 +    hd = feat.get("has_diagrams", False)                      
+      309 +    lc = feat["layout_complexity"]                            
+      310 +    td = feat.get("text_density", 1.0)                        
+      311 +    ipp = ic / pc                                             
+      312 +    tpp = tc / pc                                             
+      313 +    if ipp > 5.0 or (tpp > 1.0 and hct) or (hd and lc >= 4 and
+          + ipp > 2.0):                                                  
+      314 +        factor, level = 1.30, "heavy"                         
+      315 +    elif ipp > 2.0 or (tpp > 0.5 and (hct or cc > 0)) or lc >=
+          + 4 or (hd and ipp > 1.0):                                     
+      316 +        factor, level = 1.20, "medium"                        
+      317 +    elif ipp > 0.5 or tpp > 0.2 or cc > 0 or lc >= 3:         
+      318 +        factor, level = 1.10, "light"                         
+      319 +    else:                                                     
+      320 +        factor, level = 1.00, "none"                          
+      321 +    if td < 0.4 and level != "none":                          
+      322 +        factor = min(factor + 0.05, 1.35)                     
+      323 +    return factor                                             
+      324  
+      339 -# ── Test C: rate_pp=55, rate_pw=0.06, DTP OFF, KNN simplu ── 
+      340 -r_c = run_model(                                              
+      341 -    REF_DATA,                                                 
+      342 -    rate_pp=55.0, rate_pw=0.06,                               
+      343 -    w1=0.5, w2=0.15, w3=0.35,                                 
+      344 -    vol_disc=0.02, use_dtp=False, use_simple_knn=True,        
+      345 -    label="TEST C: rate_pp=55, rate_pw=0.06, w=(0.5,0.15,0.35)
+          -, DTP=OFF, KNN simplu"                                        
+      346 -)                                                             
+      347 -print_results(r_c)                                            
+      325  
+      349 -# ── Test D: rate_pp=58, fara word_rate, doar base+KNN ──     
+      350 -r_d = run_model(                                              
+      351 -    REF_DATA,                                                 
+      352 -    rate_pp=58.0, rate_pw=0.06,                               
+      353 -    w1=0.60, w2=0.0, w3=0.40,                                 
+      354 -    vol_disc=0.02, use_dtp=False, use_simple_knn=True,        
+      355 -    label="TEST D: rate_pp=58, w=(0.6, 0, 0.4), DTP=OFF, KNN s
+          -implu"                                                        
+      356 -)                                                             
+      357 -print_results(r_d)                                            
+      326 +def fn_current(feat, idx):                                    
+      327 +    pb = current_model_base_rate(feat)                        
+      328 +    pw = current_model_word_rate(feat)                        
+      329 +    ps = current_model_knn_11d(feat, REF_DATA, idx)           
+      330 +    base_price = 0.3 * pb + 0.4 * pw + 0.3 * ps               
+      331 +    dtp = current_model_dtp(feat)                             
+      332 +    return round(base_price * dtp, 2)                         
+      333  
+      359 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      360 -# PASUL 5 — Optimizare automata (grid search pe parametri chei
+          -e)                                                            
+      361 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      334  
+      363 -print(f"\n{'=' * 80}")                                        
+      364 -print("PASUL 5: Grid search — gasire parametri optimi")       
+      365 -print(f"{'=' * 80}")                                          
+      335 +r_current = evaluate(REF_DATA, fn_current, "MODEL CURENT (rate
+          +_pp=25, rate_pw=0.296, DTP=ON, KNN 11D)")                     
+      336 +print_eval(r_current)                                         
+      337  
+      338 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      339 +# 2. MODEL SIMPLU: doar pages × 61.5                          
+      340 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      341 +                                                              
+      342 +r_simple = evaluate(REF_DATA,                                 
+      343 +    lambda feat, idx: round(feat["page_count"] * 61.5, 2),    
+      344 +    "MODEL SIMPLU: pages × 61.5 (fara ajustari)")             
+      345 +print_eval(r_simple)                                          
+      346 +                                                              
+      347 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      348 +# 3. MODEL V2: pages × rate cu volume discount                
+      349 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      350 +                                                              
+      351 +# Grid search rapid pe parametrii V2                          
+      352 +print(f"\n{'=' * 85}")                                        
+      353 +print("GRID SEARCH — Model V2 (direct page rate)")            
+      354 +print(f"{'=' * 85}")                                          
+      355 +                                                              
+      356  best_mape = 999
+      368 -best_params = {}                                              
+      369 -best_result = None                                            
+      357 +best_p = {}                                                   
+      358  
+      371 -for rpp in [50, 52, 54, 55, 56, 58, 60, 62, 65]:              
+      372 -    for rpw in [0.03, 0.04, 0.05, 0.06, 0.08]:                
+      373 -        for vd in [0.01, 0.015, 0.02, 0.025, 0.03]:           
+      374 -            for w1 in [0.4, 0.5, 0.6, 0.7, 0.8]:              
+      375 -                for w3 in [0.1, 0.2, 0.3, 0.35, 0.4]:         
+      376 -                    w2 = 1.0 - w1 - w3                        
+      377 -                    if w2 < 0:                                
+      378 -                        continue                              
+      379 -                    for use_sknn in [True, False]:            
+      380 -                        for kk in [3, 5]:                     
+      381 -                            r = run_model(                    
+      382 -                                REF_DATA,                     
+      383 -                                rate_pp=rpp, rate_pw=rpw,     
+      384 -                                w1=w1, w2=w2, w3=w3,          
+      385 -                                vol_disc=vd,                  
+      386 -                                use_dtp=False,                
+      387 -                                use_simple_knn=use_sknn,      
+      388 -                                knn_k=kk,                     
+      389 -                                label="grid"                  
+      390 -                            )                                 
+      391 -                            if r["mape"] < best_mape:         
+      392 -                                best_mape = r["mape"]         
+      393 -                                best_params = {               
+      394 -                                    "rate_pp": rpp, "rate_pw":
+          - rpw,                                                         
+      395 -                                    "w1": w1, "w2": w2, "w3": 
+          -w3,                                                           
+      396 -                                    "vol_disc": vd, "knn_simpl
+          -e": use_sknn,                                                 
+      397 -                                    "knn_k": kk,              
+      398 -                                }                             
+      399 -                                best_result = r               
+      359 +for br in np.arange(55, 68, 0.5):                             
+      360 +    for vk in np.arange(0.005, 0.035, 0.005):                 
+      361 +        for vm in np.arange(0.08, 0.20, 0.02):                
+      362 +            r = evaluate(REF_DATA,                            
+      363 +                lambda feat, idx, _br=br, _vk=vk, _vm=vm:     
+      364 +                    model_v2(feat, base_rate=_br, vol_k=_vk, v
+          +ol_max=_vm),                                                  
+      365 +                "grid")                                       
+      366 +            if r["mape"] < best_mape:                         
+      367 +                best_mape = r["mape"]                         
+      368 +                best_p = {"base_rate": br, "vol_k": vk, "vol_m
+          +ax": vm}                                                      
+      369  
+      401 -print(f"\n  BEST MAPE: {best_mape:.2f}%")                     
+      402 -print(f"  Parametri: {best_params}")                          
+      370 +print(f"  Best V2 direct: MAPE={best_mape:.2f}%  params={best_
+          +p}")                                                          
+      371  
+      404 -# Rerun best with label                                       
+      405 -r_best = run_model(                                           
+      406 -    REF_DATA,                                                 
+      407 -    rate_pp=best_params["rate_pp"],                           
+      408 -    rate_pw=best_params["rate_pw"],                           
+      409 -    w1=best_params["w1"],                                     
+      410 -    w2=best_params["w2"],                                     
+      411 -    w3=best_params["w3"],                                     
+      412 -    vol_disc=best_params["vol_disc"],                         
+      413 -    use_dtp=False,                                            
+      414 -    use_simple_knn=best_params["knn_simple"],                 
+      415 -    knn_k=best_params["knn_k"],                               
+      416 -    label=f"BEST: rate_pp={best_params['rate_pp']}, rate_pw={b
+          -est_params['rate_pw']}, "                                     
+      417 -          f"w=({best_params['w1']},{best_params['w2']},{best_p
+          -arams['w3']}), "                                              
+      418 -          f"vol_disc={best_params['vol_disc']}, knn_simple={be
+          -st_params['knn_simple']}, k={best_params['knn_k']}"           
+      419 -)                                                             
+      420 -print_results(r_best)                                         
+      372 +r_v2 = evaluate(REF_DATA,                                     
+      373 +    lambda feat, idx: model_v2(feat, **best_p),               
+      374 +    f"MODEL V2 DIRECT: br={best_p['base_rate']}, vk={best_p['v
+          +ol_k']:.3f}, vm={best_p['vol_max']:.2f}")                     
+      375 +print_eval(r_v2)                                              
+      376  
+      422 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      423 -# PASUL 6 — Comparatie finala                                 
+      424 -# ════════════════════════════════════════════════════════════
+          -═══════                                                       
+      377 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      378 +# 4. MODEL V2 + KNN 1D (pages only)                           
+      379 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      380  
+      426 -print(f"\n{'=' * 80}")                                        
+      427 -print("PASUL 6: COMPARATIE FINALA")                           
+      428 -print(f"{'=' * 80}")                                          
+      381 +print(f"\n{'=' * 85}")                                        
+      382 +print("GRID SEARCH — Ensemble V2 (direct + KNN)")             
+      383 +print(f"{'=' * 85}")                                          
+      384  
+      430 -print(f"""                                                    
+      431 -  {'Metric':<25s}  {'CURENT':>12s}  {'BEST':>12s}  {'Imbunatat
+          -ire':>15s}                                                    
+      432 -  {'─' * 70}                                                  
+      433 -  {'MAPE':<25s}  {r_current['mape']:>11.1f}%  {r_best['mape']:
+          ->11.1f}%  {r_current['mape'] - r_best['mape']:>+14.1f}%       
+      434 -  {'MAE (RON)':<25s}  {r_current['mae']:>12.0f}  {r_best['mae'
+          -]:>12.0f}  {r_current['mae'] - r_best['mae']:>+15.0f}         
+      435 -  {'Max error %':<25s}  {r_current['max_error']:>11.1f}%  {r_b
+          -est['max_error']:>11.1f}%  {r_current['max_error'] - r_best['m
+          -ax_error']:>+14.1f}%                                          
+      436 -  {'Within 10%':<25s}  {r_current['within_10']:>10d}/25  {r_be
+          -st['within_10']:>10d}/25                                      
+      437 -  {'Within 20%':<25s}  {r_current['within_20']:>10d}/25  {r_be
+          -st['within_20']:>10d}/25                                      
+      438 -""")                                                          
+      385 +best_mape2 = 999                                              
+      386 +best_p2 = {}                                                  
+      387  
+      440 -# Per-file comparison                                         
+      441 -print(f"  {'File':>12s}  {'Actual':>8s}  {'Curent':>10s}  {'Er
+          -r_C%':>7s}  {'Best':>10s}  {'Err_B%':>7s}  {'Better?':>8s}")  
+      388 +for br in np.arange(55, 68, 1.0):                             
+      389 +    for vk in np.arange(0.005, 0.03, 0.005):                  
+      390 +        for vm in np.arange(0.08, 0.18, 0.02):                
+      391 +            for wd in np.arange(0.3, 0.8, 0.1):               
+      392 +                wk = 1.0 - wd                                 
+      393 +                for kt in ["1d", "2d"]:                       
+      394 +                    for kk in [3, 5]:                         
+      395 +                        r = evaluate(REF_DATA,                
+      396 +                            lambda feat, idx, _br=br, _vk=vk, 
+          +_vm=vm, _wd=wd, _wk=wk, _kt=kt, _kk=kk:                       
+      397 +                                model_ensemble_v2(feat, REF_DA
+          +TA, idx,                                                      
+      398 +                                    base_rate=_br, vol_k=_vk, 
+          +vol_max=_vm,                                                  
+      399 +                                    w_direct=_wd, w_knn=_wk, k
+          +nn_k=_kk, knn_type=_kt),                                      
+      400 +                            "grid")                           
+      401 +                        if r["mape"] < best_mape2:            
+      402 +                            best_mape2 = r["mape"]            
+      403 +                            best_p2 = {"base_rate": br, "vol_k
+          +": vk, "vol_max": vm,                                         
+      404 +                                       "w_direct": wd, "w_knn"
+          +: wk, "knn_type": kt, "knn_k": kk}                            
+      405 +                                                              
+      406 +print(f"  Best Ensemble V2: MAPE={best_mape2:.2f}%  params={be
+          +st_p2}")                                                      
+      407 +                                                              
+      408 +r_ens = evaluate(REF_DATA,                                    
+      409 +    lambda feat, idx: model_ensemble_v2(feat, REF_DATA, idx, *
+          +*best_p2),                                                    
+      410 +    f"ENSEMBLE V2: {best_p2}")                                
+      411 +print_eval(r_ens)                                             
+      412 +                                                              
+      413 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      414 +# 5. REGRESIE LINIARA (best fit)                              
+      415 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      416 +                                                              
+      417 +# Fit: price = a * pages + b                                  
+      418 +A = np.vstack([pages, np.ones(len(pages))]).T                 
+      419 +result = np.linalg.lstsq(A, prices, rcond=None)               
+      420 +a_fit, b_fit = result[0]                                      
+      421 +print(f"\n  Regresie liniara: price = {a_fit:.2f} × pages + {b
+          +_fit:.2f}")                                                   
+      422 +                                                              
+      423 +r_reg = evaluate(REF_DATA,                                    
+      424 +    lambda feat, idx: round(a_fit * feat["page_count"] + b_fit
+          +, 2),                                                         
+      425 +    f"REGRESIE LINIARA: price = {a_fit:.2f}×pages + {b_fit:.2f
+          +}")                                                           
+      426 +print_eval(r_reg)                                             
+      427 +                                                              
+      428 +# Fit through origin: price = a * pages                       
+      429 +a_origin = np.sum(pages * prices) / np.sum(pages ** 2)        
+      430 +print(f"  Regresie prin origine: price = {a_origin:.2f} × page
+          +s")                                                           
+      431 +                                                              
+      432 +r_reg0 = evaluate(REF_DATA,                                   
+      433 +    lambda feat, idx: round(a_origin * feat["page_count"], 2),
+      434 +    f"REGRESIE PRIN ORIGINE: price = {a_origin:.2f}×pages")   
+      435 +print_eval(r_reg0, show_all=False)                            
+      436 +                                                              
+      437 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      438 +# 6. MODEL HIBRID — regresie + KNN corectie                   
+      439 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      440 +                                                              
+      441 +print(f"\n{'=' * 85}")                                        
+      442 +print("GRID SEARCH — Model HIBRID (regresie + KNN corectie)") 
+      443 +print(f"{'=' * 85}")                                          
+      444 +                                                              
+      445 +best_mape3 = 999                                              
+      446 +best_p3 = {}                                                  
+      447 +                                                              
+      448 +for a in np.arange(50, 65, 1.0):                              
+      449 +    for b in np.arange(-10, 80, 10):                          
+      450 +        for wd in np.arange(0.4, 0.9, 0.1):                   
+      451 +            wk = 1.0 - wd                                     
+      452 +            for kk in [3, 5]:                                 
+      453 +                r = evaluate(REF_DATA,                        
+      454 +                    lambda feat, idx, _a=a, _b=b, _wd=wd, _wk=
+          +wk, _kk=kk:                                                   
+      455 +                        round(_wd * (_a * feat["page_count"] +
+          + _b) +                                                        
+      456 +                              _wk * model_knn_2d(feat, REF_DAT
+          +A, idx, k=_kk), 2),                                           
+      457 +                    "grid")                                   
+      458 +                if r["mape"] < best_mape3:                    
+      459 +                    best_mape3 = r["mape"]                    
+      460 +                    best_p3 = {"a": a, "b": b, "w_reg": wd, "w
+          +_knn": wk, "knn_k": kk}                                       
+      461 +                                                              
+      462 +print(f"  Best Hibrid: MAPE={best_mape3:.2f}%  params={best_p3
+          +}")                                                           
+      463 +                                                              
+      464 +r_hybrid = evaluate(REF_DATA,                                 
+      465 +    lambda feat, idx: round(                                  
+      466 +        best_p3["w_reg"] * (best_p3["a"] * feat["page_count"] 
+          ++ best_p3["b"]) +                                             
+      467 +        best_p3["w_knn"] * model_knn_2d(feat, REF_DATA, idx, k
+          +=best_p3["knn_k"]), 2),                                       
+      468 +    f"HIBRID: {best_p3}")                                     
+      469 +print_eval(r_hybrid)                                          
+      470 +                                                              
+      471 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      472 +# COMPARATIE FINALA                                           
+      473 +# ════════════════════════════════════════════════════════════
+          +══                                                            
+      474 +                                                              
+      475 +print(f"\n{'=' * 85}")                                        
+      476 +print("COMPARATIE FINALA — TOATE MODELELE")                   
+      477 +print(f"{'=' * 85}")                                          
+      478 +                                                              
+      479 +all_models = [r_current, r_simple, r_v2, r_ens, r_reg, r_hybri
+          +d]                                                            
+      480 +print(f"\n  {'Model':<45s}  {'MAPE':>6s}  {'MAE':>6s}  {'Max%'
+          +:>6s}  {'≤5%':>5s}  {'≤10%':>5s}  {'≤20%':>5s}")              
+      481 +print(f"  {'─' * 85}")                                        
+      482 +for m in sorted(all_models, key=lambda x: x["mape"]):         
+      483 +    short = m["label"][:44]                                   
+      484 +    print(f"  {short:<45s}  {m['mape']:>5.1f}%  {m['mae']:>5.0
+          +f}  {m['max_error']:>5.1f}%"                                  
+      485 +          f"  {m['within_5']:>3d}/25  {m['within_10']:>3d}/25 
+          + {m['within_20']:>3d}/25")                                    
+      486 +                                                              
+      487 +# Cel mai bun model — detalii per fisier                      
+      488 +best_model = min(all_models, key=lambda x: x["mape"])         
+      489 +print(f"\n{'=' * 85}")                                        
+      490 +print(f"CEL MAI BUN MODEL — detalii per fisier")              
+      491 +print(f"{'=' * 85}")                                          
+      492 +print_eval(best_model)                                        
+      493 +                                                              
+      494 +# Comparatie per fisier: curent vs best                       
+      495 +print(f"\n{'=' * 85}")                                        
+      496 +print("COMPARATIE PER FISIER: CURENT vs BEST")                
+      497 +print(f"{'=' * 85}")                                          
+      498 +                                                              
+      499  curr_map = {r[0]: r for r in r_current["results"]}
+      443 -best_map = {r[0]: r for r in r_best["results"]}               
+      500 +best_map = {r[0]: r for r in best_model["results"]}           
+      501 +                                                              
+      502 +print(f"  {'File':>12s}  {'Actual':>7s}  {'Curent':>8s}  {'Err
+          +_C':>6s}  {'Best':>8s}  {'Err_B':>6s}  {'Δ':>7s}")            
+      503 +print(f"  {'─' * 70}")                                        
+      504  for fn in sorted(curr_map.keys(), key=lambda x: float(x.replac
+           e('.pdf', ''))):
+      505      c = curr_map[fn]
+      506      b = best_map[fn]
+      447 -    better = "✓" if b[3] < c[3] else "="                      
+      448 -    print(f"  {fn:>12s}  {c[1]:>8.0f}  {c[2]:>10.1f}  {c[3]:>6
+          -.1f}%  {b[2]:>10.1f}  {b[3]:>6.1f}%  {better:>8s}")           
+      507 +    delta = c[3] - b[3]                                       
+      508 +    print(f"  {fn:>12s}  {c[1]:>7.0f}  {c[2]:>8.1f}  {c[3]:>5.
+          +1f}%  {b[2]:>8.1f}  {b[3]:>5.1f}%  {delta:>+6.1f}%")          
+      509  
+      450 -print(f"\n{'=' * 80}")                                        
+      510 +print(f"\n  CURENT: MAPE={r_current['mape']:.1f}%")           
+      511 +print(f"  BEST:   MAPE={best_model['mape']:.1f}%")            
+      512 +print(f"  Imbunatatire: {r_current['mape'] - best_model['mape'
+          +]:.1f} puncte procentuale")                                   
+      513 +                                                              
+      514 +print(f"\n{'=' * 85}")                                        
+      515  print("SIMULARE COMPLETA")
+      452 -print(f"{'=' * 80}")                                          
+      516 +print(f"{'=' * 85}")                                          
+
+● Bash(cd "C:/Proiecte/NOU_Calculator_Pret_Traduceri/backend" &&
+      PYTHONIOENCODING=utf-8 python simulate_pricing.py 2>&1)
+  ⎿  Loaded 25 reference files
+
+     ======================================================================
+     … +274 lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+● Rezultate Simulare — Analiză Completă
+
+  Diagnostic: 5 probleme structurale în modelul curent
+
+  ┌─────┬─────────────────────────────────────────┬─────────────────────────┐
+  │  #  │                Problemă                 │         Impact          │
+  ├─────┼─────────────────────────────────────────┼─────────────────────────┤
+  │ 1   │ base_rate_per_page = 25 RON             │ Subestimează sistematic │
+  │     │ (realitatea: ~61 RON/pagină)            │                         │
+  ├─────┼─────────────────────────────────────────┼─────────────────────────┤
+  │ 2   │ base_rate_per_word = 0.296 RON (normal: │ Optimizatorul a         │
+  │     │  0.04-0.08)                             │ inflat-o artificial     │
+  ├─────┼─────────────────────────────────────────┼─────────────────────────┤
+  │ 3   │ DTP dublu-contabilizează complexitatea  │ Documentele complexe:   │
+  │     │ cu base_rate                            │ 1.6 × 1.30 = 2.08x      │
+  ├─────┼─────────────────────────────────────────┼─────────────────────────┤
+  │ 4   │ KNN cu 11 features + 25 puncte =        │ image_count de la       │
+  │     │ instabil                                │ PyMuPDF e înșelător     │
+  ├─────┼─────────────────────────────────────────┼─────────────────────────┤
+  │ 5   │ word_rate primește 40% weight, dar      │ Predictor secundar      │
+  │     │ page_count corelează r=0.99 cu prețul   │ tratat ca primar        │
+  └─────┴─────────────────────────────────────────┴─────────────────────────┘
+
+  Comparație modele (pe cele 25 fișiere referință, leave-one-out):
+
+  ┌───────────────────────────────┬───────┬───────┬───────┬───────┬────────┐
+  │             Model             │ MAPE  │  MAE  │ ≤10%  │ ≤20%  │  Max   │
+  │                               │       │       │       │       │  err   │
+  ├───────────────────────────────┼───────┼───────┼───────┼───────┼────────┤
+  │ MODEL CURENT                  │ 74.2% │ 522   │ 9/25  │ 11/25 │ 444%   │
+  │                               │       │ RON   │       │       │        │
+  ├───────────────────────────────┼───────┼───────┼───────┼───────┼────────┤
+  │ MODEL V2 (pages × 61 +        │ 6.4%  │ 158   │ 17/25 │ 24/25 │ 23%    │
+  │ vol.discount)                 │       │ RON   │       │       │        │
+  └───────────────────────────────┴───────┴───────┴───────┴───────┴────────┘
+
+  Îmbunătățire: de la 74.2% eroare la 6.4% — de 11.6x mai precis.
+
+  Ce s-a descoperit:
+
+  - Prețul real e ~61 RON × număr_pagini cu variație ±10 RON/pagină
+  - Complexity multipliers, DTP, word_rate — toate adaugă zgomot, nu precizie
+  - Un model simplu (pages × 61) bate ORICE combinație complexă
+
+  Propunere implementare:
+
+  1. ensemble.py — formula nouă: price = pages × 61 × (1 - 0.005 × ln(pages)),
+  fără DTP
+  2. calibration.json — parametri noi: base_rate_per_page=61, 
+  volume_discount=0.005
+  3. base_rate.py — complexity multipliers reduse la 1.0 (nu mai deformează)
+  4. calibration.py — bounds actualizate pentru noul model
+  5. Păstrez structura de răspuns API (method breakdown) pentru compatibilitate
+  frontend
+
+  Celelalte metode (word_rate, KNN) rămân vizibile ca info, dar prețul final
+  vine din metoda directă per-pagină.
+
+  Confirm să implementez?
+
+● Ran 2 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: Failed with non-blocking status code: bash:
+  .claude/hooks/session-stop.sh: No such file or directory
+
+✻ Baked for 27m 0s
+
+❯ nu crezi ca e cam scumpa o pagina tradusa cu 61 lei ? care sunt conditiile ?  
+incarcarea in pagina ? layout-ul ? dezvolta logica ta                           
+
+● Ai dreptate. 61 RON/pagină e media din datele tale, dar nu reflectă logica
+  reală. O pagină cu 300 cuvinte text dens ≠ o pagină cu 50 cuvinte și diagrame.
+
+  Hai să analizez ce determină de fapt prețul din fișierele tale de referință.
+
+● Write(simulate_v3.py)
+  ⎿  Wrote 396 lines to simulate_v3.py
+       1 """
+       2 Simulare V3 — Analiza logica de business: CE determina pretul un
+         ei pagini?
+       3 
+       4 Ipoteza: price = word_cost + page_cost
+       5   - word_cost = nr_cuvinte × tarif_per_cuvant (munca de traducer
+         e)
+       6   - page_cost = nr_pagini × tarif_per_pagina (DTP, layout, stamp
+         ilare, notarizare)
+       7 
+       8 Astfel:
+       9   - Pagina cu text dens (300 cuv) → costa mai mult (mai mult de 
+         tradus)
+      10   - Pagina cu putine cuvinte + imagini → costa mai putin pt trad
+         ucere, dar DTP
+     … +386 lines (ctrl+o to expand)
+  ⎿  PostToolUse:Write hook error
+
+● Bash(cd "C:/Proiecte/NOU_Calculator_Pret_Traduceri/backend" &&
+      PYTHONIOENCODING=utf-8 python simulate_v3.py 2>&1)
+  ⎿  ======================================================================
+     ====================
+     ANALIZA 1: Ce determina rata per pagina?
+     … +216 lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+● Rezultatele sunt foarte interesante. Iată ce spun datele tale:
+
+  Ce am descoperit
+
+  1. Corelații cu rata/pagină
+
+  words_per_page  → -0.41  (ușor negativ, dar slab)
+  text_density    → -0.41  (la fel)
+  images_per_page → +0.22  (foarte slab)
+  layout_complexity → +0.02 (practic zero)
+  page_count      → -0.12  (neglijabil)
+
+  Concluzie: niciunul din features nu explică de ce unele pagini costă 52 RON și
+   altele 78 RON. Variația e probabil de la factori de business (client,
+  urgență, negociere) pe care sistemul nu îi vede.
+
+  2. Descompunerea pret = cuvinte × tarif + pagini × tarif
+
+  Am testat toate combinațiile posibile. Cel mai bun fit:
+  - word_rate = 0.01 RON/cuvânt (practic neglijabil!)
+  - page_rate = 59 RON/pagină
+  - Componenta word contribuie doar 1-6% din preț
+
+  Asta înseamnă: în datele tale de referință, prețul e determinat aproape 100% 
+  de nr. pagini, NU de cuvinte.
+
+  3. Întrebarea ta — e corect 61/pagină?
+
+  Depinde de logica TA de business. Datele arată 50-78 RON/pagină fără un
+  pattern clar. Dar o logică de business realistă ar fi:
+
+  Pagină text simplu (300 cuv, fără imagini): ~50 RON
+    → 300 × 0.05/cuv = 15 RON traducere + 35 RON formatar/notarizare
+
+  Pagină tehnică medie (180 cuv, câteva imagini): ~60 RON
+    → 180 × 0.05/cuv = 9 RON + 35 RON + 16 RON DTP
+
+  Pagină cu diagrame (60 cuv, multe imagini): ~65 RON
+    → 60 × 0.05/cuv = 3 RON + 35 RON + 27 RON DTP complex
+
+  Dar datele tale NU confirmă asta. 122.pdf are 273 cuv/pg și costă 61/pg, iar
+  150.pdf are 61 cuv/pg și costă 75/pg. Diferența nu vine din cuvinte sau layout
+   — vine din altceva.
+
+  ---
+  Întrebări pentru tine (ca să construiesc modelul corect):
+
+  1. Cum stabilești prețul real? Per pagină fix? Per cuvânt? Combinat?
+  2. Există un tarif minim per pagină? (ex: chiar dacă pagina are 10 cuvinte,
+  tot ceri X RON?)
+  3. Contează tipul documentului? (tehnic auto, certificat naștere, manual,
+  etc.)
+  4. DTP-ul se tarifează separat? Sau e inclus în prețul per pagină?
+  5. Fișierele din Fisiere_Reper_Tarif au prețuri 100% corecte? Sau unele au
+  fost negociate/ajustate?
+
+  Cu răspunsurile tale pot construi un model care reflectă logica TA de pricing,
+   nu doar un fit matematic pe date.
+
+● Ran 2 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: Failed with non-blocking status code: bash:
+  .claude/hooks/session-stop.sh: No such file or directory
+
+✻ Cooked for 5m 38s
+
+❯ analizeaza fisierele din locatia C:\Proiecte\NOU_Calculator_Pret_Traduceri -  
+Copy-17.03.26 , acolo este defalcat acest sistem inainte sa fie implementate    
+toate functiile existente acum in locatia actuala. acolo trebuie sa vezi toata  
+logica si cerintele mele . dupa aceea reformulreaza intrebarile si pune /ask    
+
+● Explore(Explore original pricing logic)
+  ⎿  Done (28 tool uses · 81.4k tokens · 1m 18s)
+  (ctrl+o to expand)
+
+● Voi citi documentele originale de cerințe pentru a înțelege exact logica ta de
+   pricing.
+
+● Explore(Find original requirements docs)
+  ⎿  Done (22 tool uses · 83.6k tokens · 1m 23s)
+  (ctrl+o to expand)
+
+● Am analizat proiectul original. Am găsit date cruciale: cercetarea de piață
+  (market_rates.json) și cerințele originale (Cerinta_Roland.md). Acum pot pune
+  întrebări mult mai precise.
+
+● Am găsit în proiectul original cercetarea de competitori (12 agenții
+  analizate) și market_rates.json. Acum am context complet. Iată întrebările
+  reformulate:
+
+● User answered Claude's questions:
+  ⎿  · Cum tarifiezi traducerile? Competitorii tai (din market_rates.json) 
+     tarifează la 30-45 RON per pagină standard (2000 caractere), dar fișierele 
+     tale de referință arată 50-78 RON per pagină fizică. Care e unitatea ta de 
+     tarifare? → nu stiu , tu mi-ai intocmit aceste formule . preturile din 
+     numele fisierelor sunt cele cu care alt translator a efectuat traducerea 
+     acelui fisier
+     · Cele 26 fișiere din Fisiere_Reper_Tarif au prețuri care variază de la 50 
+     la 78 RON/pagină. De ce variază? Ce face o pagină mai scumpă sau mai 
+     ieftină? → Complexitate layout
+     · Prețurile din cele 26 fișiere de referință sunt exacte (facturi reale) 
+     sau estimate/rotunjite? → Prețuri exacte din facturi
+     · Există un tarif MINIM per pagină sau per document? (Ex: 120.pdf are doar 
+     138 cuvinte pe 2 pagini dar costă 120 RON = 60/pg, ceea ce e mult pentru 69
+      cuvinte/pagină) → Nu, nu am tarif minim
+
+● Acum înțeleg! Prețurile sunt facturi reale de la alt translator. Complexitatea
+   layout-ului face diferența. Nu ai tarif minim. Voi construi modelul final
+  bazat pe aceste informații.
+
+● Write(simulate_final.py)
+  ⎿  Wrote 347 lines to simulate_final.py
+      1 """
+      2 Simulare FINALA — Model bazat pe raspunsurile utilizatorului:
+      3   1. Preturile sunt facturi EXACTE de la alt translator
+      4   2. Complexitatea layout-ului (imagini, tabele, diagrame) face p
+        agina mai scumpa
+      5   3. NU exista tarif minim
+      6   4. text_density e proxy pt complexitate: densitate mica = mai m
+        ult DTP = mai scump
+      7 
+      8 Model: price = pages × rate_per_page(density, volume)
+      9   rate_per_page = base - slope × text_density - vol_k × ln(pages)
+     … +337 lines (ctrl+o to expand)
+  ⎿  PostToolUse:Write hook error
+
+● Bash(cd "C:/Proiecte/NOU_Calculator_Pret_Traduceri/backend" &&
+      PYTHONIOENCODING=utf-8 python simulate_final.py 2>&1)
+  ⎿  ======================================================================
+     =========================
+     MODEL A: rate/pg = base - slope × text_density - vol × ln(pages)
+     … +99 lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+● Rezultat Final — Model optimal bazat pe complexitate
+
+  Formula câștigătoare (MAPE: 5.72%, de la 74.2%):
+
+  rata/pagină = 59 - 3 × (cuvinte_per_pg / 200 - 1) + 4 × (charts / pg)
+  preț = pagini × rata/pagină
+
+  Logica de business (confirmă ce ai spus):
+
+  ┌────────────────────┬────────────┬────────┬─────────┬───────────────────┐
+  │     Tip pagină     │ Cuvinte/pg │ Charts │ Rată/pg │    Explicație     │
+  ├────────────────────┼────────────┼────────┼─────────┼───────────────────┤
+  │ Cu diagrame        │ ~80        │ 2/pg   │ 68.8    │ Puțin text, mult  │
+  │ tehnice            │            │        │ RON     │ DTP               │
+  ├────────────────────┼────────────┼────────┼─────────┼───────────────────┤
+  │ Tehnică mixtă      │ ~180       │ 0      │ 59.3    │ Medie             │
+  │                    │            │        │ RON     │                   │
+  ├────────────────────┼────────────┼────────┼─────────┼───────────────────┤
+  │ Text dens, fără    │ ~300       │ 0      │ 57.5    │ Layout simplu     │
+  │ imagini            │            │        │ RON     │                   │
+  └────────────────────┴────────────┴────────┴─────────┴───────────────────┘
+
+  Acuratețe pe cele 25 fișiere:
+
+  ┌─────────────┬──────────────┬───────────┐
+  │   Metrică   │ Model CURENT │ Model NOU │
+  ├─────────────┼──────────────┼───────────┤
+  │ MAPE        │ 74.2%        │ 5.7%      │
+  ├─────────────┼──────────────┼───────────┤
+  │ ≤10% eroare │ 9/25         │ 19/25     │
+  ├─────────────┼──────────────┼───────────┤
+  │ ≤15% eroare │ —            │ 22/25     │
+  ├─────────────┼──────────────┼───────────┤
+  │ Max eroare  │ 444%         │ 23%       │
+  └─────────────┴──────────────┴───────────┘
+
+  Cele 3 fișiere rămase cu >15% eroare:
+
+  - 4670.pdf (23%): actual 78 RON/pg — cel mai scump din set, probabil document
+  foarte complex
+  - 2100.pdf (17%): actual 50 RON/pg — probabil negociat cu discount mare
+  - 1485.pdf (16%): actual 71 RON/pg — ușor peste medie
+
+  Aceste 3 sunt outliere de business — variație care vine din factori pe care
+  sistemul nu îi poate vedea (negociere client, urgență, dificultate text).
+
+  Confirm implementarea acestui model în codul actual?
+
+● Ran 2 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: Failed with non-blocking status code: bash:
+  .claude/hooks/session-stop.sh: No such file or directory
+
+✻ Sautéed for 11m 33s
+
+● Background command "Run pricing simulation script" completed (exit code 0)
+
+● Simularea V1 din background s-a terminat, dar am depășit-o deja cu simulările
+  V3 și finală care au dat rezultate mai bune (MAPE 5.72%).
+
+  Aștept confirmarea ta pentru implementare.
+
+● Ran 2 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: Failed with non-blocking status code: bash:
+  .claude/hooks/session-stop.sh: No such file or directory
+
+❯ deci preturile conform acestei logici nou cum ar fi ? da-mi 5 exemple din     
+pdf-urile existente dar cu continut diferit . sa vad diferentele . apoi o sa    
+iti aloc fisiere noi care nu sunt in documentatie sa vad cum le calculeaza      
+
+● Write(demo_preturi.py)
+  ⎿  Wrote 83 lines to demo_preturi.py
+       1 """
+       2 Demo preturi — 5 fisiere cu continut diferit, model NOU vs CUREN
+         T vs REAL.
+       3 Formula: rate/pg = 59 - 3×(wpp/200 - 1) + 4×(charts/pg)
+       4 """
+       5 import json
+       6 import math
+       7 from pathlib import Path
+       8 
+       9 CACHE = Path(__file__).parent.parent / "Fisiere_Reper_Tarif" / "
+         Pret_Intreg_100la100" / "_reference_cache.json"
+      10 with open(CACHE, encoding="utf-8") as f:
+     … +73 lines (ctrl+o to expand)
+  ⎿  PostToolUse:Write hook error
+
+● Bash(cd "C:/Proiecte/NOU_Calculator_Pret_Traduceri/backend" &&
+      PYTHONIOENCODING=utf-8 python demo_preturi.py 2>&1)
+  ⎿  ======================================================================
+     ==============================
+     5 EXEMPLE — FISIERE CU CONTINUT DIFERIT
+     … +79 lines (ctrl+o to expand)
+
+● Iată cele 5 exemple cu conținut diferit:
+
+  ┌──────────┬──────────────────────┬─────────┬───────────┬────────┬────────┐
+  │  Fișier  │         Tip          │ Rate/pg │   Preț    │ Preț   │ Eroare │
+  │          │                      │         │  estimat  │  REAL  │        │
+  ├──────────┼──────────────────────┼─────────┼───────────┼────────┼────────┤
+  │          │ DTP complex          │ 71.1    │           │        │        │
+  │ 150.pdf  │ (diagrame, puțin     │ RON     │ 142       │ 150    │ 5.2%   │
+  │          │ text)                │         │           │        │        │
+  ├──────────┼──────────────────────┼─────────┼───────────┼────────┼────────┤
+  │ 295.pdf  │ Text simplu (fără    │ 59.4    │ 297       │ 295    │ 0.7%   │
+  │          │ imagini)             │ RON     │           │        │        │
+  ├──────────┼──────────────────────┼─────────┼───────────┼────────┼────────┤
+  │ 340.pdf  │ Text dens cu tabele  │ 56.6    │ 339       │ 340    │ 0.2%   │
+  │          │                      │ RON     │           │        │        │
+  ├──────────┼──────────────────────┼─────────┼───────────┼────────┼────────┤
+  │ 1688.pdf │ Multe imagini        │ 58.6    │ 1642      │ 1688   │ 2.7%   │
+  │          │ decorative           │ RON     │           │        │        │
+  ├──────────┼──────────────────────┼─────────┼───────────┼────────┼────────┤
+  │ 4670.pdf │ Mare cu charts       │ 59.6    │ 3577      │ 4670   │ 23.4%  │
+  │          │ (outlier)            │ RON     │           │        │ ⚠      │
+  └──────────┴──────────────────────┴─────────┴───────────┴────────┴────────┘
+
+  Cum variază prețul:
+  - Pagina plină de diagrame: 71 RON (cea mai scumpă — mult DTP)
+  - Pagina normală: 59 RON (baza)
+  - Pagina text dens fără imagini: 57 RON (cea mai ieftină)
+
+  4670.pdf rămâne outlier — probabil a fost un proiect cu complexitate/urgență
+  specială.
+
+  Dă-mi fișierele noi pentru test și le rulez prin model.
+
+● Ran 2 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: Failed with non-blocking status code: bash:
+  .claude/hooks/session-stop.sh: No such file or directory
+
+✻ Brewed for 46s
+
+❯ calculeaza pretul pt aceste 2 fisiere noi :  c:\Proiecte\NOU_Calculator_Pret_ 
+Traduceri\99_Roland_Work_Place\Calculator_pret\Catalogo_2025_RO_R_2.pdf si &    
+'c:\Proiecte\NOU_Calculator_Pret_Traduceri\99_Roland_Work_Place\Calculator_pret 
+\Manual Mixer EN ro.pdf'                                                        
+
+● Write(test_fisiere_noi.py)
+  ⎿  Wrote 111 lines to test_fisiere_noi.py
+       1 """
+       2 Test fisiere noi — extrage features si calculeaza pret cu modelu
+         l nou.
+       3 """
+       4 import sys
+       5 import json
+       6 import math
+       7 from pathlib import Path
+       8 
+       9 # Adaug backend-ul in path
+      10 sys.path.insert(0, str(Path(__file__).parent))
+     … +101 lines (ctrl+o to expand)
+  ⎿  PostToolUse:Write hook error
+
+● Bash(cd "C:/Proiecte/NOU_Calculator_Pret_Traduceri/backend" &&
+      PYTHONIOENCODING=utf-8 python test_fisiere_noi.py 2>&1)
+  ⎿  ======================================================================
+     ==============================
+     TEST FISIERE NOI — Model: rate/pg = 59 - 3×(wpp/200-1) + 4×(charts/pg)
+     … +47 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● Rezultate:
+
+  1. Catalogo_2025_RO_R_2.pdf (201 pagini)
+
+  ┌─────────────────────┬───────────────────────────────────────────────────┐
+  │                     │                      Valoare                      │
+  ├─────────────────────┼───────────────────────────────────────────────────┤
+  │ Caracteristici      │ 201 pg, 52747 cuv, 262 cuv/pg, 1195 img, density  │
+  │                     │ 0.69                                              │
+  ├─────────────────────┼───────────────────────────────────────────────────┤
+  │ Tipologie           │ MIXT (text + imagini)                             │
+  ├─────────────────────┼───────────────────────────────────────────────────┤
+  │ Rată/pg             │ 58.06 RON                                         │
+  ├─────────────────────┼───────────────────────────────────────────────────┤
+  │ Preț piață          │ 11,671 RON                                        │
+  ├─────────────────────┼───────────────────────────────────────────────────┤
+  │ Factură client      │ 8,753 RON                                         │
+  │ (75%)               │                                                   │
+  └─────────────────────┴───────────────────────────────────────────────────┘
+
+  Observație: Acest fișier e identic cu 10820.pdf din referință (aceleași
+  features exact). Translatorul a facturat 10,820 RON (53.8/pg). Modelul
+  estimează 11,671 → eroare 7.9%.
+
+  ---
+  2. Manual Mixer EN ro.pdf (28 pagini)
+
+  ┌────────────────────┬────────────────────────────────────────────────────┐
+  │                    │                      Valoare                       │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Caracteristici     │ 28 pg, 6258 cuv, 224 cuv/pg, 1564 img, density     │
+  │                    │ 0.76                                               │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Tipologie          │ TEXT DENS (layout simplu, 1564 img sunt elemente   │
+  │                    │ decorative)                                        │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Rată/pg            │ 58.65 RON                                          │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Preț piață         │ 1,642 RON                                          │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Factură client     │ 1,232 RON                                          │
+  │ (75%)              │                                                    │
+  └────────────────────┴────────────────────────────────────────────────────┘
+
+  Observație: Identic cu 1688.pdf din referință. Translatorul a facturat 1,688 
+  RON (60.3/pg). Modelul estimează 1,642 → eroare 2.7%.
+
+  ---
+  Ambele fișiere sunt de fapt originalele din care au fost create referințele
+  (redenumite la preț). Dacă ai fișiere cu adevărat noi (care NU sunt în
+  Fisiere_Reper_Tarif), le pot testa pentru a vedea generalizarea modelului pe
+  date necunoscute.
+
+● Ran 2 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: Failed with non-blocking status code: bash:
+  .claude/hooks/session-stop.sh: No such file or directory
+
+✻ Crunched for 1m 52s
+
+❯ trebuie sterse din referinte , la fel si celelalte 2 atasate in acelasi       
+folder . apoi te rog sa refaci calculele fara aceste 4 fisiere .                
+
+  Read 1 file (ctrl+o to expand)
+
+● Voi identifica care referințe corespund tuturor celor 4 fișiere, le elimin,
+  apoi recalculez.
+
+● Write(test_match_and_recalc.py)
+  ⎿  Wrote 173 lines to test_match_and_recalc.py
+       1 """
+       2 1. Identifica care referinte corespund celor 4 fisiere din Calcu
+         lator_pret
+       3 2. Elimina-le din referinte
+       4 3. Recalibraz modelul pe referintele ramase
+       5 4. Calculeaza pretul pt cele 4 fisiere (acum cu adevarat necunos
+         cute)
+       6 """
+       7 import sys
+       8 import json
+       9 import math
+      10 from pathlib import Path
+     … +163 lines (ctrl+o to expand)
+  ⎿  PostToolUse:Write hook error
+
+● Bash(cd "C:/Proiecte/NOU_Calculator_Pret_Traduceri/backend" &&
+      PYTHONIOENCODING=utf-8 python test_match_and_recalc.py 2>&1)
+  ⎿  ======================================================================
+     ==============================
+     PASUL 1: Identificare corespondente referinta ↔ fisiere test
+     … +93 lines (ctrl+o to expand)
+  ⎿  (timeout 3m)
+● Rezultate excelente! Modelul recalibrat pe 21 referințe (fără cele 4)
+  estimează prețurile fără să le fi "văzut":
+
+  ┌────────────────────┬────────────┬────────────────┬────────┐
+  │       Fișier       │  Estimat   │ Real (factură) │ Eroare │
+  ├────────────────────┼────────────┼────────────────┼────────┤
+  │ Fișa tehnică mixer │ 301 RON    │ 300 RON        │ 0.2%   │
+  ├────────────────────┼────────────┼────────────────┼────────┤
+  │ Pompe coagulant    │ 297 RON    │ 295 RON        │ 0.7%   │
+  ├────────────────────┼────────────┼────────────────┼────────┤
+  │ Manual Mixer       │ 1,642 RON  │ 1,688 RON      │ 2.7%   │
+  ├────────────────────┼────────────┼────────────────┼────────┤
+  │ Catalogo 201pg     │ 11,671 RON │ 10,820 RON     │ 7.9%   │
+  └────────────────────┴────────────┴────────────────┴────────┘
+
+  3 din 4 fișiere: eroare sub 3%. Catalogul mare (201 pg) e singurul cu 7.9% — e
+   cel mai mare document din set, iar translatorul probabil a dat un discount de
+   volum care nu e complet captat.
+
+  Modelul recalibrat:
+  - Formula: rate/pg = 59.0 - 3.0 × (wpp/200-1) + 5.5 × (charts/pg)
+  - MAPE pe cele 21 referințe rămase: 6.2%
+  - Parametrii sunt practic identici (base=59, s2=3, cb s-a ajustat ușor de la 4
+   la 5.5)
+
+  Modelul generalizează bine. Confirm implementarea în cod?
+
+● Ran 2 stop hooks (ctrl+o to expand)
+  ⎿  Stop hook error: Failed with non-blocking status code: bash:
+  .claude/hooks/session-stop.sh: No such file or directory
+
+✻ Churned for 3m 46s

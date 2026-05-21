@@ -19,25 +19,25 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 
 ## Project Status
 
-| Phase | Status | Summary |
-|-------|--------|---------|
-| Faze 0-8 Calculator | DONE | 46 fișiere, MAPE 32%, dashboard, competitori (2026-03-17) |
-| Audit Arhitectural | DONE | 16 obs (4 critice), toate rezolvate (2026-03-18) |
-| Wave 0 Fundație | DONE | Git, migrations, module discovery, dynamic sidebar (2026-03-18) |
-| Wave 2 Quick Tools | DONE | Command Palette, QR, Notepad, Calculator, PwdGen, Barcode (2026-03-19) |
-| Wave 1 Deploy | DONE | Tailscale HTTPS, PWA, Vault, Backup, Auto-start (2026-03-18) |
-| Faza 12 Convertor | DONE | 10 conversii, Android-safe, COM fix (2026-03-18) |
-| Faza 14 File Manager | DONE | Browse, CRUD, upload, download, duplicates, fulltext FTS5, tags, favorites, auto-organize (2026-03-19) |
-| Restructurare reguli | DONE | 12 reguli → 5 fișiere .claude/rules/, hooks, commands, agent (2026-03-19) |
-| Faza 9 Translator | DONE | 5 providers (DeepL→Azure→Google→Gemini→OpenAI), TM, glossary, file translation, langdetect (2026-03-19) |
-| Faza 15A AI Chat+Docs | DONE | Chat SSE streaming (Gemini→OpenAI→Groq), 6 doc endpoints, OCR+AI, diff, 10 API keys (2026-03-19) |
-| Faza 15B AI Enhanced | DONE | 10 AI features + token indicator + provider selector (2026-03-19) |
-| Faza 10 Facturare Ext | DONE | Client history, rapoarte, export CSV/Excel, templates, email, scanner OCR (2026-03-19) |
-| Faza 13 Integrări | DONE | Gmail, Google Drive, Calendar, GitHub — 5 endpoint-uri per provider (2026-03-19) |
-| Faza 15.8 Quality | DONE | Evaluare calitate traducere AI (scor, issues, suggestions) (2026-03-19) |
-| Faza 16 Automatizări | DONE | Scheduler, Shortcuts, Uptime Monitor, API Tester, Health (2026-03-19) |
-| Faza 17 Rapoarte | DONE | Disk stats, system info, timeline, journal, bookmarks, export JSON (2026-03-19) |
-| Faza 18 ITP | DONE | Inspecții CRUD, import, statistici, alerte expirare, export (2026-03-19) |
+| Phase                 | Status | Summary                                                                                                 |
+| --------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| Faze 0-8 Calculator   | DONE   | 46 fișiere, MAPE 32%, dashboard, competitori (2026-03-17)                                               |
+| Audit Arhitectural    | DONE   | 16 obs (4 critice), toate rezolvate (2026-03-18)                                                        |
+| Wave 0 Fundație       | DONE   | Git, migrations, module discovery, dynamic sidebar (2026-03-18)                                         |
+| Wave 2 Quick Tools    | DONE   | Command Palette, QR, Notepad, Calculator, PwdGen, Barcode (2026-03-19)                                  |
+| Wave 1 Deploy         | DONE   | Tailscale HTTPS, PWA, Vault, Backup, Auto-start (2026-03-18)                                            |
+| Faza 12 Convertor     | DONE   | 10 conversii, Android-safe, COM fix (2026-03-18)                                                        |
+| Faza 14 File Manager  | DONE   | Browse, CRUD, upload, download, duplicates, fulltext FTS5, tags, favorites, auto-organize (2026-03-19)  |
+| Restructurare reguli  | DONE   | 12 reguli → 5 fișiere .claude/rules/, hooks, commands, agent (2026-03-19)                               |
+| Faza 9 Translator     | DONE   | 5 providers (DeepL→Azure→Google→Gemini→OpenAI), TM, glossary, file translation, langdetect (2026-03-19) |
+| Faza 15A AI Chat+Docs | DONE   | Chat SSE streaming (Gemini→OpenAI→Groq), 6 doc endpoints, OCR+AI, diff, 10 API keys (2026-03-19)        |
+| Faza 15B AI Enhanced  | DONE   | 10 AI features + token indicator + provider selector (2026-03-19)                                       |
+| Faza 10 Facturare Ext | DONE   | Client history, rapoarte, export CSV/Excel, templates, email, scanner OCR (2026-03-19)                  |
+| Faza 13 Integrări     | DONE   | Gmail, Google Drive, Calendar, GitHub — 5 endpoint-uri per provider (2026-03-19)                        |
+| Faza 15.8 Quality     | DONE   | Evaluare calitate traducere AI (scor, issues, suggestions) (2026-03-19)                                 |
+| Faza 16 Automatizări  | DONE   | Scheduler, Shortcuts, Uptime Monitor, API Tester, Health (2026-03-19)                                   |
+| Faza 17 Rapoarte      | DONE   | Disk stats, system info, timeline, journal, bookmarks, export JSON (2026-03-19)                         |
+| Faza 18 ITP           | DONE   | Inspecții CRUD, import, statistici, alerte expirare, export (2026-03-19)                                |
 
 | Faza 19 Unificare Docs | DONE | 3 V2 → 3 documente unificate, strategie API maximala, regula free-tier (2026-03-20) |
 | Faza 20 Quick Wins | DONE | 11/15: GZip, CSP, BNR curs, ANAF CUI, cache AI, convertor numere, useDebounce (2026-03-20) |
@@ -67,14 +67,19 @@ Always work from `C:\Proiecte\...` — Google Drive is too slow for venv, node_m
 
 ## How to Run
 
-### Quick start (double-click)
+### Launcher unic Python (recomandat)
+
 ```
-START_Roland.bat              # pornire sistem (production, TLS autodetect)
-START_Roland.bat build        # rebuild frontend + pornire
-START_Roland.bat stop         # oprire sistem
+python start.py             # dev cu HMR + Cloudflare tunnel public (DEFAULT)
+python start.py dev         # dev cu HMR, fara tunnel
+python start.py prod        # production (build + FastAPI serveste dist/)
+python start.py stop        # opreste backend + vite + tunnel
 ```
 
-### Manual start
+Launcher-ul porneste TOT (backend cu --reload, Vite cu HMR, cloudflared tunnel) si afiseaza URL-ul public. Ctrl+C opreste curat.
+
+### Manual start (daca vrei terminal separat per serviciu)
+
 ```bash
 # Terminal 1 — Backend
 cd C:\Proiecte\NOU_Calculator_Pret_Traduceri\backend
@@ -85,17 +90,22 @@ python -m uvicorn app.main:app --reload --port 8000 --host 127.0.0.1
 cd C:\Proiecte\NOU_Calculator_Pret_Traduceri\frontend
 npm run dev
 
+# Terminal 3 (optional) — Tunnel public
+C:\Tools\cloudflared\cloudflared.exe tunnel --url http://localhost:5173
+
 # Browser: http://localhost:5173
 # Swagger: http://localhost:8000/docs
 # Health: http://localhost:8000/api/health
 ```
 
 ### Calibration (one-time)
+
 ```bash
 cd backend && set PYTHONIOENCODING=utf-8 && python calibrate.py --verbose
 ```
 
 ### Dependencies
+
 - **Python 3.13** (global, no venv): fastapi, uvicorn, PyMuPDF, pdfplumber, python-docx, scikit-learn, scipy, aiosqlite, pydantic-settings
 - **Node.js v20**: react, vite, tailwindcss, recharts, axios, lucide-react, react-dropzone
 - **Important**: use `python -m pip` and `python -m uvicorn` on this machine
@@ -128,6 +138,7 @@ cd backend && set PYTHONIOENCODING=utf-8 && python calibrate.py --verbose
 ## Rules & Automation
 
 Detailed rules in `.claude/rules/` (auto-loaded every message):
+
 - `01-progress-tracking.md` — Update plan, HTML, CLAUDE.md, PROJECT_STATUS after each implementation
 - `02-pre-implementation.md` — Dependency check + briefing + confirmation before any wave/phase
 - `03-validation-and-testing.md` — Test all features + GHID_TESTARE.md + user confirmation before next phase

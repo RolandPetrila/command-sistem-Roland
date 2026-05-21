@@ -4,15 +4,15 @@
 
 ## 📍 Stare la 2026-05-14
 
-| Item | Valoare |
-|------|---------|
-| Branch | `master` |
-| Ultimul commit | `a78c9ea` Faza 33 |
-| Faza activă | **Faza 34** (necommited — multe fișiere acumulate) |
-| URL public live | `https://urls-survivor-deployment-res.trycloudflare.com` (random, expiră la restart PC) |
-| Auto-start la login | ✅ Task Scheduler `RolandCC_AutoStart` |
-| Watchdog erori | ✅ În `start.py` (cap 5 restart/proces) |
-| Rate limit LAN | ✅ Dezactivat (single-user) |
+| Item                | Valoare                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| Branch              | `master`                                                                                |
+| Ultimul commit      | `a78c9ea` Faza 33                                                                       |
+| Faza activă         | **Faza 34** (necommited — multe fișiere acumulate)                                      |
+| URL public live     | `https://urls-survivor-deployment-res.trycloudflare.com` (random, expiră la restart PC) |
+| Auto-start la login | ✅ Task Scheduler `RolandCC_AutoStart`                                                  |
+| Watchdog erori      | ✅ În `start.py` (cap 5 restart/proces)                                                 |
+| Rate limit LAN      | ✅ Dezactivat (single-user)                                                             |
 
 ## 🔄 ULTIMUL CHECKPOINT
 
@@ -52,6 +52,7 @@ python start.py tunnel
 ### Acțiuni manuale user (5-10 min total)
 
 1. **URL stabil (named tunnel):**
+
    ```powershell
    C:\Tools\cloudflared\cloudflared.exe tunnel login    # browser one-click
    python scripts\setup_named_tunnel.py                  # wizard
@@ -60,7 +61,11 @@ python start.py tunnel
 2. **Auto-push hook** (classifier blochează edit, edit manual):
    În `.claude/settings.local.json` → `"Stop"` → `"hooks"` adaugă:
    ```json
-   { "type": "command", "command": "bash .claude/hooks/auto-push.sh", "timeout": 30000 }
+   {
+     "type": "command",
+     "command": "bash .claude/hooks/auto-push.sh",
+     "timeout": 30000
+   }
    ```
 
 ### Code TODO (decizii rămân, implementare în pauză)
@@ -68,6 +73,7 @@ python start.py tunnel
 - **Offline queue IndexedDB + Workbox BackgroundSync** — blueprint deja citit (`Blueprints/proiecte/Roland_Diagnostics_v1/blueprints/DIAGNOSTICS_OFFLINE_QUEUE.md`). User a întrerupt înainte de implementare. Scope: queue pentru notes writes + AI calls offline.
 
 ### Git
+
 - Faza 34 necommited. Multe fișiere modificate cumulat din sesiuni anterioare (`git status` → ~30 fișiere).
 
 ## ⚠️ Context critic — NU repeta greșeli
@@ -80,10 +86,10 @@ python start.py tunnel
 
 ## 🔧 Procese background ACTIVE (în terminalul anterior)
 
-| ID | Proces | Port |
-|----|--------|------|
-| `buy8t3qao` | uvicorn --reload | 8000 |
-| `battgo4nh` | vite dev | 5173 |
+| ID          | Proces             | Port              |
+| ----------- | ------------------ | ----------------- |
+| `buy8t3qao` | uvicorn --reload   | 8000              |
+| `battgo4nh` | vite dev           | 5173              |
 | `bcl0h02pk` | cloudflared tunnel | (URL random live) |
 
 **Vor muri când închizi terminalul.** Restart curat: `python start.py stop` apoi `python start.py tunnel`.

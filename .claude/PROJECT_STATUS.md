@@ -1,28 +1,28 @@
 # Roland Command Center — Project Status (auto-generated)
 
-Generated: 2026-04-03
+Generated: 2026-05-21 03:25
 
 ## Project Status
 
-| Phase | Status | Summary |
-|-------|--------|---------|
-| Faze 0-8 Calculator | DONE | 46 fișiere, MAPE 32%, dashboard, competitori (2026-03-17) |
-| Audit Arhitectural | DONE | 16 obs (4 critice), toate rezolvate (2026-03-18) |
-| Wave 0 Fundație | DONE | Git, migrations, module discovery, dynamic sidebar (2026-03-18) |
-| Wave 2 Quick Tools | DONE | Command Palette, QR, Notepad, Calculator, PwdGen, Barcode (2026-03-19) |
-| Wave 1 Deploy | DONE | Tailscale HTTPS, PWA, Vault, Backup, Auto-start (2026-03-18) |
-| Faza 12 Convertor | DONE | 10 conversii, Android-safe, COM fix (2026-03-18) |
-| Faza 14 File Manager | DONE | Browse, CRUD, upload, download, duplicates, fulltext FTS5, tags, favorites, auto-organize (2026-03-19) |
-| Restructurare reguli | DONE | 12 reguli → 5 fișiere .claude/rules/, hooks, commands, agent (2026-03-19) |
-| Faza 9 Translator | DONE | 5 providers (DeepL→Azure→Google→Gemini→OpenAI), TM, glossary, file translation, langdetect (2026-03-19) |
-| Faza 15A AI Chat+Docs | DONE | Chat SSE streaming (Gemini→OpenAI→Groq), 6 doc endpoints, OCR+AI, diff, 10 API keys (2026-03-19) |
-| Faza 15B AI Enhanced | DONE | 10 AI features + token indicator + provider selector (2026-03-19) |
-| Faza 10 Facturare Ext | DONE | Client history, rapoarte, export CSV/Excel, templates, email, scanner OCR (2026-03-19) |
-| Faza 13 Integrări | DONE | Gmail, Google Drive, Calendar, GitHub — 5 endpoint-uri per provider (2026-03-19) |
-| Faza 15.8 Quality | DONE | Evaluare calitate traducere AI (scor, issues, suggestions) (2026-03-19) |
-| Faza 16 Automatizări | DONE | Scheduler, Shortcuts, Uptime Monitor, API Tester, Health (2026-03-19) |
-| Faza 17 Rapoarte | DONE | Disk stats, system info, timeline, journal, bookmarks, export JSON (2026-03-19) |
-| Faza 18 ITP | DONE | Inspecții CRUD, import, statistici, alerte expirare, export (2026-03-19) |
+| Phase                 | Status | Summary                                                                                                 |
+| --------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| Faze 0-8 Calculator   | DONE   | 46 fișiere, MAPE 32%, dashboard, competitori (2026-03-17)                                               |
+| Audit Arhitectural    | DONE   | 16 obs (4 critice), toate rezolvate (2026-03-18)                                                        |
+| Wave 0 Fundație       | DONE   | Git, migrations, module discovery, dynamic sidebar (2026-03-18)                                         |
+| Wave 2 Quick Tools    | DONE   | Command Palette, QR, Notepad, Calculator, PwdGen, Barcode (2026-03-19)                                  |
+| Wave 1 Deploy         | DONE   | Tailscale HTTPS, PWA, Vault, Backup, Auto-start (2026-03-18)                                            |
+| Faza 12 Convertor     | DONE   | 10 conversii, Android-safe, COM fix (2026-03-18)                                                        |
+| Faza 14 File Manager  | DONE   | Browse, CRUD, upload, download, duplicates, fulltext FTS5, tags, favorites, auto-organize (2026-03-19)  |
+| Restructurare reguli  | DONE   | 12 reguli → 5 fișiere .claude/rules/, hooks, commands, agent (2026-03-19)                               |
+| Faza 9 Translator     | DONE   | 5 providers (DeepL→Azure→Google→Gemini→OpenAI), TM, glossary, file translation, langdetect (2026-03-19) |
+| Faza 15A AI Chat+Docs | DONE   | Chat SSE streaming (Gemini→OpenAI→Groq), 6 doc endpoints, OCR+AI, diff, 10 API keys (2026-03-19)        |
+| Faza 15B AI Enhanced  | DONE   | 10 AI features + token indicator + provider selector (2026-03-19)                                       |
+| Faza 10 Facturare Ext | DONE   | Client history, rapoarte, export CSV/Excel, templates, email, scanner OCR (2026-03-19)                  |
+| Faza 13 Integrări     | DONE   | Gmail, Google Drive, Calendar, GitHub — 5 endpoint-uri per provider (2026-03-19)                        |
+| Faza 15.8 Quality     | DONE   | Evaluare calitate traducere AI (scor, issues, suggestions) (2026-03-19)                                 |
+| Faza 16 Automatizări  | DONE   | Scheduler, Shortcuts, Uptime Monitor, API Tester, Health (2026-03-19)                                   |
+| Faza 17 Rapoarte      | DONE   | Disk stats, system info, timeline, journal, bookmarks, export JSON (2026-03-19)                         |
+| Faza 18 ITP           | DONE   | Inspecții CRUD, import, statistici, alerte expirare, export (2026-03-19)                                |
 
 | Faza 19 Unificare Docs | DONE | 3 V2 → 3 documente unificate, strategie API maximala, regula free-tier (2026-03-20) |
 | Faza 20 Quick Wins | DONE | 11/15: GZip, CSP, BNR curs, ANAF CUI, cache AI, convertor numere, useDebounce (2026-03-20) |
