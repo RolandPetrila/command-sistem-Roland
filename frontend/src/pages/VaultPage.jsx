@@ -56,6 +56,35 @@ function isExpired(expiresAt) {
   return new Date(expiresAt) < new Date();
 }
 
+function VaultUsageOverview() {
+  const [usage, setUsage] = useState([]);
+  useEffect(() => {
+    apiClient.get('/api/vault/usage-overview').then(r => setUsage(r.data.providers || []))
+      .catch(() => setUsage([]));
+  }, []);
+  if (usage.length === 0) return null;
+  return (
+    <div className="bg-gray-900 rounded-2xl border border-gray-800 p-5 mb-4">
+      <h3 className="text-sm font-medium text-gray-300 mb-3">Utilizare Free Tier</h3>
+      {usage.map(u => {
+        const pct = Math.min(100, Math.round((u.used / Math.max(u.limit, 1)) * 100));
+        const color = pct < 50 ? 'bg-green-500' : pct < 80 ? 'bg-yellow-500' : 'bg-red-500';
+        return (
+          <div key={u.provider} className="mb-2">
+            <div className="flex justify-between text-xs text-gray-400 mb-1">
+              <span>{u.provider}</span>
+              <span>{u.used?.toLocaleString()} / {u.limit?.toLocaleString()} {u.unit} ({pct}%)</span>
+            </div>
+            <div className="w-full bg-gray-800 rounded-full h-1.5">
+              <div className={`${color} h-1.5 rounded-full transition-all`} style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function VaultPage() {
   const [configured, setConfigured] = useState(null); // null=loading, true/false
   const [unlocked, setUnlocked] = useState(false);
@@ -327,6 +356,7 @@ export default function VaultPage() {
   // Main vault view
   return (
     <div className="max-w-2xl mx-auto space-y-4">
+      <VaultUsageOverview />
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2 text-emerald-400 text-sm">
           <Lock className="w-4 h-4" />

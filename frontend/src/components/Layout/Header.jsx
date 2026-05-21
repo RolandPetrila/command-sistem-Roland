@@ -166,6 +166,19 @@ export default function Header({ pageTitles, showShortcuts, onToggleShortcuts })
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifs, setShowNotifs] = useState(false);
 
+  // Offline indicator
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const pageTitle = pageTitles[location.pathname] || 'Calculator Pret Traduceri';
 
   useEffect(() => {
@@ -234,6 +247,13 @@ export default function Header({ pageTitles, showShortcuts, onToggleShortcuts })
 
           {/* Network speed indicator */}
           <NetworkSpeedIndicator />
+
+          {/* Offline indicator */}
+          {!isOnline && (
+            <div className="bg-yellow-600/20 text-yellow-400 text-xs px-2 py-1 rounded-full flex items-center gap-1">
+              <WifiOff className="w-3 h-3" /> Offline
+            </div>
+          )}
 
           {/* F6: Notifications bell */}
           <div className="relative">

@@ -75,6 +75,9 @@ export default function InvoicePage() {
   const [batchExporting, setBatchExporting] = useState(false);
   // R4-30: Recent items per client
   const [recentItems, setRecentItems] = useState([]);
+  // Comm log
+  const [commLog, setCommLog] = useState([]);
+  const [newComm, setNewComm] = useState({ comm_type: 'note', summary: '', details: '' });
 
   useEffect(() => { loadData(); loadSeries(); loadOverdue(); }, [page, searchQuery, statusFilter, dateFrom, dateTo]);
 
@@ -315,6 +318,23 @@ export default function InvoicePage() {
       setHistoryData(data?.invoices || data || []);
     } catch { setHistoryData([]); }
     setHistoryLoading(false);
+    loadCommLog(client.id);
+  };
+
+  // Comm log functions
+  const loadCommLog = async (clientId) => {
+    try {
+      const { data } = await api.get(`/api/invoice/clients/${clientId}/comm-log`);
+      setCommLog(data.entries || []);
+    } catch { setCommLog([]); }
+  };
+  const addCommEntry = async (clientId) => {
+    if (!newComm.summary.trim()) return;
+    try {
+      await api.post(`/api/invoice/clients/${clientId}/comm-log`, newComm);
+      setNewComm({ comm_type: 'note', summary: '', details: '' });
+      loadCommLog(clientId);
+    } catch { /* toast handles it */ }
   };
 
   // R3-23: CUI verify ANAF
@@ -562,6 +582,10 @@ export default function InvoicePage() {
               </div>
               <div className="flex gap-1">
                 <button onClick={() => handleGeneratePdf(inv.id)} className="p-2 hover:bg-gray-800 rounded-lg" title="Descarca PDF"><Download size={16} /></button>
+                <button onClick={() => window.open(`/api/invoice/${inv.id}/efactura-xml`, '_blank')}
+                  className="p-2 hover:bg-gray-800 rounded-lg text-green-400" title="Download e-Factura XML">
+                  <FileText size={16} />
+                </button>
                 <button onClick={() => handleSendEmail(inv)} className="p-2 hover:bg-gray-800 rounded-lg text-blue-400" title="Trimite email"><Mail size={16} /></button>
                 <button onClick={() => loadPayments(inv)} className="p-2 hover:bg-gray-800 rounded-lg text-green-400" title="Plati"><CreditCard size={16} /></button>
                 {inv.status === 'draft' && (
@@ -757,6 +781,14 @@ export default function InvoicePage() {
           <textarea value={notes} onChange={e => setNotes(e.target.value)}
             placeholder="Note adiționale (opțional)..."
             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none h-20" />
+          <InvoicePreview
+            client={clients.find(c => c.id == selectedClient)?.name}
+            items={items}
+            invoiceDate={invoiceDate}
+            dueDate={dueDate}
+            notes={notes}
+            vatPercent={vatPercent}
+          />
           <div className="flex gap-3">
             <button onClick={handleCreateInvoice} disabled={saving || !selectedClient}
               className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl text-sm font-medium transition-colors">
@@ -925,6 +957,41 @@ export default function InvoicePage() {
                 ))}
               </div>
             )}
+            {/* Jurnal comunicare client */}
+            <div className="border-t border-gray-800 pt-4 mt-4 space-y-3">
+              <h4 className="text-sm font-medium text-gray-300">Jurnal comunicare</h4>
+              {commLog.length > 0 && (
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {commLog.map((entry, i) => (
+                    <div key={i} className="bg-gray-800 rounded-lg p-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs px-1.5 py-0.5 bg-gray-700 rounded text-gray-400">{entry.comm_type}</span>
+                        <span className="text-xs text-gray-500">{entry.created_at}</span>
+                      </div>
+                      <p className="text-sm text-gray-300 mt-1">{entry.summary}</p>
+                      {entry.details && <p className="text-xs text-gray-500 mt-0.5">{entry.details}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                <select value={newComm.comm_type} onChange={e => setNewComm(p => ({ ...p, comm_type: e.target.value }))}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs">
+                  <option value="note">Nota</option>
+                  <option value="email">Email</option>
+                  <option value="phone">Telefon</option>
+                  <option value="meeting">Intalnire</option>
+                </select>
+                <input value={newComm.summary} onChange={e => setNewComm(p => ({ ...p, summary: e.target.value }))}
+                  placeholder="Sumar comunicare *" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs" />
+                <input value={newComm.details} onChange={e => setNewComm(p => ({ ...p, details: e.target.value }))}
+                  placeholder="Detalii (optional)" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs" />
+                <button onClick={() => historyClient && addCommEntry(historyClient.id)} disabled={!newComm.summary.trim()}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-xs">
+                  Adauga nota
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1229,6 +1296,41 @@ export default function InvoicePage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function InvoicePreview({ client, items, invoiceDate, dueDate, notes, vatPercent }) {
+  const subtotal = items.reduce((s, i) => s + (i.quantity || 0) * (i.unit_price || 0), 0);
+  const vat = subtotal * ((vatPercent || 0) / 100);
+  const total = subtotal + vat;
+  if (subtotal === 0) return null;
+  return (
+    <div className="bg-white text-gray-900 rounded-lg p-4 text-xs mt-4 max-w-md">
+      <div className="text-center border-b pb-2 mb-2">
+        <p className="font-bold text-sm">CIP Inspection SRL</p>
+        <p className="text-gray-500">CUI: 43978110</p>
+      </div>
+      <div className="flex justify-between mb-3">
+        <div><p className="font-medium">Client:</p><p>{client || '\u2014'}</p></div>
+        <div className="text-right"><p>Data: {invoiceDate || '\u2014'}</p><p>Scadenta: {dueDate || '\u2014'}</p></div>
+      </div>
+      <table className="w-full mb-2">
+        <thead><tr className="border-b text-left"><th className="py-1">Desc.</th><th className="text-right">Cant.</th><th className="text-right">Pret</th><th className="text-right">Total</th></tr></thead>
+        <tbody>
+          {items.filter(i => i.description).map((i, idx) => (
+            <tr key={idx} className="border-b border-gray-200">
+              <td className="py-1">{i.description}</td><td className="text-right">{i.quantity}</td>
+              <td className="text-right">{i.unit_price}</td><td className="text-right">{((i.quantity || 0) * (i.unit_price || 0)).toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="text-right">
+        <p>Subtotal: {subtotal.toFixed(2)} RON</p>
+        {vatPercent > 0 && <p>TVA ({vatPercent}%): {vat.toFixed(2)} RON</p>}
+        <p className="font-bold text-sm">Total: {total.toFixed(2)} RON</p>
+      </div>
     </div>
   );
 }

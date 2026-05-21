@@ -32,6 +32,7 @@ import {
   Plug,
   BarChart3,
   Building2,
+  Clock,
 } from 'lucide-react';
 
 export const NAV_SECTIONS = [
@@ -65,6 +66,7 @@ export const NAV_SECTIONS = [
     collapsible: true,
     items: [
       { path: '/invoices', label: 'Facturare', icon: Receipt },
+      { path: '/time-tracking', label: 'Time Tracking', icon: Clock },
       { path: '/converter', label: 'Convertor Fișiere', icon: ArrowRightLeft },
       { path: '/qr', label: 'QR Generator', icon: QrCode },
       { path: '/barcode', label: 'Cod de Bare', icon: Barcode },

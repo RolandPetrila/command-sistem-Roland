@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Fuse from 'fuse.js';
 import { Search } from 'lucide-react';
 import { NAV_SECTIONS } from '../../modules/manifest';
+import api from '../../api/client';
 
 // Flatten all nav items with their category
 const allItems = NAV_SECTIONS.flatMap(section =>
@@ -16,6 +17,7 @@ export default function CommandPalette() {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [searchResults, setSearchResults] = useState([]);
   const inputRef = useRef(null);
   const navigate = useNavigate();
 
@@ -51,6 +53,18 @@ export default function CommandPalette() {
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [isOpen]);
+
+  // Global search results (debounced)
+  useEffect(() => {
+    if (query.length < 2) { setSearchResults([]); return; }
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/api/search', { params: { q: query, limit: 5 } });
+        setSearchResults(data.results || []);
+      } catch { setSearchResults([]); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'ArrowDown') {
@@ -117,7 +131,20 @@ export default function CommandPalette() {
               </button>
             );
           })}
-          {results.length === 0 && (
+          {searchResults.length > 0 && (
+            <>
+              <div className="px-3 py-1 text-xs text-slate-500 uppercase">Rezultate cautare</div>
+              {searchResults.map((r, i) => (
+                <button key={`sr-${i}`} onClick={() => { navigate(r.url); setIsOpen(false); }}
+                  className="w-full text-left px-3 py-2 hover:bg-slate-700 flex items-center gap-2 text-sm">
+                  <span className="text-xs bg-slate-700 px-1.5 py-0.5 rounded text-slate-400">{r.type}</span>
+                  <span className="text-slate-200">{r.title}</span>
+                  {r.subtitle && <span className="text-slate-500 text-xs">{r.subtitle}</span>}
+                </button>
+              ))}
+            </>
+          )}
+          {results.length === 0 && searchResults.length === 0 && (
             <p className="text-center text-slate-500 text-sm py-6">Niciun rezultat</p>
           )}
         </div>

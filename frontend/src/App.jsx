@@ -7,6 +7,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import CommandPalette from './components/shared/CommandPalette';
 import FloatingOCR from './components/shared/FloatingOCR';
+import FloatingTimer from './components/shared/FloatingTimer';
 import GlobalToast from './components/shared/GlobalToast';
 import { PAGE_TITLES } from './modules/manifest';
 import { logPageView } from './api/client';
@@ -38,6 +39,7 @@ const IntegrationsPage = lazy(() => import('./pages/IntegrationsPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 const NumberConverterPage = lazy(() => import('./pages/NumberConverterPage'));
 const CompanyCheckPage = lazy(() => import('./pages/CompanyCheckPage'));
+const TimeTrackingPage = lazy(() => import('./pages/TimeTrackingPage'));
 
 function PageLoader() {
   return (
@@ -99,6 +101,7 @@ export default function App() {
                 <Route path="/reports" element={<ReportsPage />} />
                 <Route path="/number-converter" element={<NumberConverterPage />} />
                 <Route path="/company-check" element={<CompanyCheckPage />} />
+                <Route path="/time-tracking" element={<TimeTrackingPage />} />
                 <Route path="*" element={
                   <div className="flex flex-col items-center justify-center h-64 text-center">
                     <h2 className="text-2xl font-bold text-white mb-2">404</h2>
@@ -114,6 +117,7 @@ export default function App() {
       </div>
       <CommandPalette />
       <FloatingOCR />
+      <FloatingTimer />
       <GlobalToast />
     </div>
   );

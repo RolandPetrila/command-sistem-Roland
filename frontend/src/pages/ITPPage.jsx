@@ -3,7 +3,7 @@ import {
   Car, Plus, Trash2, Edit3, Save, X, Search, ChevronLeft, ChevronRight,
   BarChart3, PieChart as PieChartIcon, TrendingUp, AlertTriangle, Upload,
   Download, Loader2, FileSpreadsheet, Calendar, Receipt, History, CheckCircle, XCircle, Ban,
-  Clock, UserCheck, UserX
+  Clock, UserCheck, UserX, Camera
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -47,6 +47,9 @@ function InspectionsTab() {
   const [vhLoading, setVhLoading] = useState(false);
   // R3-37: Rejection reasons
   const [rejectionReasons, setRejectionReasons] = useState([]);
+  // Photos
+  const [photos, setPhotos] = useState([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const perPage = 10;
 
   const load = useCallback(async () => {
@@ -121,6 +124,7 @@ function InspectionsTab() {
       setVhData(data?.inspections || data || []);
     } catch { setVhData([]); }
     setVhLoading(false);
+    setPhotos([]);
   };
 
   // R3-37: Load rejection reasons
@@ -129,6 +133,26 @@ function InspectionsTab() {
       const { data } = await apiClient.get('/api/itp/rejection-reasons');
       setRejectionReasons(data?.reasons || data || []);
     } catch { setRejectionReasons(['Franare deficitara', 'Emisii depasire', 'Directie defecta', 'Suspensie uzata', 'Lichide sub minim', 'Anvelope uzate', 'Corp rugina', 'Lumini defecte']); }
+  };
+
+  // Photos
+  const loadPhotos = async (inspectionId) => {
+    try {
+      const { data } = await apiClient.get(`/api/itp/inspections/${inspectionId}/photos`);
+      setPhotos(data.photos || []);
+    } catch { setPhotos([]); }
+  };
+
+  const uploadPhoto = async (inspectionId, file) => {
+    setUploadingPhoto(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      await apiClient.post(`/api/itp/inspections/${inspectionId}/photos`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      await loadPhotos(inspectionId);
+    } finally { setUploadingPhoto(false); }
   };
 
   const createInvoice = async (insp) => {
@@ -317,6 +341,11 @@ function InspectionsTab() {
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => showVehicleHistory(insp.plate_number)} className="p-1.5 text-blue-400 hover:bg-blue-400/10 rounded" title="Istoric vehicul"><History className="w-3.5 h-3.5" /></button>
                         <button onClick={() => createInvoice(insp)} className="p-1.5 text-amber-400 hover:bg-amber-400/10 rounded" title="Creaza factura"><Receipt className="w-3.5 h-3.5" /></button>
+                        <label className="p-1.5 text-emerald-400 hover:bg-emerald-400/10 rounded cursor-pointer" title="Adauga foto">
+                          <Camera className="w-3.5 h-3.5" />
+                          <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto}
+                            onChange={e => e.target.files[0] && uploadPhoto(insp.id, e.target.files[0])} />
+                        </label>
                         <button onClick={() => startEdit(insp)} className="p-1.5 text-slate-400 hover:bg-slate-700 rounded" title="Editeaza"><Edit3 className="w-3.5 h-3.5" /></button>
                         <button onClick={() => setDeleting(insp.id)} className="p-1.5 text-red-400 hover:bg-red-400/10 rounded" title="Sterge"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
@@ -364,8 +393,29 @@ function InspectionsTab() {
                     </div>
                     <div className="text-xs text-slate-500 mt-1">Expirare: {insp.expiry_date} | Pret: {insp.price || '-'} RON</div>
                     {insp.notes && <div className="text-xs text-slate-600 mt-0.5">{insp.notes}</div>}
+                    <button onClick={() => loadPhotos(insp.id)} className="text-xs text-blue-400 hover:text-blue-300 mt-1 flex items-center gap-1">
+                      <Camera className="w-3 h-3" /> Fotografii
+                    </button>
                   </div>
                 ))}
+              </div>
+            )}
+            {/* Fotografii Inspectie */}
+            {photos.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-sm font-medium text-gray-300 mb-2">Fotografii</h4>
+                <div className="grid grid-cols-3 gap-2 mb-2">
+                  {photos.map(p => (
+                    <div key={p.id} className="relative group">
+                      <img src={`/api/itp/photos/serve/${p.id}`} alt={p.filename}
+                        className="w-full h-24 object-cover rounded-lg" />
+                      <button onClick={() => { apiClient.delete(`/api/itp/inspections/${p.inspection_id}/photos/${p.id}`).then(() => loadPhotos(p.inspection_id)); }}
+                        className="absolute top-1 right-1 bg-red-600 rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Languages, Upload, FileText, BookOpen, Repeat, Download, Loader2, Search, Plus, Trash2, X, ChevronDown, ArrowRightLeft, Clock } from 'lucide-react';
 import api from '../api/client';
 
@@ -54,6 +54,9 @@ export default function TranslatorPage() {
   // R4-14: Provider latency stats
   const [providerStats, setProviderStats] = useState([]);
   const [providerLatency, setProviderLatency] = useState(null);
+  // TM Suggestions in real-time
+  const [tmSuggestions, setTmSuggestions] = useState([]);
+  const tmSuggestTimerRef = useRef(null);
 
   useEffect(() => { loadUsage(); loadProviderStats(); }, []);
   useEffect(() => { if (tab === 'tm') { loadTmStats(); loadTm(); } }, [tab]);
@@ -63,6 +66,43 @@ export default function TranslatorPage() {
       loadGlossaryClients();
     }
   }, [tab]);
+
+  // TM Suggestions: debounce 500ms when sourceText changes
+  useEffect(() => {
+    clearTimeout(tmSuggestTimerRef.current);
+    if (sourceText.length < 5 || !useTm) {
+      setTmSuggestions([]);
+      return;
+    }
+    tmSuggestTimerRef.current = setTimeout(async () => {
+      try {
+        const q = encodeURIComponent(sourceText.slice(0, 100));
+        const { data } = await api.get(`/api/translator/tm/search?q=${q}&source_lang=${sourceLang}&target_lang=${targetLang}&limit=3`);
+        setTmSuggestions(Array.isArray(data) ? data : data.entries || []);
+      } catch {
+        setTmSuggestions([]);
+      }
+    }, 500);
+    return () => clearTimeout(tmSuggestTimerRef.current);
+  }, [sourceText, sourceLang, targetLang, useTm]);
+
+  // Keyboard shortcuts: Ctrl+Enter translate, Ctrl+Shift+S swap, Ctrl+Shift+C copy target
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        handleTranslate();
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        swapLangs();
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+        if (targetText) navigator.clipboard.writeText(targetText);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
 
   const loadUsage = async () => {
     try {
@@ -301,8 +341,20 @@ export default function TranslatorPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <textarea value={sourceText} onChange={e => setSourceText(e.target.value)}
-              placeholder="Scrie sau lipește textul de tradus..."
+              placeholder="Scrie sau lipește textul de tradus... (Ctrl+Enter = traduce)"
               className="w-full h-64 bg-gray-900 border border-gray-700 rounded-xl p-4 text-sm resize-none focus:border-blue-500 focus:outline-none" />
+            {tmSuggestions.length > 0 && (
+              <div className="bg-gray-800/50 rounded-lg p-2 mt-1 space-y-1">
+                <p className="text-xs text-gray-500">Sugestii din Translation Memory:</p>
+                {tmSuggestions.map((s, i) => (
+                  <button key={i} onClick={() => setTargetText(s.target_segment || s.target || '')}
+                    className="block w-full text-left text-sm p-1.5 rounded hover:bg-gray-700 text-gray-300">
+                    <span className="text-blue-400 mr-2">{s.score != null ? Math.round(s.score * 100) : (s.confidence != null ? Math.round(s.confidence * 100) : '—')}%</span>
+                    <span className="text-green-300">{s.target_segment || s.target || ''}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {/* Character counter with color coding */}
             {(() => {
               const chars = sourceText.length;

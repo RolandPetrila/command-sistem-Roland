@@ -22,6 +22,10 @@ import {
   Sun,
   Moon,
   Sunrise,
+  CheckSquare,
+  Square,
+  Trash2,
+  Target,
 } from 'lucide-react';
 import api from '../api/client';
 import ExchangeRateCard from '../components/Dashboard/ExchangeRateCard';
@@ -102,7 +106,7 @@ function SummaryCard({ icon: Icon, label, value, color, loading: isLoading, erro
 // Activity Chart (CSS bars, no Recharts)
 // ---------------------------------------------------------------------------
 
-function ActivityChart({ data, loading: isLoading }) {
+function ActivityChart({ data, lastWeekData, loading: isLoading }) {
   if (isLoading) {
     return (
       <div className="bg-gray-900 rounded-2xl shadow border border-gray-800 p-5">
@@ -114,14 +118,33 @@ function ActivityChart({ data, loading: isLoading }) {
     );
   }
 
-  const maxCount = Math.max(1, ...data.map((d) => d.count ?? d.total ?? 0));
+  const hasComparison = Array.isArray(lastWeekData) && lastWeekData.length > 0;
+  const allValues = [
+    ...data.map((d) => d.count ?? d.total ?? 0),
+    ...(hasComparison ? lastWeekData.map((d) => d.count ?? d.total ?? 0) : []),
+  ];
+  const maxCount = Math.max(1, ...allValues);
 
   return (
     <div className="bg-gray-900 rounded-2xl shadow border border-gray-800 p-5">
-      <div className="flex items-center gap-2 mb-5">
+      <div className="flex items-center gap-2 mb-1">
         <Activity size={18} className="text-blue-400" />
         <h3 className="text-sm font-semibold text-gray-200">Activitate Ultimele 7 Zile</h3>
       </div>
+      {/* Legend */}
+      {hasComparison && (
+        <div className="flex items-center gap-4 mb-4 ml-7">
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded-sm bg-blue-500" />
+            <span className="text-[11px] text-gray-400">Saptamana curenta</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded-sm bg-gray-600 opacity-50" />
+            <span className="text-[11px] text-gray-400">Saptamana anterioara</span>
+          </div>
+        </div>
+      )}
+      {!hasComparison && <div className="mb-4" />}
       {data.length === 0 ? (
         <p className="text-sm text-gray-500 text-center py-8">Nu exista date de activitate.</p>
       ) : (
@@ -129,13 +152,24 @@ function ActivityChart({ data, loading: isLoading }) {
           {data.map((item, idx) => {
             const value = item.count ?? item.total ?? 0;
             const pct = (value / maxCount) * 100;
+            const lastVal = hasComparison ? (lastWeekData[idx]?.count ?? lastWeekData[idx]?.total ?? 0) : 0;
+            const lastPct = hasComparison ? (lastVal / maxCount) * 100 : 0;
             return (
               <div key={idx} className="flex-1 flex flex-col items-center justify-end h-full">
                 <span className="text-xs text-gray-400 mb-1 font-mono">{value}</span>
-                <div
-                  className="w-full rounded-t-lg bg-gradient-to-t from-blue-600 to-blue-400 transition-all duration-500 min-h-[4px]"
-                  style={{ height: `${Math.max(pct, 3)}%` }}
-                />
+                <div className="w-full flex items-end justify-center gap-0.5" style={{ height: `${Math.max(pct, lastPct, 3)}%` }}>
+                  {hasComparison && (
+                    <div
+                      className="w-[40%] rounded-t bg-gray-600 opacity-30 transition-all duration-500 min-h-[2px]"
+                      style={{ height: maxCount > 0 ? `${Math.max((lastVal / Math.max(value, lastVal, 1)) * 100, 3)}%` : '3%' }}
+                      title={`Sapt. anterioara: ${lastVal}`}
+                    />
+                  )}
+                  <div
+                    className={`${hasComparison ? 'w-[40%]' : 'w-full'} rounded-t-lg bg-gradient-to-t from-blue-600 to-blue-400 transition-all duration-500 min-h-[4px]`}
+                    style={{ height: '100%' }}
+                  />
+                </div>
                 <span className="text-[10px] text-gray-500 mt-2 text-center leading-tight">
                   {dayLabel(item.date || item.period)}
                 </span>
@@ -226,6 +260,154 @@ function QuickActions() {
 }
 
 // ---------------------------------------------------------------------------
+// Daily Goals Widget
+// ---------------------------------------------------------------------------
+
+function DailyGoals() {
+  const [goals, setGoals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newGoal, setNewGoal] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  const loadGoals = useCallback(async () => {
+    try {
+      const { data } = await api.get('/api/reports/dashboard/daily-goals');
+      setGoals(Array.isArray(data) ? data : (data?.goals || []));
+    } catch {
+      // toast handles it
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadGoals(); }, [loadGoals]);
+
+  const addGoal = async () => {
+    const text = newGoal.trim();
+    if (!text || adding) return;
+    setAdding(true);
+    try {
+      await api.post('/api/reports/dashboard/daily-goals', JSON.stringify(text), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      setNewGoal('');
+      await loadGoals();
+    } catch {
+      // toast handles it
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const toggleGoal = async (id, completed) => {
+    try {
+      await api.put(`/api/reports/dashboard/daily-goals/${id}`, { completed });
+      setGoals((prev) => prev.map((g) => g.id === id ? { ...g, completed } : g));
+    } catch {
+      // toast handles it
+    }
+  };
+
+  const deleteGoal = async (id) => {
+    try {
+      await api.delete(`/api/reports/dashboard/daily-goals/${id}`);
+      setGoals((prev) => prev.filter((g) => g.id !== id));
+    } catch {
+      // toast handles it
+    }
+  };
+
+  const completedCount = goals.filter((g) => g.completed).length;
+  const totalCount = goals.length;
+  const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+  if (loading) {
+    return (
+      <div className="bg-gray-900 rounded-2xl border border-gray-800 p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Target size={18} className="text-blue-400" />
+          <h3 className="text-sm font-semibold text-gray-200">Obiective Zilnice</h3>
+        </div>
+        <div className="flex justify-center py-4">
+          <Loader2 size={18} className="animate-spin text-gray-600" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-gray-900 rounded-2xl border border-gray-800 p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <Target size={18} className="text-blue-400" />
+        <h3 className="text-sm font-semibold text-gray-200">Obiective Zilnice</h3>
+        {totalCount > 0 && (
+          <span className="ml-auto text-xs text-gray-500">{completedCount}/{totalCount} ({pct}%)</span>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      {totalCount > 0 && (
+        <div className="bg-gray-800 rounded-full h-2 mb-4 overflow-hidden">
+          <div
+            className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+
+      {/* Goals checklist */}
+      {goals.length > 0 && (
+        <div className="space-y-1.5 mb-3">
+          {goals.map((goal) => (
+            <div key={goal.id} className="flex items-center gap-2 group">
+              <button
+                onClick={() => toggleGoal(goal.id, !goal.completed)}
+                className="shrink-0 text-gray-400 hover:text-blue-400 transition-colors"
+              >
+                {goal.completed
+                  ? <CheckSquare size={16} className="text-blue-400" />
+                  : <Square size={16} />
+                }
+              </button>
+              <span className={`flex-1 text-sm ${goal.completed ? 'line-through text-gray-600' : 'text-gray-300'}`}>
+                {goal.text || goal.title || goal.goal}
+              </span>
+              <button
+                onClick={() => deleteGoal(goal.id)}
+                className="opacity-0 group-hover:opacity-100 p-1 text-gray-600 hover:text-red-400 transition-all"
+                title="Sterge"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add goal input */}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={newGoal}
+          onChange={(e) => setNewGoal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') addGoal(); }}
+          placeholder="Adauga obiectiv..."
+          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-colors"
+        />
+        <button
+          onClick={addGoal}
+          disabled={!newGoal.trim() || adding}
+          className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          title="Adauga"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // "Ziua Mea" (My Day) Section
 // ---------------------------------------------------------------------------
 
@@ -278,6 +460,9 @@ function MyDaySection({ data, loading: isLoading, onNavigate }) {
           </div>
         </div>
       </div>
+
+      {/* --- Daily Goals --- */}
+      <DailyGoals />
 
       {/* --- Urgent Alerts Row --- */}
       {hasAlerts && (
@@ -555,6 +740,9 @@ export default function DashboardPage() {
   const [myDay, setMyDay] = useState(null);
   const [myDayLoading, setMyDayLoading] = useState(true);
 
+  // Weekly comparison data
+  const [lastWeekData, setLastWeekData] = useState([]);
+
   const navigate = useNavigate();
 
   const fetchAll = useCallback(async (isRefresh = false) => {
@@ -578,6 +766,8 @@ export default function DashboardPage() {
         api.get('/api/reports/dashboard/alerts'),
         // 7 - my-day (AXA E)
         api.get('/api/reports/dashboard/my-day'),
+        // 8 - weekly comparison
+        api.get('/api/reports/dashboard/weekly-comparison'),
       ]);
 
       // 0 - Quick stats (invoices, translations, ITP — single call)
@@ -641,6 +831,16 @@ export default function DashboardPage() {
       setMyDayLoading(false);
       if (results[7]?.status === 'fulfilled') {
         setMyDay(results[7].value?.data || null);
+      }
+
+      // 8 - Weekly comparison (graceful fallback — if fails, lastWeekData stays empty)
+      if (results[8]?.status === 'fulfilled') {
+        const wc = results[8].value?.data;
+        setLastWeekData(wc?.last_week || []);
+        // If the endpoint provides this_week, use it for chart instead
+        if (Array.isArray(wc?.this_week) && wc.this_week.length > 0) {
+          setChartData(wc.this_week);
+        }
       }
     } catch {
       // toast handles it — individual cards show fallback values
@@ -756,7 +956,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Column 1 — span 2: Activity Chart */}
         <div className="lg:col-span-2">
-          <ActivityChart data={chartData} loading={chartLoading} />
+          <ActivityChart data={chartData} lastWeekData={lastWeekData} loading={chartLoading} />
         </div>
 
         {/* Column 2 — sidebar cards */}

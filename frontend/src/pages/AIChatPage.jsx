@@ -3,6 +3,34 @@ import { Plus, Trash2, Send, Paperclip, Bot, User, Loader2, X, Settings2, Databa
 import api from '../api/client';
 import TokenIndicator from '../components/shared/TokenIndicator';
 
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = text
+    // Escape HTML
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // Code blocks with language
+    .replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+      `<pre class="bg-gray-900 rounded-lg p-3 my-2 overflow-x-auto border border-gray-700 relative group"><div class="text-xs text-gray-500 mb-1">${lang || 'code'}</div><code class="text-sm text-green-300 whitespace-pre">${code.trim()}</code></pre>`)
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1.5 py-0.5 rounded text-blue-300 text-sm">$1</code>')
+    // Bold
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+    // Italic
+    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+    // Headers
+    .replace(/^### (.+)$/gm, '<h3 class="text-base font-semibold text-white mt-3 mb-1">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-lg font-semibold text-white mt-4 mb-1">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold text-white mt-4 mb-2">$1</h1>')
+    // Unordered lists
+    .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc text-gray-300">$1</li>')
+    // Ordered lists
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal text-gray-300">$1</li>')
+    // Line breaks (double newline = paragraph break)
+    .replace(/\n\n/g, '</p><p class="mb-2">')
+    .replace(/\n/g, '<br/>');
+  return `<p class="mb-2">${html}</p>`;
+}
+
 export default function AIChatPage() {
   const [sessions, setSessions] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
@@ -567,9 +595,15 @@ export default function AIChatPage() {
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-800 text-gray-100'
               }`}>
-                <div className="whitespace-pre-wrap text-sm">{msg.content}
-                  {msg.streaming && <span className="inline-block w-2 h-4 bg-blue-400 ml-1 animate-pulse" />}
-                </div>
+                {msg.role === 'assistant' ? (
+                  <div className="text-sm">
+                    <div className="prose prose-invert prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                    {msg.streaming && <span className="inline-block w-2 h-4 bg-blue-400 ml-1 animate-pulse" />}
+                  </div>
+                ) : (
+                  <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                )}
                 {msg.provider && !msg.streaming && (
                   <div className="text-xs text-gray-400 mt-1 text-right">
                     {msg.provider}{msg.model ? ` (${msg.model})` : ''}

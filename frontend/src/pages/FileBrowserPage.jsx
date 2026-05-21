@@ -27,6 +27,8 @@ import {
   Clipboard,
   RotateCcw,
   Replace,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 
 const FM_BASE = `${window.location.origin}/api/fm`; // for direct URLs (img src, download href)
@@ -110,6 +112,8 @@ export default function FileBrowserPage() {
   const [renameValue, setRenameValue] = useState('');
   const [renameFrom, setRenameFrom] = useState('');
   const [renameTo, setRenameTo] = useState('');
+  // Gallery view mode
+  const [viewMode, setViewMode] = useState('list');
   // R4-22: Trash
   const [trashModal, setTrashModal] = useState(false);
   const [trashItems, setTrashItems] = useState([]);
@@ -461,6 +465,18 @@ export default function FileBrowserPage() {
           {fulltextLoading && <Loader2 size={12} className="animate-spin text-slate-400" />}
         </div>
 
+        {/* View mode toggle */}
+        <div className="flex gap-1">
+          <button onClick={() => setViewMode('list')}
+            className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-blue-600' : 'bg-gray-700'}`} title="Lista">
+            <List className="w-4 h-4" />
+          </button>
+          <button onClick={() => setViewMode('gallery')}
+            className={`p-1.5 rounded ${viewMode === 'gallery' ? 'bg-blue-600' : 'bg-gray-700'}`} title="Galerie">
+            <LayoutGrid className="w-4 h-4" />
+          </button>
+        </div>
+
         {/* Breadcrumbs */}
         <div className="flex items-center gap-1 text-xs text-slate-400 ml-auto overflow-hidden">
           <button onClick={() => browse('')} className="hover:text-white hover:underline transition-colors shrink-0">Proiect</button>
@@ -493,6 +509,21 @@ export default function FileBrowserPage() {
             </div>
           ) : entries.length === 0 ? (
             <p className="text-center text-slate-500 py-12 text-sm">Folder gol. Trage fisiere aici pentru upload.</p>
+          ) : viewMode === 'gallery' ? (
+            <div className="p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {entries.filter(e => !e.is_dir && e.type !== 'directory' && /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(e.name)).map(f => (
+                  <div key={f.name} onClick={() => handleClick(f)}
+                    className="aspect-square bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 ring-blue-500 transition">
+                    <img src={`${FM_BASE}/serve?path=${encodeURIComponent(f.path)}`}
+                      alt={f.name} className="w-full h-full object-cover" loading="lazy" />
+                  </div>
+                ))}
+                {entries.filter(e => !e.is_dir && e.type !== 'directory' && /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(e.name)).length === 0 && (
+                  <p className="text-gray-500 text-sm col-span-full text-center py-8">Nicio imagine in acest director</p>
+                )}
+              </div>
+            </div>
           ) : (
             <div className="divide-y divide-slate-800/50">
               {entries.filter(e => !showFavOnly || favorites.has(e.path)).map((entry) => {
