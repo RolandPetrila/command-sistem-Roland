@@ -1,0 +1,101 @@
+# Decizii arhitecturale — Roland Command Center
+# Generated: 2026-05-21 (E2 Native Workspace)
+# Updates: manual (decizii noi se adauga aici, NU se sterg)
+
+meta:
+  schema_version: "1.0"
+  generated_at: "2026-05-21T19:00:00+03:00"
+  total_decisions: 13
+
+decisions:
+  - id: D01
+    title: "Single user permanent, no multi-user auth"
+    date: "2026-03-17"
+    status: ACTIVE
+    rationale: "Roland e singurul utilizator. Auth multi-user = complexitate fara beneficiu. Securitate: Tailscale mesh VPN (cu cert TLS Tailscale)."
+    consequences: "Nu se implementeaza login/register/RBAC. Diferentiere prin Tailscale device."
+
+  - id: D02
+    title: "Free tier exclusively — zero cost policy"
+    date: "2026-03-20"
+    status: ACTIVE
+    rationale: "Buget zero. Toate providerii externi trebuie sa aiba free tier permanent functional."
+    consequences: "Eliminat OpenAI (free tier defunct), Perplexity (paid only), SMS provideri (no free Romania). Adoptat Cerebras + Mistral + Groq pentru AI volume."
+    reference: ".claude/rules/06-free-tier-enforcement.md"
+
+  - id: D03
+    title: "Romana pentru UI/communication, Engleza pentru cod"
+    date: "2026-03-17"
+    status: ACTIVE
+    rationale: "User Romanian-native, codebase international-standard."
+    consequences: "Toate user-facing strings RO, log messages EN, var names EN."
+
+  - id: D04
+    title: "Module auto-discovery prin app/module_discovery.py"
+    date: "2026-03-18"
+    status: ACTIVE
+    rationale: "Plug-and-play: add folder in backend/modules/[name]/ cu __init__.py MODULE_INFO + e auto-inregistrat."
+    consequences: "Adaugare modul nou = 0 modificari in main.py."
+
+  - id: D05
+    title: "Composition A+R variant (frontend + backend pure)"
+    date: "2026-05-21"
+    status: ACTIVE
+    rationale: "Detection Native Workspace: React/Vite + FastAPI = composition A (web) + R (backend pure)."
+    consequences: "Aplicat blueprint Native Workspace v2.1 SELECTIV — skip JSON schemas/MCP guard/status-board (overkill single-user)."
+
+  - id: D06
+    title: "Cerebras Qwen3-235B primar pentru claude-prep"
+    date: "2026-05-14"
+    status: ACTIVE
+    rationale: "1M tokens/zi gratuit, 30 RPM. Gemini are 250 RPD — se atinge rapid la utilizare intensiva claude-prep."
+    consequences: "NU pune Gemini primar pentru claude-prep. Mai mult — chain ordine = Cerebras → Groq → Gemini → Mistral."
+
+  - id: D07
+    title: "Rate limit DISABLED pentru LAN/Tailscale/Cloudflare IPs"
+    date: "2026-05-14"
+    status: ACTIVE
+    rationale: "Single-user. Rate limiting = friction fara security benefit. Doar IP-uri publice externe trebuie limitate."
+    consequences: "config.py rate_limit_disabled cu skip list: 127.x, 192.168.x, 10.x, 100.x, 172.x. NU readuc pe LAN."
+
+  - id: D08
+    title: "PWA cu auto-update (vite.config.js)"
+    date: "2026-05-14"
+    status: ACTIVE
+    rationale: "User foloseste PWA pe Android via Tailscale. Auto-update = pas-zero pentru update telefon."
+    consequences: "registerType: 'autoUpdate' + skipWaiting + clientsClaim. NU re-instalare pe telefon la fiecare update."
+
+  - id: D09
+    title: "Launcher unic Python (start.py) — NU .bat"
+    date: "2026-05-14"
+    status: ACTIVE
+    rationale: "Cross-platform consistency, watchdog Python integrat, pattern matching log mai usor."
+    consequences: "Sters START_Roland.bat. Toate cmd-urile: python start.py [dev|prod|tunnel|stop]."
+
+  - id: D10
+    title: "Cloudflare Tunnel public + Tailscale local"
+    date: "2026-05-14"
+    status: ACTIVE
+    rationale: "Tailscale = sigur dar limitat la device-uri inregistrate. Cloudflare Tunnel = URL public pentru access oriunde."
+    consequences: "Default = quick tunnel (random URL). Named tunnel disponibil prin setup_named_tunnel.py."
+
+  - id: D11
+    title: "USER_WORKSPACE = 99_Roland_Work_Place/ (NU mutat la .workspace/)"
+    date: "2026-05-21"
+    status: ACTIVE
+    rationale: "Conform blueprint Native Workspace P6 — distinctie clara intre zona user (notite/audit/capturi) si zona AI (drafts/investigations). 99_Roland_Work_Place/ are istorie + content valuable."
+    consequences: ".workspace/ se creeaza separat in E4 pentru AI work. 99_Roland_Work_Place/ ramane neschimbat."
+
+  - id: D12
+    title: "Aplicare blueprint Native Workspace SELECTIVA"
+    date: "2026-05-21"
+    status: ACTIVE
+    rationale: "Aplicarea integrala v2.1 ar dubla complexitatea fara beneficiu (single-user). Filtru P13/P14."
+    consequences: "DEFER: JSON schemas, verify-deps.ps1, status-board.ps1 HUD, ingest-sources.ps1, MEMORY_SNAPSHOT.md, build-docs.ps1. APLICA: profile/status/decisions/sitemap YAMLs + 3 scripturi (sync-meta/indexer/root-sweeper) + Root Sweeper warn + RUNBOOK + CLAUDE slim."
+
+  - id: D13
+    title: "Sterge API_KEYS.md local — chei in sistem central"
+    date: "2026-05-21"
+    status: ACTIVE
+    rationale: "Sistem API Keys central (C:\\Users\\ALIENWARE\\.api-keys\\) tine valorile in Windows Env Vars. Duplicate local in plaintext = risc filesystem."
+    consequences: "API_KEYS.md sters. Toate cheile in env vars. Cod citeste os.environ.get(...) / process.env.X."

@@ -83,6 +83,10 @@ cloudflared/tunnel_token.txt
 /roland_start.log
 /logs/
 
+# AI workspace audit-outputs (regenerabile, volume mare)
+/.workspace/audit-outputs/*
+!/.workspace/audit-outputs/README.md
+
 # Dev/simulation scripts at backend root
 /backend/simulate*.py
 /backend/demo_*.py

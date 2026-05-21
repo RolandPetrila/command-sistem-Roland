@@ -1,0 +1,256 @@
+# Sitemap - Roland Command Center
+# Generated: 2026-05-22T00:27:51+03:00
+# Generator: indexer.py (auto, MaxDepth=3)
+
+meta:
+  schema_version: "1.0"
+  generated_at: "2026-05-22T00:27:51+03:00"
+  generator: "indexer.py"
+  max_depth: 3
+  excludes: [".git", ".idea", ".playwright-mcp", ".pytest_cache", ".ruff_cache", ".venv", ".vite", ".vscode", "__pycache__", "build", "dist", "egg-info", "node_modules"]
+
+root:
+  files:
+    - { name: ".gitattributes", size_kb: 0.2 }
+    - { name: ".gitignore", size_kb: 1.3 }
+    - { name: "CLAUDE.md", size_kb: 13.0 }
+    - { name: "launch_roland.vbs", size_kb: 0.2 }
+    - { name: "PLAN_RESTRUCTURARE_2026-05-21.md", size_kb: 14.4 }
+    - { name: "start.py", size_kb: 16.8 }
+
+folders:
+  - path: ".archive/"
+    children:
+      - "PLAN_EXECUTIE.md"
+      - "README.md"
+      - "roland_backend.log"
+      - "roland_start.log"
+      - "SABLOANE_SI_HINTURI_RECOMANDATE.md"
+      - "update_tracking.py"
+    children_count: 6
+
+  - path: ".claude/"
+    children:
+      - "agents/"
+      - "commands/"
+      - "hooks/"
+      - "rules/"
+      - "scripts/"
+      - "PROJECT_STATUS.md"
+      - "settings.local.json"
+    children_count: 7
+
+  - path: ".git/"
+    children:
+      - "gk/"
+      - "hooks/"
+      - "info/"
+      - "logs/"
+      - "objects/"
+      - "refs/"
+      - "COMMIT_EDITMSG"
+      - "config"
+      - "description"
+      - "HEAD"
+      - "index"
+    children_count: 11
+
+  - path: ".meta/"
+    children:
+      - "decisions.yaml"
+      - "profile.yaml"
+      - "sitemap.yaml"
+      - "status.yaml"
+    children_count: 4
+
+  - path: ".playwright-mcp/"
+    children:
+      - "console-2026-03-17T10-54-41-336Z.log"
+      - "console-2026-03-17T10-55-18-584Z.log"
+      - "console-2026-03-17T10-55-36-465Z.log"
+      - "console-2026-03-17T10-56-04-412Z.log"
+      - "console-2026-03-17T10-56-19-413Z.log"
+      - "console-2026-03-17T18-40-02-551Z.log"
+      - "console-2026-03-17T18-41-43-818Z.log"
+      - "console-2026-03-17T18-42-06-477Z.log"
+      - "console-2026-03-17T18-55-03-205Z.log"
+      - "console-2026-03-17T21-14-19-862Z.log"
+      - "console-2026-03-17T21-33-37-076Z.log"
+      - "console-2026-03-17T21-33-57-260Z.log"
+      - "console-2026-03-17T21-34-26-565Z.log"
+      - "console-2026-03-20T09-04-24-407Z.log"
+      - "console-2026-03-20T09-27-58-612Z.log"
+      - "console-2026-03-20T09-41-57-840Z.log"
+      - "console-2026-03-20T11-06-07-422Z.log"
+      - "console-2026-03-20T14-05-41-739Z.log"
+      - "page-2026-03-20T09-01-42-713Z.png"
+      - "page-2026-03-20T09-04-34-352Z.png"
+      - "page-2026-03-20T09-28-06-260Z.png"
+      - "page-2026-03-20T09-42-14-810Z.png"
+      - "page-2026-03-20T13-14-40-582Z.png"
+      - "page-2026-03-20T13-15-33-988Z.png"
+      - "page-2026-03-20T14-09-08-476Z.png"
+    children_count: 25
+
+  - path: ".ruff_cache/"
+    children:
+      - "0.14.2/"
+      - ".gitignore"
+      - "CACHEDIR.TAG"
+    children_count: 3
+
+  - path: ".trash/"
+    children:
+      - "manifest.json"
+    children_count: 1
+
+  - path: ".workspace/"
+    children:
+      - "audit-outputs/"
+      - "drafts/"
+      - "investigations/"
+      - "README.md"
+      - "scratchpad.md"
+    children_count: 5
+
+  - path: "99_Roland_Work_Place/"
+    children:
+      - "2026-03-17_improve/"
+      - "2026-03-20_deep_research/"
+      - "2026-03-21_deep_research/"
+      - "2026-03-21_deep_research_v2/"
+      - "archive/"
+      - "Calculator_pret/"
+      - "0.0_PLAN_EXTINDERE_COMPLET.html"
+      - "0.0_PLAN_EXTINDERE_COMPLET.md"
+      - "9.Poza_Android.jpeg"
+      - "9.Poza_Laptop.png"
+      - "ANALIZA_FISIERE.md"
+      - "Audit_FULL.md"
+      - "CATALOG_API_GRATUITE.md"
+      - "Cerinta_Roland.md"
+      - "CHANGELOG_RULES.md"
+      - "CLOUDFLARE_TUNNEL_SETUP.md"
+      - "Competitori.md"
+      - "dashboard-screenshot.png"
+      - "Documentare_Extindere_Proiect.md"
+      - "EVALUARE_SUGESTII_COMMAND_CENTER.md"
+      - "GHID_ACCES_REMOTE.md"
+      - "GHID_TESTARE.md"
+      - "PROMPT_DEEP_DIVE_COMPLET.md"
+      - "RAPORT_AUDIT_FULL.md"
+      - "RECOMANDARI_IMBUNATATIRI.md"
+      - "ROADMAP_IMPLEMENTARE.md"
+      - "ROLAND_PLANIFICARI_MODULE.md"
+      - "TODO.md"
+    children_count: 28
+
+  - path: "assets/"
+    children:
+      - "calculator_icon.ico"
+      - "generate_icon.py"
+    children_count: 2
+
+  - path: "backend/"
+    children:
+      - "app/"
+      - "certs/"
+      - "data/"
+      - "migrations/"
+      - "modules/"
+      - "scraper/"
+      - "tests/"
+      - "uploads/"
+      - "UsersALIENWAREDesktopRoly_WORK_cachepytest/"
+      - ".env"
+      - "__init__.py"
+      - "_roland_start.cmd"
+      - "backup.py"
+      - "calculator.db"
+      - "calibrate.py"
+      - "CLAUDE.md"
+      - "demo_preturi.py"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "server.log"
+      - "simulate_final.py"
+      - "simulate_pricing.py"
+      - "simulate_v3.py"
+      - "test_analyzer_correlation.py"
+      - "test_ensemble_26.py"
+    children_count: 25
+
+  - path: "cloudflared/"
+    children:
+      - "config.yml"
+      - "tunnel_token.txt"
+    children_count: 2
+
+  - path: "docs/"
+    children:
+      - "audit-externe/"
+      - "handovers/"
+      - "plan.md"
+      - "README.md"
+      - "resume.md"
+      - "todo.md"
+    children_count: 6
+
+  - path: "Fisiere_Reper_Tarif/"
+    children:
+      - "Pret_Intreg_100la100/"
+    children_count: 1
+
+  - path: "frontend/"
+    children:
+      - "public/"
+      - "src/"
+      - "UsersALIENWAREDesktopRoly_WORK_cachepytest/"
+      - "CLAUDE.md"
+      - "index.html"
+      - "package-lock.json"
+      - "package.json"
+      - "postcss.config.js"
+      - "tailwind.config.js"
+      - "vite.config.js"
+    children_count: 10
+
+  - path: "logs/"
+    children:
+      - "backend.log"
+      - "cert_renewal.log"
+      - "frontend.log"
+      - "healthcheck.log"
+      - "watchdog.log"
+    children_count: 5
+
+  - path: "scripts/"
+    children:
+      - "_activate_funnel.ps1"
+      - "_cf_login.ps1"
+      - "_cf_login2.ps1"
+      - "_check_cf_vars.ps1"
+      - "_final_serve.ps1"
+      - "_firewall_admin.ps1"
+      - "_funnel_status.ps1"
+      - "_launch_visible.ps1"
+      - "_read_shortcut.ps1"
+      - "_register_tasks.ps1"
+      - "_restart_full.ps1"
+      - "_serve_bg.ps1"
+      - "_serve_setup.ps1"
+      - "_setup_access.ps1"
+      - "_start_fresh.ps1"
+      - "_test_backend.ps1"
+      - "_test_cf_tunnel.ps1"
+      - "_test_cf_tunnel_verbose.ps1"
+      - "_test_quick_tunnel.ps1"
+      - "_update_shortcut.ps1"
+      - "auto-start-task.xml"
+      - "check_and_restart.ps1"
+      - "launch_roland.ps1"
+      - "renew_cert.py"
+      - "setup_cf_tunnel_api.py"
+      - "setup_named_tunnel.py"
+    children_count: 26
+
